@@ -3,8 +3,14 @@
   "version": "1.0.0",
   "private": true,
   "description": "NAVIGO Android ride and ready-parcel pilot system",
-  "workspaces": ["apps/*", "packages/*"],
-  "engines": { "node": ">=24.11.0 <25", "npm": ">=11" },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=24.11.0 <25",
+    "npm": ">=11"
+  },
   "scripts": {
     "dev:api": "npm run dev -w @navigo/api",
     "dev:mobile": "npm run start -w @navigo/mobile",
@@ -15,6 +21,7 @@
     "db:validate": "npm run db:validate -w @navigo/api",
     "db:generate": "npm run db:generate -w @navigo/api",
     "db:migrate": "npm run db:migrate -w @navigo/api",
-    "db:studio": "npm run db:studio -w @navigo/api"
+    "db:studio": "npm run db:studio -w @navigo/api",
+    "db:seed": "npm run db:seed -w @navigo/api"
   }
 }
