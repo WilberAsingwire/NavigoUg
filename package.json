@@ -12,6 +12,7 @@
     "build:api": "npm run build:shared && npm run build -w @navigo/api",
     "typecheck": "npm run build:shared && npm run typecheck -w @navigo/api && npm run typecheck -w @navigo/mobile",
     "test:api": "npm run test -w @navigo/api",
+    "db:validate": "npm run db:validate -w @navigo/api",
     "db:generate": "npm run db:generate -w @navigo/api",
     "db:migrate": "npm run db:migrate -w @navigo/api",
     "db:studio": "npm run db:studio -w @navigo/api"
