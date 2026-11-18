@@ -3,6 +3,7 @@ import express, { type ErrorRequestHandler } from "express";
 import rateLimit from "express-rate-limit";
 import helmet from "helmet";
 import { prisma } from "./lib/prisma.js";
+import { authRouter, authErrorHandler } from "./modules/auth/auth.routes.js";
 
 export const app = express();
 app.disable("x-powered-by");
@@ -53,6 +54,9 @@ app.get("/api/v1/health/ready", async (_request, response) => {
     });
   }
 });
+
+app.use("/api/v1/auth", authRouter);
+app.use(authErrorHandler);
 
 app.use((_request, response) => {
   response.status(404).json({
