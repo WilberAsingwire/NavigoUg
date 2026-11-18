@@ -31,12 +31,20 @@ Start PostgreSQL:
 docker compose up -d db
 ~~~
 
-When the Prisma schema milestone is ready, generate the client and create a development migration:
+Create the local schema and generate the Prisma client:
 
 ~~~bash
 npm run db:generate
 npm run db:migrate -- --name init
 ~~~
+
+Before creating the administrator account, edit `apps/api/.env` and set `ADMIN_FULL_NAME`, `ADMIN_PHONE` and a unique `ADMIN_PASSWORD` with at least 12 characters. Do not reuse a personal or university password. Then run:
+
+~~~bash
+npm run db:seed
+~~~
+
+The seed command creates an administrator only when that phone number does not already exist. It refuses to promote an existing customer or rider account.
 
 Build shared contracts before running the API:
 
@@ -69,7 +77,7 @@ After the API starts:
 curl http://localhost:4000/api/v1/health/live
 ~~~
 
-The response should include status "ok" and service "navigo-api".
+The response should include status "ok" and service "navigo-api". Check database connectivity separately at `/api/v1/health/ready`.
 
 ## Useful commands
 ~~~bash
