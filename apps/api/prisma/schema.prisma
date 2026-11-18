@@ -55,6 +55,17 @@ enum PaymentStatus {
   PAID
 }
 
+enum RequestType {
+  RIDE
+  PARCEL
+}
+
+enum ParcelSizeCategory {
+  SMALL
+  MEDIUM
+  LARGE
+}
+
 model User {
   id                    String      @id @default(uuid()) @db.Uuid
   fullName              String      @map("full_name") @db.VarChar(100)
@@ -78,6 +89,9 @@ model User {
   parcelHistoryChanges  ParcelStatusHistory[] @relation("ParcelStatusActor")
   ridePaymentsRecorded  RidePayment[] @relation("RidePaymentRecorder")
   parcelPaymentsRecorded ParcelPayment[] @relation("ParcelPaymentRecorder")
+  rideRejections         RideRejection[] @relation("RiderRideRejections")
+  parcelRejections       ParcelRejection[] @relation("RiderParcelRejections")
+  auditLogs              AuditLog[]
 
   @@map("users")
 }
@@ -143,8 +157,10 @@ model Landmark {
 
   pickupRides       RideRequest[] @relation("RidePickupLandmark")
   destinationRides  RideRequest[] @relation("RideDestinationLandmark")
-  pickupParcels     ParcelRequest[] @relation("ParcelPickupLandmark")
-  destinationParcels ParcelRequest[] @relation("ParcelDestinationLandmark")
+  pickupParcels        ParcelRequest[] @relation("ParcelPickupLandmark")
+  destinationParcels   ParcelRequest[] @relation("ParcelDestinationLandmark")
+  faresFrom            LandmarkFare[] @relation("LandmarkFareFrom")
+  faresTo              LandmarkFare[] @relation("LandmarkFareTo")
 
   @@index([isActive, category])
   @@map("landmarks")
@@ -152,10 +168,10 @@ model Landmark {
 
 model FareRule {
   id            String   @id @default(uuid()) @db.Uuid
-  requestType   String   @map("request_type") @db.VarChar(20)
-  minDistanceKm Decimal  @map("min_distance_km") @db.Decimal(8, 2)
-  maxDistanceKm Decimal? @map("max_distance_km") @db.Decimal(8, 2)
-  parcelSize    String?  @map("parcel_size") @db.VarChar(30)
+  requestType   RequestType         @map("request_type")
+  minDistanceKm Decimal             @map("min_distance_km") @db.Decimal(8, 2)
+  maxDistanceKm Decimal?            @map("max_distance_km") @db.Decimal(8, 2)
+  parcelSize    ParcelSizeCategory? @map("parcel_size")
   fareUgx       Int      @map("fare_ugx")
   isActive      Boolean  @default(true) @map("is_active")
   createdAt     DateTime @default(now()) @map("created_at")
@@ -163,6 +179,25 @@ model FareRule {
 
   @@index([requestType, isActive])
   @@map("fare_rules")
+}
+
+model LandmarkFare {
+  id               String             @id @default(uuid()) @db.Uuid
+  fromLandmarkId   String             @map("from_landmark_id") @db.Uuid
+  toLandmarkId     String             @map("to_landmark_id") @db.Uuid
+  requestType      RequestType        @map("request_type")
+  parcelSize       ParcelSizeCategory? @map("parcel_size")
+  fareUgx          Int                @map("fare_ugx")
+  isActive         Boolean            @default(true) @map("is_active")
+  createdAt        DateTime           @default(now()) @map("created_at")
+  updatedAt        DateTime           @updatedAt @map("updated_at")
+
+  fromLandmark Landmark @relation("LandmarkFareFrom", fields: [fromLandmarkId], references: [id], onDelete: Restrict)
+  toLandmark   Landmark @relation("LandmarkFareTo", fields: [toLandmarkId], references: [id], onDelete: Restrict)
+
+  @@unique([fromLandmarkId, toLandmarkId, requestType, parcelSize])
+  @@index([requestType, isActive])
+  @@map("landmark_fares")
 }
 
 model RideRequest {
@@ -195,7 +230,8 @@ model RideRequest {
   destinationLandmark Landmark? @relation("RideDestinationLandmark", fields: [destinationLandmarkId], references: [id], onDelete: SetNull)
   history         RideStatusHistory[]
   payment         RidePayment?
-  tracking        LiveTrackingSession?
+  tracking        RideTrackingSession?
+  rejections      RideRejection[]
 
   @@index([status, createdAt])
   @@index([customerId, createdAt])
@@ -243,7 +279,8 @@ model ParcelRequest {
   destinationLandmark Landmark?   @relation("ParcelDestinationLandmark", fields: [destinationLandmarkId], references: [id], onDelete: SetNull)
   history             ParcelStatusHistory[]
   payment             ParcelPayment?
-  tracking            LiveTrackingSession?
+  tracking            ParcelTrackingSession?
+  rejections          ParcelRejection[]
 
   @@index([status, createdAt])
   @@index([senderId, createdAt])
@@ -317,30 +354,114 @@ model ParcelPayment {
   @@map("parcel_payments")
 }
 
-model LiveTrackingSession {
-  id                       String    @id @default(uuid()) @db.Uuid
-  rideRequestId            String?   @unique @map("ride_request_id") @db.Uuid
-  parcelRequestId          String?   @unique @map("parcel_request_id") @db.Uuid
-  riderSharingEnabled      Boolean   @default(false) @map("rider_sharing_enabled")
-  customerSharingEnabled   Boolean   @default(false) @map("customer_sharing_enabled")
-  riderConsentAt           DateTime? @map("rider_consent_at")
-  customerConsentAt        DateTime? @map("customer_consent_at")
-  riderLatitude            Decimal?  @map("rider_latitude") @db.Decimal(10, 7)
-  riderLongitude           Decimal?  @map("rider_longitude") @db.Decimal(10, 7)
-  riderAccuracyMeters      Float?    @map("rider_accuracy_meters")
-  riderLocationUpdatedAt   DateTime? @map("rider_location_updated_at")
-  customerLatitude         Decimal?  @map("customer_latitude") @db.Decimal(10, 7)
-  customerLongitude        Decimal?  @map("customer_longitude") @db.Decimal(10, 7)
-  customerAccuracyMeters  Float?    @map("customer_accuracy_meters")
-  customerLocationUpdatedAt DateTime? @map("customer_location_updated_at")
-  startedAt                DateTime? @map("started_at")
-  endedAt                  DateTime? @map("ended_at")
-  createdAt                DateTime  @default(now()) @map("created_at")
-  updatedAt                DateTime  @updatedAt @map("updated_at")
+model RideRejection {
+  id            String   @id @default(uuid()) @db.Uuid
+  rideRequestId String   @map("ride_request_id") @db.Uuid
+  riderId       String   @map("rider_id") @db.Uuid
+  createdAt     DateTime @default(now()) @map("created_at")
 
-  rideRequest   RideRequest?   @relation(fields: [rideRequestId], references: [id], onDelete: Cascade)
-  parcelRequest ParcelRequest? @relation(fields: [parcelRequestId], references: [id], onDelete: Cascade)
+  request RideRequest @relation(fields: [rideRequestId], references: [id], onDelete: Cascade)
+  rider   User        @relation("RiderRideRejections", fields: [riderId], references: [id], onDelete: Cascade)
+
+  @@unique([rideRequestId, riderId])
+  @@index([riderId, createdAt])
+  @@map("ride_rejections")
+}
+
+model ParcelRejection {
+  id              String   @id @default(uuid()) @db.Uuid
+  parcelRequestId String   @map("parcel_request_id") @db.Uuid
+  riderId         String   @map("rider_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  request ParcelRequest @relation(fields: [parcelRequestId], references: [id], onDelete: Cascade)
+  rider   User           @relation("RiderParcelRejections", fields: [riderId], references: [id], onDelete: Cascade)
+
+  @@unique([parcelRequestId, riderId])
+  @@index([riderId, createdAt])
+  @@map("parcel_rejections")
+}
+
+model AuditLog {
+  id         String   @id @default(uuid()) @db.Uuid
+  actorId    String?  @map("actor_id") @db.Uuid
+  action     String   @db.VarChar(100)
+  targetType String   @map("target_type") @db.VarChar(60)
+  targetId   String?  @map("target_id") @db.VarChar(80)
+  metadata   Json?
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  actor User? @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([actorId, createdAt])
+  @@index([targetType, targetId])
+  @@map("audit_logs")
+}
+
+model Notification {
+  id         String   @id @default(uuid()) @db.Uuid
+  userId     String   @map("user_id") @db.Uuid
+  title      String   @db.VarChar(120)
+  body       String   @db.VarChar(500)
+  requestType RequestType? @map("request_type")
+  requestId  String?  @map("request_id") @db.Uuid
+  readAt     DateTime? @map("read_at")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt, createdAt])
+  @@map("notifications")
+}
+
+model RideTrackingSession {
+  id                        String    @id @default(uuid()) @db.Uuid
+  rideRequestId             String    @unique @map("ride_request_id") @db.Uuid
+  riderSharingEnabled       Boolean   @default(false) @map("rider_sharing_enabled")
+  customerSharingEnabled    Boolean   @default(false) @map("customer_sharing_enabled")
+  riderConsentAt            DateTime? @map("rider_consent_at")
+  customerConsentAt         DateTime? @map("customer_consent_at")
+  riderLatitude             Decimal?  @map("rider_latitude") @db.Decimal(10, 7)
+  riderLongitude            Decimal?  @map("rider_longitude") @db.Decimal(10, 7)
+  riderAccuracyMeters       Float?    @map("rider_accuracy_meters")
+  riderLocationUpdatedAt    DateTime? @map("rider_location_updated_at")
+  customerLatitude          Decimal?  @map("customer_latitude") @db.Decimal(10, 7)
+  customerLongitude         Decimal?  @map("customer_longitude") @db.Decimal(10, 7)
+  customerAccuracyMeters    Float?    @map("customer_accuracy_meters")
+  customerLocationUpdatedAt DateTime? @map("customer_location_updated_at")
+  startedAt                 DateTime? @map("started_at")
+  endedAt                   DateTime? @map("ended_at")
+  createdAt                 DateTime  @default(now()) @map("created_at")
+  updatedAt                 DateTime  @updatedAt @map("updated_at")
+
+  rideRequest RideRequest @relation(fields: [rideRequestId], references: [id], onDelete: Cascade)
 
   @@index([endedAt, updatedAt])
-  @@map("live_tracking_sessions")
+  @@map("ride_tracking_sessions")
+}
+
+model ParcelTrackingSession {
+  id                        String    @id @default(uuid()) @db.Uuid
+  parcelRequestId           String    @unique @map("parcel_request_id") @db.Uuid
+  riderSharingEnabled       Boolean   @default(false) @map("rider_sharing_enabled")
+  customerSharingEnabled    Boolean   @default(false) @map("customer_sharing_enabled")
+  riderConsentAt            DateTime? @map("rider_consent_at")
+  customerConsentAt         DateTime? @map("customer_consent_at")
+  riderLatitude             Decimal?  @map("rider_latitude") @db.Decimal(10, 7)
+  riderLongitude            Decimal?  @map("rider_longitude") @db.Decimal(10, 7)
+  riderAccuracyMeters       Float?    @map("rider_accuracy_meters")
+  riderLocationUpdatedAt    DateTime? @map("rider_location_updated_at")
+  customerLatitude          Decimal?  @map("customer_latitude") @db.Decimal(10, 7)
+  customerLongitude         Decimal?  @map("customer_longitude") @db.Decimal(10, 7)
+  customerAccuracyMeters    Float?    @map("customer_accuracy_meters")
+  customerLocationUpdatedAt DateTime? @map("customer_location_updated_at")
+  startedAt                 DateTime? @map("started_at")
+  endedAt                   DateTime? @map("ended_at")
+  createdAt                 DateTime  @default(now()) @map("created_at")
+  updatedAt                 DateTime  @updatedAt @map("updated_at")
+
+  parcelRequest ParcelRequest @relation(fields: [parcelRequestId], references: [id], onDelete: Cascade)
+
+  @@index([endedAt, updatedAt])
+  @@map("parcel_tracking_sessions")
 }
