@@ -1,0 +1,21 @@
+services:
+  db:
+    image: postgres:17-alpine
+    container_name: navigou-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: navigou
+      POSTGRES_USER: navigou
+      POSTGRES_PASSWORD: navigou_local_dev_only
+    ports:
+      - "5432:5432"
+    volumes:
+      - navigou_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U navigou -d navigou"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  navigou_pgdata:
