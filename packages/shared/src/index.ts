@@ -58,6 +58,21 @@ export const RegisterCustomerInputSchema = z.object({
   password: z.string().min(8).max(128)
 });
 
+
+export const RegisterRiderInputSchema = z.object({
+  fullName: z.string().trim().min(2).max(100),
+  phone: z.string().trim().min(7).max(20),
+  email: z.email().optional(),
+  password: z.string().min(8).max(128),
+  licenceNumber: z.string().trim().min(3).max(80),
+  motorcyclePlate: z.string().trim().min(3).max(20),
+  motorcycleDescription: z.string().trim().min(3).max(160)
+});
+
+export const RefreshTokenInputSchema = z.object({
+  refreshToken: z.string().min(40).max(200)
+});
+
 export const LocationUpdateInputSchema = z.object({
   latitude: z.number().min(-90).max(90),
   longitude: z.number().min(-180).max(180),
