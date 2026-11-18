@@ -35,7 +35,7 @@ Create the local schema and generate the Prisma client:
 
 ~~~bash
 npm run db:generate
-npm run db:migrate -- --name init
+npm run db:migrate -w @navigo/api -- --name init
 ~~~
 
 Before creating the administrator account, edit `apps/api/.env` and set `ADMIN_FULL_NAME`, `ADMIN_PHONE` and a unique `ADMIN_PASSWORD` with at least 12 characters. Do not reuse a personal or university password. Then run:
