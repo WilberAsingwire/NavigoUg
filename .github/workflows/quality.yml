@@ -1,0 +1,38 @@
+name: NAVIGO quality checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  api-and-shared:
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: postgresql://navigo:navigo_ci_password@localhost:5432/navigo
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm install
+      - run: npm run build:shared
+      - run: npm run db:validate
+      - run: npm run db:generate
+      - run: npm run typecheck -w @navigo/api
+      - run: npm run test:api
+
+  mobile-typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: npm install
+      - run: npm run build:shared
+      - run: npm run typecheck -w @navigo/mobile
