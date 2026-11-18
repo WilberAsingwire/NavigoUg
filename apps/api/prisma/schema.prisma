@@ -92,6 +92,7 @@ model User {
   rideRejections         RideRejection[] @relation("RiderRideRejections")
   parcelRejections       ParcelRejection[] @relation("RiderParcelRejections")
   auditLogs              AuditLog[]
+  notifications          Notification[]
 
   @@map("users")
 }
