@@ -5,7 +5,15 @@
     "moduleResolution": "NodeNext",
     "rootDir": ".",
     "noEmit": true,
-    "types": ["node", "vitest/globals"]
+    "types": [
+      "node",
+      "vitest/globals"
+    ]
   },
-  "include": ["src/**/*.ts", "tests/**/*.ts", "prisma.config.ts"]
+  "include": [
+    "src/**/*.ts",
+    "tests/**/*.ts",
+    "prisma.config.ts",
+    "prisma/**/*.ts"
+  ]
 }
