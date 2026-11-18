@@ -7,7 +7,6 @@ const config: ExpoConfig = {
   version: "1.0.0",
   orientation: "portrait",
   userInterfaceStyle: "light",
-  newArchEnabled: true,
   android: {
     package: "ug.ac.muni.navigo",
     versionCode: 1,
