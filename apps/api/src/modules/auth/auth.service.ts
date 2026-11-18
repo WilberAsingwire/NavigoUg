@@ -32,6 +32,14 @@ function accessSecret(): Uint8Array {
   return new TextEncoder().encode(secret);
 }
 
+function accessTokenTtl(): string {
+  const ttl = Number(process.env.JWT_ACCESS_TTL_SECONDS ?? 900);
+  if (!Number.isInteger(ttl) || ttl < 60 || ttl > 3600) {
+    throw new Error("JWT_ACCESS_TTL_SECONDS must be between 60 and 3600.");
+  }
+  return `${ttl}s`;
+}
+
 function normalizePhone(phone: string): string {
   return phone.trim().replace(/[\s()-]/g, "");
 }
@@ -56,7 +64,7 @@ async function buildSession(user: SessionUser) {
     .setProtectedHeader({ alg: "HS256", typ: "JWT" })
     .setSubject(user.id)
     .setIssuedAt()
-    .setExpirationTime(Number(process.env.JWT_ACCESS_TTL_SECONDS ?? 900))
+    .setExpirationTime(accessTokenTtl())
     .sign(accessSecret());
 
   const refreshToken = randomBytes(64).toString("base64url");
@@ -210,7 +218,7 @@ export async function refreshSession(refreshToken: string) {
     .setProtectedHeader({ alg: "HS256", typ: "JWT" })
     .setSubject(user.id)
     .setIssuedAt()
-    .setExpirationTime(Number(process.env.JWT_ACCESS_TTL_SECONDS ?? 900))
+    .setExpirationTime(accessTokenTtl())
     .sign(accessSecret());
 
   return {
