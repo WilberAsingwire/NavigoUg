@@ -32,12 +32,7 @@ const config: ExpoConfig = {
     ],
     "expo-notifications",
     "expo-secure-store"
-  ],
-  extra: {
-    eas: {
-      projectId: process.env.EXPO_PUBLIC_EAS_PROJECT_ID
-    }
-  }
+  ]
 };
 
 export default config;
