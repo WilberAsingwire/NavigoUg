@@ -1,0 +1,346 @@
+generator client {
+  provider               = "prisma-client"
+  output                 = "../src/generated/prisma"
+  moduleFormat            = "esm"
+  generatedFileExtension  = "ts"
+  importFileExtension     = "ts"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum UserRole {
+  CUSTOMER
+  RIDER
+  ADMIN
+}
+
+enum RiderApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  SUSPENDED
+}
+
+enum RideStatus {
+  PENDING
+  ACCEPTED
+  ARRIVED_AT_PICKUP
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  EXPIRED
+}
+
+enum ParcelStatus {
+  PENDING
+  ACCEPTED
+  ARRIVED_AT_PICKUP
+  COLLECTED
+  IN_TRANSIT
+  ARRIVED_AT_DESTINATION
+  DELIVERED
+  CANCELLED
+  EXPIRED
+}
+
+enum PaymentMethod {
+  CASH
+  MOBILE_MONEY
+}
+
+enum PaymentStatus {
+  UNPAID
+  PAID
+}
+
+model User {
+  id                    String      @id @default(uuid()) @db.Uuid
+  fullName              String      @map("full_name") @db.VarChar(100)
+  phone                 String      @unique @db.VarChar(20)
+  email                 String?     @unique @db.VarChar(254)
+  passwordHash          String      @map("password_hash")
+  role                  UserRole    @default(CUSTOMER)
+  isActive              Boolean     @default(true) @map("is_active")
+  createdAt             DateTime    @default(now()) @map("created_at")
+  updatedAt             DateTime    @updatedAt @map("updated_at")
+
+  riderProfile          RiderProfile?
+  rideRequests          RideRequest[] @relation("RideCustomer")
+  assignedRides         RideRequest[] @relation("RideRider")
+  parcelRequests        ParcelRequest[] @relation("ParcelSender")
+  assignedParcels       ParcelRequest[] @relation("ParcelRider")
+  refreshTokens         RefreshToken[]
+  deviceTokens          DeviceToken[]
+  reviewedRiders        RiderProfile[] @relation("RiderReviewer")
+  rideHistoryChanges    RideStatusHistory[] @relation("RideStatusActor")
+  parcelHistoryChanges  ParcelStatusHistory[] @relation("ParcelStatusActor")
+  ridePaymentsRecorded  RidePayment[] @relation("RidePaymentRecorder")
+  parcelPaymentsRecorded ParcelPayment[] @relation("ParcelPaymentRecorder")
+
+  @@map("users")
+}
+
+model RiderProfile {
+  userId                 String              @id @map("user_id") @db.Uuid
+  approvalStatus         RiderApprovalStatus @default(PENDING) @map("approval_status")
+  identityReference      String?             @map("identity_reference") @db.VarChar(80)
+  licenceNumber          String?             @map("licence_number") @db.VarChar(80)
+  motorcyclePlate        String?             @map("motorcycle_plate") @db.VarChar(20)
+  motorcycleDescription  String?             @map("motorcycle_description") @db.VarChar(160)
+  reviewedById           String?             @map("reviewed_by_id") @db.Uuid
+  reviewedAt             DateTime?           @map("reviewed_at")
+  rejectionReason        String?             @map("rejection_reason") @db.VarChar(500)
+  createdAt              DateTime            @default(now()) @map("created_at")
+  updatedAt              DateTime            @updatedAt @map("updated_at")
+
+  user       User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reviewedBy User? @relation("RiderReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+
+  @@index([approvalStatus, createdAt])
+  @@map("rider_profiles")
+}
+
+model RefreshToken {
+  id         String    @id @default(uuid()) @db.Uuid
+  userId     String    @map("user_id") @db.Uuid
+  tokenHash  String    @unique @map("token_hash")
+  expiresAt  DateTime  @map("expires_at")
+  revokedAt  DateTime? @map("revoked_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, expiresAt])
+  @@map("refresh_tokens")
+}
+
+model DeviceToken {
+  id          String   @id @default(uuid()) @db.Uuid
+  userId      String   @map("user_id") @db.Uuid
+  pushToken   String   @unique @map("push_token") @db.VarChar(255)
+  platform    String   @db.VarChar(20)
+  lastSeenAt  DateTime @default(now()) @map("last_seen_at")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("device_tokens")
+}
+
+model Landmark {
+  id          String   @id @default(uuid()) @db.Uuid
+  name        String   @db.VarChar(120)
+  category    String   @db.VarChar(60)
+  latitude    Decimal  @db.Decimal(10, 7)
+  longitude   Decimal  @db.Decimal(10, 7)
+  description String?  @db.VarChar(250)
+  isActive    Boolean  @default(true) @map("is_active")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  pickupRides       RideRequest[] @relation("RidePickupLandmark")
+  destinationRides  RideRequest[] @relation("RideDestinationLandmark")
+  pickupParcels     ParcelRequest[] @relation("ParcelPickupLandmark")
+  destinationParcels ParcelRequest[] @relation("ParcelDestinationLandmark")
+
+  @@index([isActive, category])
+  @@map("landmarks")
+}
+
+model FareRule {
+  id            String   @id @default(uuid()) @db.Uuid
+  requestType   String   @map("request_type") @db.VarChar(20)
+  minDistanceKm Decimal  @map("min_distance_km") @db.Decimal(8, 2)
+  maxDistanceKm Decimal? @map("max_distance_km") @db.Decimal(8, 2)
+  parcelSize    String?  @map("parcel_size") @db.VarChar(30)
+  fareUgx       Int      @map("fare_ugx")
+  isActive      Boolean  @default(true) @map("is_active")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  @@index([requestType, isActive])
+  @@map("fare_rules")
+}
+
+model RideRequest {
+  id                    String     @id @default(uuid()) @db.Uuid
+  customerId            String     @map("customer_id") @db.Uuid
+  riderId               String?    @map("rider_id") @db.Uuid
+  status                RideStatus @default(PENDING)
+  pickupLatitude        Decimal    @map("pickup_latitude") @db.Decimal(10, 7)
+  pickupLongitude       Decimal    @map("pickup_longitude") @db.Decimal(10, 7)
+  pickupLandmarkId      String?    @map("pickup_landmark_id") @db.Uuid
+  pickupDescription     String     @map("pickup_description") @db.VarChar(250)
+  destinationLatitude   Decimal    @map("destination_latitude") @db.Decimal(10, 7)
+  destinationLongitude  Decimal    @map("destination_longitude") @db.Decimal(10, 7)
+  destinationLandmarkId String?    @map("destination_landmark_id") @db.Uuid
+  destinationDescription String   @map("destination_description") @db.VarChar(250)
+  fareAmountUgx         Int        @map("fare_amount_ugx")
+  fareBasis             String     @map("fare_basis") @db.VarChar(50)
+  estimatedDistanceKm   Decimal?   @map("estimated_distance_km") @db.Decimal(8, 2)
+  expiresAt             DateTime?  @map("expires_at")
+  acceptedAt            DateTime?  @map("accepted_at")
+  startedAt             DateTime?  @map("started_at")
+  completedAt           DateTime?  @map("completed_at")
+  cancelledAt           DateTime?  @map("cancelled_at")
+  createdAt             DateTime   @default(now()) @map("created_at")
+  updatedAt             DateTime   @updatedAt @map("updated_at")
+
+  customer        User        @relation("RideCustomer", fields: [customerId], references: [id], onDelete: Restrict)
+  rider           User?       @relation("RideRider", fields: [riderId], references: [id], onDelete: Restrict)
+  pickupLandmark  Landmark?   @relation("RidePickupLandmark", fields: [pickupLandmarkId], references: [id], onDelete: SetNull)
+  destinationLandmark Landmark? @relation("RideDestinationLandmark", fields: [destinationLandmarkId], references: [id], onDelete: SetNull)
+  history         RideStatusHistory[]
+  payment         RidePayment?
+  tracking        LiveTrackingSession?
+
+  @@index([status, createdAt])
+  @@index([customerId, createdAt])
+  @@index([riderId, status])
+  @@map("ride_requests")
+}
+
+model ParcelRequest {
+  id                    String       @id @default(uuid()) @db.Uuid
+  senderId              String       @map("sender_id") @db.Uuid
+  riderId               String?      @map("rider_id") @db.Uuid
+  recipientName         String       @map("recipient_name") @db.VarChar(100)
+  recipientPhone        String       @map("recipient_phone") @db.VarChar(20)
+  parcelDescription     String       @map("parcel_description") @db.VarChar(300)
+  sizeCategory          String       @map("size_category") @db.VarChar(30)
+  status                ParcelStatus @default(PENDING)
+  pickupLatitude        Decimal      @map("pickup_latitude") @db.Decimal(10, 7)
+  pickupLongitude       Decimal      @map("pickup_longitude") @db.Decimal(10, 7)
+  pickupLandmarkId      String?      @map("pickup_landmark_id") @db.Uuid
+  pickupDescription     String       @map("pickup_description") @db.VarChar(250)
+  destinationLatitude   Decimal      @map("destination_latitude") @db.Decimal(10, 7)
+  destinationLongitude  Decimal      @map("destination_longitude") @db.Decimal(10, 7)
+  destinationLandmarkId String?      @map("destination_landmark_id") @db.Uuid
+  destinationDescription String     @map("destination_description") @db.VarChar(250)
+  fareAmountUgx         Int          @map("fare_amount_ugx")
+  fareBasis             String       @map("fare_basis") @db.VarChar(50)
+  estimatedDistanceKm   Decimal?     @map("estimated_distance_km") @db.Decimal(8, 2)
+  pickupCodeHash        String       @map("pickup_code_hash")
+  deliveryCodeHash      String       @map("delivery_code_hash")
+  pickupCodeAttempts    Int          @default(0) @map("pickup_code_attempts")
+  deliveryCodeAttempts  Int          @default(0) @map("delivery_code_attempts")
+  pickupCodeLockedAt    DateTime?    @map("pickup_code_locked_at")
+  deliveryCodeLockedAt  DateTime?    @map("delivery_code_locked_at")
+  expiresAt             DateTime?    @map("expires_at")
+  acceptedAt            DateTime?    @map("accepted_at")
+  collectedAt           DateTime?    @map("collected_at")
+  deliveredAt           DateTime?    @map("delivered_at")
+  cancelledAt           DateTime?    @map("cancelled_at")
+  createdAt             DateTime     @default(now()) @map("created_at")
+  updatedAt             DateTime     @updatedAt @map("updated_at")
+
+  sender              User        @relation("ParcelSender", fields: [senderId], references: [id], onDelete: Restrict)
+  rider               User?       @relation("ParcelRider", fields: [riderId], references: [id], onDelete: Restrict)
+  pickupLandmark      Landmark?   @relation("ParcelPickupLandmark", fields: [pickupLandmarkId], references: [id], onDelete: SetNull)
+  destinationLandmark Landmark?   @relation("ParcelDestinationLandmark", fields: [destinationLandmarkId], references: [id], onDelete: SetNull)
+  history             ParcelStatusHistory[]
+  payment             ParcelPayment?
+  tracking            LiveTrackingSession?
+
+  @@index([status, createdAt])
+  @@index([senderId, createdAt])
+  @@index([riderId, status])
+  @@map("parcel_requests")
+}
+
+model RideStatusHistory {
+  id            String     @id @default(uuid()) @db.Uuid
+  rideRequestId String     @map("ride_request_id") @db.Uuid
+  fromStatus    RideStatus? @map("from_status")
+  toStatus      RideStatus @map("to_status")
+  changedById   String?    @map("changed_by_id") @db.Uuid
+  note          String?    @db.VarChar(300)
+  createdAt     DateTime   @default(now()) @map("created_at")
+
+  request   RideRequest @relation(fields: [rideRequestId], references: [id], onDelete: Cascade)
+  changedBy User?       @relation("RideStatusActor", fields: [changedById], references: [id], onDelete: SetNull)
+
+  @@index([rideRequestId, createdAt])
+  @@map("ride_status_history")
+}
+
+model ParcelStatusHistory {
+  id              String       @id @default(uuid()) @db.Uuid
+  parcelRequestId String       @map("parcel_request_id") @db.Uuid
+  fromStatus      ParcelStatus? @map("from_status")
+  toStatus        ParcelStatus @map("to_status")
+  changedById     String?      @map("changed_by_id") @db.Uuid
+  note            String?      @db.VarChar(300)
+  createdAt       DateTime     @default(now()) @map("created_at")
+
+  request   ParcelRequest @relation(fields: [parcelRequestId], references: [id], onDelete: Cascade)
+  changedBy User?         @relation("ParcelStatusActor", fields: [changedById], references: [id], onDelete: SetNull)
+
+  @@index([parcelRequestId, createdAt])
+  @@map("parcel_status_history")
+}
+
+model RidePayment {
+  id                 String        @id @default(uuid()) @db.Uuid
+  rideRequestId      String        @unique @map("ride_request_id") @db.Uuid
+  method             PaymentMethod
+  status             PaymentStatus @default(UNPAID)
+  amountUgx          Int           @map("amount_ugx")
+  transactionReference String?     @map("transaction_reference") @db.VarChar(120)
+  recordedById       String?       @map("recorded_by_id") @db.Uuid
+  recordedAt         DateTime?     @map("recorded_at")
+  createdAt          DateTime      @default(now()) @map("created_at")
+
+  request   RideRequest @relation(fields: [rideRequestId], references: [id], onDelete: Cascade)
+  recordedBy User?      @relation("RidePaymentRecorder", fields: [recordedById], references: [id], onDelete: SetNull)
+
+  @@map("ride_payments")
+}
+
+model ParcelPayment {
+  id                   String        @id @default(uuid()) @db.Uuid
+  parcelRequestId      String        @unique @map("parcel_request_id") @db.Uuid
+  method               PaymentMethod
+  status               PaymentStatus @default(UNPAID)
+  amountUgx            Int           @map("amount_ugx")
+  transactionReference String?       @map("transaction_reference") @db.VarChar(120)
+  recordedById         String?       @map("recorded_by_id") @db.Uuid
+  recordedAt           DateTime?     @map("recorded_at")
+  createdAt            DateTime      @default(now()) @map("created_at")
+
+  request    ParcelRequest @relation(fields: [parcelRequestId], references: [id], onDelete: Cascade)
+  recordedBy User?         @relation("ParcelPaymentRecorder", fields: [recordedById], references: [id], onDelete: SetNull)
+
+  @@map("parcel_payments")
+}
+
+model LiveTrackingSession {
+  id                       String    @id @default(uuid()) @db.Uuid
+  rideRequestId            String?   @unique @map("ride_request_id") @db.Uuid
+  parcelRequestId          String?   @unique @map("parcel_request_id") @db.Uuid
+  riderSharingEnabled      Boolean   @default(false) @map("rider_sharing_enabled")
+  customerSharingEnabled   Boolean   @default(false) @map("customer_sharing_enabled")
+  riderConsentAt           DateTime? @map("rider_consent_at")
+  customerConsentAt        DateTime? @map("customer_consent_at")
+  riderLatitude            Decimal?  @map("rider_latitude") @db.Decimal(10, 7)
+  riderLongitude           Decimal?  @map("rider_longitude") @db.Decimal(10, 7)
+  riderAccuracyMeters      Float?    @map("rider_accuracy_meters")
+  riderLocationUpdatedAt   DateTime? @map("rider_location_updated_at")
+  customerLatitude         Decimal?  @map("customer_latitude") @db.Decimal(10, 7)
+  customerLongitude        Decimal?  @map("customer_longitude") @db.Decimal(10, 7)
+  customerAccuracyMeters  Float?    @map("customer_accuracy_meters")
+  customerLocationUpdatedAt DateTime? @map("customer_location_updated_at")
+  startedAt                DateTime? @map("started_at")
+  endedAt                  DateTime? @map("ended_at")
+  createdAt                DateTime  @default(now()) @map("created_at")
+  updatedAt                DateTime  @updatedAt @map("updated_at")
+
+  rideRequest   RideRequest?   @relation(fields: [rideRequestId], references: [id], onDelete: Cascade)
+  parcelRequest ParcelRequest? @relation(fields: [parcelRequestId], references: [id], onDelete: Cascade)
+
+  @@index([endedAt, updatedAt])
+  @@map("live_tracking_sessions")
+}
