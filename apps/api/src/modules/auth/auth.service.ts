@@ -126,26 +126,23 @@ export async function registerRider(input: {
   const phone = normalizePhone(input.phone);
   const passwordHash = await argon2.hash(input.password, { type: argon2.argon2id });
   try {
-    const user = await prisma.$transaction(async (tx) => {
-      const created = await tx.user.create({
-        data: {
-          fullName: input.fullName.trim(),
-          phone,
-          email: input.email?.trim().toLowerCase(),
-          passwordHash,
-          role: "RIDER"
+    const user = await prisma.user.create({
+      data: {
+        fullName: input.fullName.trim(),
+        phone,
+        email: input.email?.trim().toLowerCase(),
+        passwordHash,
+        role: "RIDER",
+        riderProfile: {
+          create: {
+            approvalStatus: "PENDING",
+            licenceNumber: input.licenceNumber.trim(),
+            motorcyclePlate: input.motorcyclePlate.trim().toUpperCase(),
+            motorcycleDescription: input.motorcycleDescription.trim()
+          }
         }
-      });
-      await tx.riderProfile.create({
-        data: {
-          userId: created.id,
-          approvalStatus: "PENDING",
-          licenceNumber: input.licenceNumber.trim(),
-          motorcyclePlate: input.motorcyclePlate.trim().toUpperCase(),
-          motorcycleDescription: input.motorcycleDescription.trim()
-        }
-      });
-      return { ...created, riderProfile: { approvalStatus: "PENDING" as const } };
+      },
+      include: { riderProfile: true }
     });
     return await buildSession(user);
   } catch (error) {
@@ -185,35 +182,37 @@ export async function refreshSession(refreshToken: string) {
   const now = new Date();
   const newRefreshToken = randomBytes(64).toString("base64url");
   const refreshDays = Number(process.env.REFRESH_TOKEN_TTL_DAYS ?? 30);
+  if (!Number.isInteger(refreshDays) || refreshDays < 1 || refreshDays > 90) {
+    throw new Error("REFRESH_TOKEN_TTL_DAYS must be between 1 and 90.");
+  }
 
-  const user = await prisma.$transaction(async (tx) => {
-    const existing = await tx.refreshToken.findUnique({
-      where: { tokenHash },
-      include: { user: { include: { riderProfile: true } } }
-    });
-
-    if (!existing || existing.revokedAt || existing.expiresAt <= now || !existing.user.isActive) {
-      throw new AuthError(401, "INVALID_REFRESH_TOKEN", "Your session has expired. Please sign in again.");
-    }
-
-    const revoked = await tx.refreshToken.updateMany({
-      where: { id: existing.id, revokedAt: null, expiresAt: { gt: now } },
-      data: { revokedAt: now }
-    });
-    if (revoked.count !== 1) {
-      throw new AuthError(401, "INVALID_REFRESH_TOKEN", "This refresh token has already been used.");
-    }
-
-    await tx.refreshToken.create({
-      data: {
-        userId: existing.userId,
-        tokenHash: hashRefreshToken(newRefreshToken),
-        expiresAt: new Date(Date.now() + refreshDays * 24 * 60 * 60 * 1000)
-      }
-    });
-    return existing.user;
+  const existing = await prisma.refreshToken.findUnique({
+    where: { tokenHash },
+    include: { user: { include: { riderProfile: true } } }
   });
 
+  if (!existing || existing.revokedAt || existing.expiresAt <= now || !existing.user.isActive) {
+    throw new AuthError(401, "INVALID_REFRESH_TOKEN", "Your session has expired. Please sign in again.");
+  }
+
+  // Conditional update ensures concurrent refresh attempts cannot both reuse a token.
+  const revoked = await prisma.refreshToken.updateMany({
+    where: { id: existing.id, revokedAt: null, expiresAt: { gt: now } },
+    data: { revokedAt: now }
+  });
+  if (revoked.count !== 1) {
+    throw new AuthError(401, "INVALID_REFRESH_TOKEN", "This refresh token has already been used.");
+  }
+
+  await prisma.refreshToken.create({
+    data: {
+      userId: existing.userId,
+      tokenHash: hashRefreshToken(newRefreshToken),
+      expiresAt: new Date(Date.now() + refreshDays * 24 * 60 * 60 * 1000)
+    }
+  });
+
+  const user = existing.user;
   const accessToken = await new SignJWT({ role: user.role })
     .setProtectedHeader({ alg: "HS256", typ: "JWT" })
     .setSubject(user.id)
