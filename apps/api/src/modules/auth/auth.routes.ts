@@ -1,0 +1,104 @@
+import { Router } from "express";
+import rateLimit from "express-rate-limit";
+import {
+  LoginInputSchema,
+  RefreshTokenInputSchema,
+  RegisterCustomerInputSchema,
+  RegisterRiderInputSchema
+} from "@navigo/shared";
+import {
+  getSafeCurrentUser,
+  login,
+  refreshSession,
+  registerCustomer,
+  registerRider,
+  revokeRefreshToken
+} from "./auth.service.js";
+import { requireAuth } from "./auth.middleware.js";
+import { AuthError } from "./auth.service.js";
+
+export const authRouter = Router();
+
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 10,
+  standardHeaders: "draft-8",
+  legacyHeaders: false,
+  message: { error: { code: "TOO_MANY_ATTEMPTS", message: "Too many attempts. Please try again later." } }
+});
+
+function validate<T>(schema: { safeParse: (value: unknown) => { success: true; data: T } | { success: false; error: { issues: unknown[] } } }, body: unknown) {
+  const result = schema.safeParse(body);
+  return result.success ? { success: true as const, data: result.data } :
+    { success: false as const, issues: result.error.issues };
+}
+
+authRouter.post("/register/customer", authLimiter, async (request, response, next) => {
+  const parsed = validate(RegisterCustomerInputSchema, request.body);
+  if (!parsed.success) {
+    response.status(400).json({ error: { code: "VALIDATION_ERROR", message: "Please check the registration details.", details: parsed.issues } });
+    return;
+  }
+  try {
+    response.status(201).json({ data: await registerCustomer(parsed.data) });
+  } catch (error) { next(error); }
+});
+
+authRouter.post("/register/rider", authLimiter, async (request, response, next) => {
+  const parsed = validate(RegisterRiderInputSchema, request.body);
+  if (!parsed.success) {
+    response.status(400).json({ error: { code: "VALIDATION_ERROR", message: "Please check the rider registration details.", details: parsed.issues } });
+    return;
+  }
+  try {
+    response.status(201).json({ data: await registerRider(parsed.data) });
+  } catch (error) { next(error); }
+});
+
+authRouter.post("/login", authLimiter, async (request, response, next) => {
+  const parsed = validate(LoginInputSchema, request.body);
+  if (!parsed.success) {
+    response.status(400).json({ error: { code: "VALIDATION_ERROR", message: "Enter a valid phone number and password.", details: parsed.issues } });
+    return;
+  }
+  try {
+    response.status(200).json({ data: await login(parsed.data) });
+  } catch (error) { next(error); }
+});
+
+authRouter.post("/refresh", authLimiter, async (request, response, next) => {
+  const parsed = validate(RefreshTokenInputSchema, request.body);
+  if (!parsed.success) {
+    response.status(400).json({ error: { code: "VALIDATION_ERROR", message: "A valid refresh token is required." } });
+    return;
+  }
+  try {
+    response.status(200).json({ data: await refreshSession(parsed.data.refreshToken) });
+  } catch (error) { next(error); }
+});
+
+authRouter.post("/logout", requireAuth, async (request, response, next) => {
+  const parsed = validate(RefreshTokenInputSchema, request.body);
+  if (!parsed.success) {
+    response.status(400).json({ error: { code: "VALIDATION_ERROR", message: "A valid refresh token is required." } });
+    return;
+  }
+  try {
+    await revokeRefreshToken(parsed.data.refreshToken);
+    response.status(204).send();
+  } catch (error) { next(error); }
+});
+
+authRouter.get("/me", requireAuth, async (request, response, next) => {
+  try {
+    response.status(200).json({ data: await getSafeCurrentUser(request.auth!.userId) });
+  } catch (error) { next(error); }
+});
+
+export function authErrorHandler(error: unknown, _request: import("express").Request, response: import("express").Response, next: import("express").NextFunction) {
+  if (error instanceof AuthError) {
+    response.status(error.statusCode).json({ error: { code: error.code, message: error.message } });
+    return;
+  }
+  next(error);
+}
