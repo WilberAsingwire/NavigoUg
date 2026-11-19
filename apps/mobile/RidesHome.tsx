@@ -2138,7 +2138,7 @@ function ProfilePanel({
       setNewPassword("");
       setConfirmPassword("");
       setShowPasswordForm(false);
-      setSuccess("Password changed. Other signed-in sessions have been signed out.");
+      setSuccess("Password changed. Other devices will need to sign in again.");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "We couldn't change your password. Please try again.");
     } finally {
@@ -2209,7 +2209,7 @@ function ProfilePanel({
             <Text style={styles.label}>Confirm new password</Text>
             <TextInput style={styles.addressInput} value={confirmPassword} onChangeText={setConfirmPassword} secureTextEntry placeholder="Enter the new password again" placeholderTextColor="#98A2B3" />
             <PrimaryButton label="Update password" loading={busy} onPress={savePassword} disabled={busy || !currentPassword || !newPassword || !confirmPassword} />
-            <Text style={styles.profileHint}>For your security, this change signs out other devices and refreshes this device's session.</Text>
+            <Text style={styles.profileHint}>For your security, other devices will need to sign in again when their current access token expires.</Text>
           </>
         ) : (
           <Text style={styles.profileInfoText}>Keep your password private and change it whenever you think it may have been exposed.</Text>
