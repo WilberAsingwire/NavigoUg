@@ -794,6 +794,8 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
   const [riderJobTab, setRiderJobTab] = useState<"rides" | "parcels">("rides");
   const [pickup, setPickup] = useState("");
   const [destination, setDestination] = useState("");
+  const pickupInputRef = useRef<TextInput | null>(null);
+  const destinationInputRef = useRef<TextInput | null>(null);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("CASH");
   const [quote, setQuote] = useState<Quote | null>(null);
   const [locations, setLocations] = useState<{ pickup: RideLocation; destination: RideLocation } | null>(null);
@@ -857,6 +859,21 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [activeLocationField, setActiveLocationField] = useState<"pickup" | "destination" | null>(null);
+
+  function continueLocationSearch(completedField: "pickup" | "destination", otherLocation: string) {
+    if (otherLocation.trim()) {
+      setActiveLocationField(null);
+      Keyboard.dismiss();
+      return;
+    }
+
+    const nextField = completedField === "pickup" ? "destination" : "pickup";
+    setActiveLocationField(nextField);
+    requestAnimationFrame(() => {
+      if (nextField === "pickup") pickupInputRef.current?.focus();
+      else destinationInputRef.current?.focus();
+    });
+  }
   const [deviceLocation, setDeviceLocation] = useState<RideLocation | null>(null);
   const [locationStatus, setLocationStatus] = useState<"locating" | "ready" | "denied" | "unavailable">("locating");
   const [customerMapReady, setCustomerMapReady] = useState(false);
@@ -1804,12 +1821,12 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                 ) : (
                   <>
                     <Text style={styles.label}>Pickup location</Text>
-                    <TextInput style={styles.addressInput} value={pickup} onFocus={() => setActiveLocationField("pickup")} onChangeText={(value) => { setPickup(value); setSelectedPickupLocation(null); setSelectedPickupSearchQuery(""); setParcelQuote(null); setParcelLocations(null); }} placeholder="Where should we collect the item?" placeholderTextColor="#98A2B3" />
+                    <TextInput ref={pickupInputRef} style={styles.addressInput} value={pickup} onFocus={() => setActiveLocationField("pickup")} onChangeText={(value) => { setPickup(value); setSelectedPickupLocation(null); setSelectedPickupSearchQuery(""); setParcelQuote(null); setParcelLocations(null); }} placeholder="Where should we collect the item?" placeholderTextColor="#98A2B3" />
                     {activeLocationField === "pickup" ? <TouchableOpacity style={styles.locationSearchLocationAction} onPress={() => void detectPickupLocation(true)}><Text style={styles.locationSearchLocationActionText}>◎  Use current location</Text></TouchableOpacity> : null}
-                    <LocationSuggestions visible={activeLocationField === "pickup"} query={pickup} onSelect={(suggestion) => { setPickup(suggestion.label); setSelectedPickupLocation(suggestion.latitude !== undefined && suggestion.longitude !== undefined ? { latitude: suggestion.latitude, longitude: suggestion.longitude, description: suggestion.label } : null); setSelectedPickupSearchQuery(suggestion.searchQuery ?? ""); setActiveLocationField(null); Keyboard.dismiss(); setParcelQuote(null); setParcelLocations(null); }} />
+                    <LocationSuggestions visible={activeLocationField === "pickup"} query={pickup} onSelect={(suggestion) => { setPickup(suggestion.label); setSelectedPickupLocation(suggestion.latitude !== undefined && suggestion.longitude !== undefined ? { latitude: suggestion.latitude, longitude: suggestion.longitude, description: suggestion.label } : null); setSelectedPickupSearchQuery(suggestion.searchQuery ?? ""); continueLocationSearch("pickup", destination); setParcelQuote(null); setParcelLocations(null); }} />
                     <Text style={styles.label}>Delivery location</Text>
-                    <TextInput style={styles.addressInput} value={destination} onFocus={() => setActiveLocationField("destination")} onChangeText={(value) => { setDestination(value); setSelectedDestinationLocation(null); setSelectedDestinationSearchQuery(""); setParcelQuote(null); setParcelLocations(null); }} placeholder="Where should we deliver it?" placeholderTextColor="#98A2B3" />
-                    <LocationSuggestions visible={activeLocationField === "destination"} query={destination} onSelect={(suggestion) => { setDestination(suggestion.label); setSelectedDestinationLocation(suggestion.latitude !== undefined && suggestion.longitude !== undefined ? { latitude: suggestion.latitude, longitude: suggestion.longitude, description: suggestion.label } : null); setSelectedDestinationSearchQuery(suggestion.searchQuery ?? ""); setActiveLocationField(null); Keyboard.dismiss(); setParcelQuote(null); setParcelLocations(null); }} />
+                    <TextInput ref={destinationInputRef} style={styles.addressInput} value={destination} onFocus={() => setActiveLocationField("destination")} onChangeText={(value) => { setDestination(value); setSelectedDestinationLocation(null); setSelectedDestinationSearchQuery(""); setParcelQuote(null); setParcelLocations(null); }} placeholder="Where should we deliver it?" placeholderTextColor="#98A2B3" />
+                    <LocationSuggestions visible={activeLocationField === "destination"} query={destination} onSelect={(suggestion) => { setDestination(suggestion.label); setSelectedDestinationLocation(suggestion.latitude !== undefined && suggestion.longitude !== undefined ? { latitude: suggestion.latitude, longitude: suggestion.longitude, description: suggestion.label } : null); setSelectedDestinationSearchQuery(suggestion.searchQuery ?? ""); continueLocationSearch("destination", pickup); setParcelQuote(null); setParcelLocations(null); }} />
                     <Text style={styles.label}>What are you sending?</Text>
                     <TextInput style={styles.addressInput} value={itemDescription} onChangeText={(value) => { setItemDescription(value); setParcelQuote(null); }} placeholder="e.g. Documents, clothes, phone" placeholderTextColor="#98A2B3" />
                     <Text style={styles.label}>Item size</Text>
@@ -1860,6 +1877,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                 {activeLocationField === null ? <Text style={styles.cardTitle}>Plan your trip</Text> : null}
                 <Text style={styles.label}>Pickup location</Text>
                 <TextInput
+                  ref={pickupInputRef}
                   style={styles.addressInput}
                   value={pickup}
                   onFocus={() => setActiveLocationField("pickup")}
@@ -1885,14 +1903,14 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                         : null
                     );
                     setSelectedPickupSearchQuery(suggestion.searchQuery ?? "");
-                    setActiveLocationField(null);
-                    Keyboard.dismiss();
+                    continueLocationSearch("pickup", destination);
                     setQuote(null);
                     setLocations(null);
                   }}
                 />
                 <Text style={styles.label}>Destination</Text>
                 <TextInput
+                  ref={destinationInputRef}
                   style={styles.addressInput}
                   value={destination}
                   onFocus={() => setActiveLocationField("destination")}
@@ -1917,8 +1935,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                         : null
                     );
                     setSelectedDestinationSearchQuery(suggestion.searchQuery ?? "");
-                    setActiveLocationField(null);
-                    Keyboard.dismiss();
+                    continueLocationSearch("destination", pickup);
                     setQuote(null);
                     setLocations(null);
                   }}
