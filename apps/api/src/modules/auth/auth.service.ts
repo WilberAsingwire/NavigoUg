@@ -10,7 +10,12 @@ type SessionUser = {
   email: string | null;
   role: "CUSTOMER" | "RIDER" | "ADMIN";
   isActive: boolean;
-  riderProfile?: { approvalStatus: "PENDING" | "APPROVED" | "REJECTED" | "SUSPENDED" } | null;
+  riderProfile?: {
+    approvalStatus: "PENDING" | "APPROVED" | "REJECTED" | "SUSPENDED";
+    licenceNumber: string | null;
+    motorcyclePlate: string | null;
+    motorcycleDescription: string | null;
+  } | null;
 };
 
 export class AuthError extends Error {
@@ -55,7 +60,12 @@ function safeUser(user: SessionUser) {
     phone: user.phone,
     email: user.email,
     role: user.role,
-    riderApprovalStatus: user.riderProfile?.approvalStatus ?? null
+    riderApprovalStatus: user.riderProfile?.approvalStatus ?? null,
+    riderProfile: user.riderProfile ? {
+      licenceNumber: user.riderProfile.licenceNumber,
+      motorcyclePlate: user.riderProfile.motorcyclePlate,
+      motorcycleDescription: user.riderProfile.motorcycleDescription
+    } : null
   };
 }
 
