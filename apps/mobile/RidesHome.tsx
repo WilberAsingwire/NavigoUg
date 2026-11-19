@@ -983,6 +983,7 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
       setPickup("");
       setDestination("");
       setMainTab("activity");
+      setCustomerActivityTab("rides");
       await loadDashboard();
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Unable to create the ride request.");
@@ -1472,9 +1473,8 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
                   </Text>
                 </View>
                 <TouchableOpacity style={styles.locationChangeButton} onPress={() => {
-                  setMainTab("home");
-                  setTab("book");
                   setActiveLocationField("pickup");
+                  setTab("book");
                 }}>
                   <Text style={styles.locationChangeText}>Change</Text>
                 </TouchableOpacity>
@@ -1570,6 +1570,7 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
                   <PrimaryButton label="Send another item" loading={false} onPress={() => { setCreatedParcel(null); setPickup(""); setDestination(""); setItemDescription(""); setRecipientName(""); setRecipientPhone(""); setSelectedPickupLocation(null); setSelectedDestinationLocation(null); setParcelQuote(null); }} />
                 )}
               </View>
+
             ) : (
               <View style={styles.card}>
                 <Text style={styles.cardTitle}>Plan your trip</Text>
@@ -1690,7 +1691,6 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
               </View>
 
             )}
-
               </>
             ) : mainTab === "activity" ? (
               <View style={styles.section}>
@@ -2074,9 +2074,9 @@ function ProfilePanel({ session, onSignOut, signingOut }: { session: Session; on
         </View>
       ) : null}
       <View style={styles.profileInfoCard}>
-        <Text style={styles.profileInfoTitle}>Your account, your control</Text>
+        <Text style={styles.profileInfoTitle}>Account settings</Text>
         <Text style={styles.profileInfoText}>
-          This area is for information and settings belonging to your own NAVIGO account. Protected changes such as phone-number and password updates will require secure verification.
+          Your personal and rider details are private to your own account. Secure editing and password controls will be added with server-side verification.
         </Text>
       </View>
       <TouchableOpacity style={styles.profileSignOut} onPress={onSignOut} disabled={signingOut}>
