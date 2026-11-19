@@ -6,6 +6,7 @@ import { prisma } from "./lib/prisma.js";
 import { authRouter, authErrorHandler } from "./modules/auth/auth.routes.js";
 import { ridesRouter, ridesErrorHandler } from "./modules/rides/rides.routes.js";
 import { parcelsRouter, parcelsErrorHandler } from "./modules/parcels/parcels.routes.js";
+import { adminRouter, adminErrorHandler } from "./modules/admin/admin.routes.js";
 
 export const app = express();
 app.disable("x-powered-by");
@@ -60,9 +61,11 @@ app.get("/api/v1/health/ready", async (_request, response) => {
 app.use("/api/v1/auth", authRouter);
 app.use("/api/v1/rides", ridesRouter);
 app.use("/api/v1/parcels", parcelsRouter);
+app.use("/api/v1/admin", adminRouter);
 app.use(authErrorHandler);
 app.use(ridesErrorHandler);
 app.use(parcelsErrorHandler);
+app.use(adminErrorHandler);
 
 app.use((_request, response) => {
   response.status(404).json({
