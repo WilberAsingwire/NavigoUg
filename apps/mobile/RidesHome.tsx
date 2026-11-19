@@ -805,6 +805,24 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
   const [assignedParcels, setAssignedParcels] = useState<RiderParcel[]>([]);
   const [sentParcels, setSentParcels] = useState<RiderParcel[]>([]);
   const hasActiveCustomerRides = isCustomer && rides.some((ride) => !["COMPLETED", "CANCELLED", "EXPIRED"].includes(ride.status));
+  const activeRiderRide = rides.find((ride) => ["ACCEPTED", "ARRIVED_AT_PICKUP", "IN_PROGRESS"].includes(ride.status));
+  const activeRiderParcel = assignedParcels.find((parcel) => ["ACCEPTED", "ARRIVED_AT_PICKUP", "COLLECTED", "IN_TRANSIT", "ARRIVED_AT_DESTINATION"].includes(parcel.status));
+  const riderMapPickup = activeRiderRide
+    ? coordinateFromValues(activeRiderRide.pickupLatitude, activeRiderRide.pickupLongitude)
+    : activeRiderParcel
+      ? coordinateFromValues(activeRiderParcel.pickupLatitude, activeRiderParcel.pickupLongitude)
+      : null;
+  const riderMapDestination = activeRiderRide
+    ? coordinateFromValues(activeRiderRide.destinationLatitude, activeRiderRide.destinationLongitude)
+    : activeRiderParcel
+      ? coordinateFromValues(activeRiderParcel.destinationLatitude, activeRiderParcel.destinationLongitude)
+      : null;
+  const riderMapJobKey = activeRiderRide?.id ?? activeRiderParcel?.id ?? null;
+  const riderMapNavigationTarget = activeRiderRide
+    ? activeRiderRide.status === "ACCEPTED" ? riderMapPickup : riderMapDestination
+    : activeRiderParcel
+      ? ["ACCEPTED", "ARRIVED_AT_PICKUP"].includes(activeRiderParcel.status) ? riderMapPickup : riderMapDestination
+      : null;
   const [parcelCodeInputs, setParcelCodeInputs] = useState<Record<string, string>>({});
   const [ridePaymentReferences, setRidePaymentReferences] = useState<Record<string, string>>({});
   const [parcelPaymentReferences, setParcelPaymentReferences] = useState<Record<string, string>>({});
@@ -845,6 +863,11 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
     longitudeDelta: 0.035
   });
   const [mapSelectionField, setMapSelectionField] = useState<"pickup" | "destination" | null>(null);
+
+  useEffect(() => {
+    if (!isApprovedRider || mainTab !== "home" || !riderMapPickup || !riderMapDestination) return;
+    setMapRegion(routeMapRegion([riderMapPickup, riderMapDestination]));
+  }, [isApprovedRider, mainTab, riderMapJobKey, riderMapPickup?.latitude, riderMapPickup?.longitude, riderMapDestination?.latitude, riderMapDestination?.longitude]);
 
   const loadDashboard = useCallback(async () => {
     setLoading(true);
