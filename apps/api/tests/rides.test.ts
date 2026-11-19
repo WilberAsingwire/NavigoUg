@@ -12,6 +12,8 @@ const mocks = vi.hoisted(() => ({
   rideFindUnique: vi.fn(),
   rideUpdateMany: vi.fn(),
   rideHistoryCreate: vi.fn(),
+  ridePaymentUpdateMany: vi.fn(),
+  auditLogCreate: vi.fn(),
   transaction: vi.fn(),
   getMotorcycleRoute: vi.fn()
 }));
@@ -29,6 +31,8 @@ vi.mock("../src/lib/prisma.js", () => ({
       updateMany: mocks.rideUpdateMany
     },
     rideStatusHistory: { create: mocks.rideHistoryCreate },
+    ridePayment: { updateMany: mocks.ridePaymentUpdateMany },
+    auditLog: { create: mocks.auditLogCreate },
     $transaction: mocks.transaction
   }
 }));
@@ -90,7 +94,9 @@ describe("Motorcycle ride API", () => {
           findUnique: mocks.rideFindUnique,
           updateMany: mocks.rideUpdateMany
         },
-        rideStatusHistory: { create: mocks.rideHistoryCreate }
+        rideStatusHistory: { create: mocks.rideHistoryCreate },
+        ridePayment: { updateMany: mocks.ridePaymentUpdateMany },
+        auditLog: { create: mocks.auditLogCreate }
       })
     );
   });
@@ -234,4 +240,60 @@ describe("Motorcycle ride API", () => {
     expect(response.body.error.code).toBe("VALIDATION_ERROR");
     expect(mocks.fareRuleFindMany).not.toHaveBeenCalled();
   });
+  it("allows only a rider to record payment for a completed assigned ride", async () => {
+    const token = await accessToken("CUSTOMER");
+    const response = await request(app)
+      .post("/api/v1/rides/9d530def-28a0-4c1d-8c2e-6ffbaed03ec3/payment/record")
+      .set("Authorization", `Bearer ${token}`)
+      .send({});
+
+    expect(response.status).toBe(403);
+    expect(mocks.rideFindUnique).not.toHaveBeenCalled();
+  });
+
+  it("records an assigned completed ride payment and audits the rider confirmation", async () => {
+    const rideId = "9d530def-28a0-4c1d-8c2e-6ffbaed03ec3";
+    const payment = { id: "8d530def-28a0-4c1d-8c2e-6ffbaed03ec4", method: "MOBILE_MONEY", status: "UNPAID", amountUgx: 2500 };
+    const ride = { id: rideId, riderId: "7b6bce6e-9d14-4b11-9f0e-0e8e9408e8e4", status: "COMPLETED", payment };
+    mocks.rideFindUnique
+      .mockResolvedValueOnce(ride)
+      .mockResolvedValueOnce({ ...ride, payment: { ...payment, status: "PAID", transactionReference: "MM123456" } });
+    mocks.ridePaymentUpdateMany.mockResolvedValue({ count: 1 });
+    mocks.auditLogCreate.mockResolvedValue({});
+    const token = await accessToken("RIDER");
+
+    const response = await request(app)
+      .post(`/api/v1/rides/${rideId}/payment/record`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ transactionReference: "MM123456" });
+
+    expect(response.status).toBe(200);
+    expect(response.body.data.payment.status).toBe("PAID");
+    expect(mocks.ridePaymentUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { rideRequestId: rideId, status: "UNPAID" },
+      data: expect.objectContaining({ status: "PAID", recordedById: "7b6bce6e-9d14-4b11-9f0e-0e8e9408e8e4", transactionReference: "MM123456" })
+    }));
+    expect(mocks.auditLogCreate).toHaveBeenCalled();
+  });
+
+  it("does not allow ride payment recording before the trip is completed", async () => {
+    const rideId = "9d530def-28a0-4c1d-8c2e-6ffbaed03ec3";
+    mocks.rideFindUnique.mockResolvedValue({
+      id: rideId,
+      riderId: "7b6bce6e-9d14-4b11-9f0e-0e8e9408e8e4",
+      status: "IN_PROGRESS",
+      payment: { method: "CASH", status: "UNPAID", amountUgx: 2500 }
+    });
+    const token = await accessToken("RIDER");
+
+    const response = await request(app)
+      .post(`/api/v1/rides/${rideId}/payment/record`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({});
+
+    expect(response.status).toBe(409);
+    expect(response.body.error.code).toBe("PAYMENT_NOT_ELIGIBLE");
+    expect(mocks.ridePaymentUpdateMany).not.toHaveBeenCalled();
+  });
+
 });
