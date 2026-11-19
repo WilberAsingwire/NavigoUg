@@ -50,3 +50,19 @@ The rider's available-job list remains the source for new work; this implementat
 ## Delivery limitation
 
 The API sends Expo push requests and removes tokens when Expo explicitly reports `DeviceNotRegistered` in its immediate ticket response. It does not yet run a receipt-polling job for later provider delivery failures. Treat delivery as best-effort until receipt processing and physical-device verification are added. The in-app notification inbox remains available as a fallback.
+
+
+## Administrator announcements
+
+The administrator workspace includes an **Announcements** tab. An administrator can enter a title and message and send it to:
+- Customers only
+- Riders only
+- Both customers and riders
+
+Only active customer and rider accounts are included. Administrator accounts are excluded. Each selected user receives an in-app notification record. Android push delivery is attempted for registered devices where the user has enabled push alerts; a push-service failure does not remove the in-app notification.
+
+The most recent announcements are listed in the administrator workspace. Sending is recorded in the audit log with the audience and recipient count. The API requires an authenticated `ADMIN` role:
+- `GET /api/v1/admin/announcements`
+- `POST /api/v1/admin/announcements` with `{ "title": "...", "body": "...", "audience": "CUSTOMER | RIDER | BOTH" }`
+
+Announcement title limit: 120 characters. Message limit: 500 characters. Announcements are sent immediately and cannot currently be scheduled or recalled.
