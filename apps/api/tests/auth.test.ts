@@ -120,6 +120,30 @@ describe("Authentication API", () => {
       include: { riderProfile: true }
     }));
     expect(response.body.data.user.riderApprovalStatus).toBe("PENDING");
+    expect(response.body.data.user.role).toBe("CUSTOMER");
+    expect(response.body.data.user.availableRoles).toEqual(["CUSTOMER"]);
+  });
+
+  it("logs pending legacy rider accounts into the customer workspace", async () => {
+    const passwordHash = await argon2.hash(password);
+    mocks.userFindUnique.mockResolvedValue({
+      ...sampleUser,
+      role: "RIDER",
+      passwordHash,
+      riderProfile: { approvalStatus: "PENDING" }
+    });
+    mocks.refreshCreate.mockResolvedValue({});
+
+    const response = await request(app)
+      .post("/api/v1/auth/login")
+      .send({ phone: sampleUser.phone, password });
+
+    expect(response.status).toBe(200);
+    expect(response.body.data.user.role).toBe("CUSTOMER");
+    expect(response.body.data.user.availableRoles).toEqual(["CUSTOMER"]);
+    expect(mocks.refreshCreate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ activeRole: "CUSTOMER" })
+    }));
   });
 
   it("returns a generic authentication error for an incorrect password", async () => {
