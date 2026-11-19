@@ -31,7 +31,12 @@ const config: ExpoConfig = {
     ],
     "expo-notifications",
     "expo-secure-store"
-  ]
+  ],
+  extra: {
+    eas: {
+      projectId: "701f22b6-271a-431f-bf23-e98745611ad3"
+    }
+  }
 };
 
 export default config;
