@@ -42,7 +42,7 @@ async function authHeader() {
     .setIssuedAt()
     .setExpirationTime("10m")
     .sign(secret);
-  return { Authorization: \`Bearer \${token}\` };
+  return { Authorization: "Bearer " + token };
 }
 
 describe("Notification device registration and push delivery", () => {
