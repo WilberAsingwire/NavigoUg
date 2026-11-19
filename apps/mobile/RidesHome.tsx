@@ -665,6 +665,35 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
     }
   }, [onSignOut]);
 
+  const saveOwnProfile = useCallback(async (input: { fullName: string; email: string }) => {
+    const result = await apiRequest<{ data: Session["user"] }>(
+      "/api/v1/auth/me",
+      activeSession.accessToken,
+      {
+        method: "PATCH",
+        body: JSON.stringify(input)
+      },
+      refreshAccessToken
+    );
+    const updatedSession = { ...activeSession, user: result.data };
+    await SecureStore.setItemAsync("navigo.session", JSON.stringify(updatedSession));
+    setActiveSession(updatedSession);
+  }, [activeSession, refreshAccessToken]);
+
+  const changeOwnPassword = useCallback(async (input: { currentPassword: string; newPassword: string }) => {
+    const result = await apiRequest<{ data: Session }>(
+      "/api/v1/auth/change-password",
+      activeSession.accessToken,
+      {
+        method: "POST",
+        body: JSON.stringify(input)
+      },
+      refreshAccessToken
+    );
+    await SecureStore.setItemAsync("navigo.session", JSON.stringify(result.data));
+    setActiveSession(result.data);
+  }, [activeSession.accessToken, refreshAccessToken]);
+
   const [tab, setTab] = useState<"book" | "parcel">("book");
   const [mainTab, setMainTab] = useState<WorkspaceTab>("home");
   const [customerActivityTab, setCustomerActivityTab] = useState<"rides" | "parcels">("rides");
@@ -1728,13 +1757,13 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
                 {message ? <Notice tone="success" text={message} /> : null}
               </View>
             ) : (
-              <ProfilePanel session={activeSession} onSignOut={onSignOut} signingOut={signingOut} />
+              <ProfilePanel session={activeSession} onSignOut={onSignOut} signingOut={signingOut} onSaveProfile={saveOwnProfile} onChangePassword={changeOwnPassword} />
             )}
           </>
         ) : session.user.role === "RIDER" ? (
           <>
             {mainTab === "profile" ? (
-              <ProfilePanel session={activeSession} onSignOut={onSignOut} signingOut={signingOut} />
+              <ProfilePanel session={activeSession} onSignOut={onSignOut} signingOut={signingOut} onSaveProfile={saveOwnProfile} onChangePassword={changeOwnPassword} />
             ) : session.user.riderApprovalStatus !== "APPROVED" ? (
               <View style={styles.card}>
                 <Text style={styles.cardTitle}>Rider application status</Text>
@@ -1861,7 +1890,7 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
                 )}
               </View>
             ) : (
-              <ProfilePanel session={activeSession} onSignOut={onSignOut} signingOut={signingOut} />
+              <ProfilePanel session={activeSession} onSignOut={onSignOut} signingOut={signingOut} onSaveProfile={saveOwnProfile} onChangePassword={changeOwnPassword} />
             )}
             {error ? <Notice tone="error" text={error} /> : null}
             {message ? <Notice tone="success" text={message} /> : null}
@@ -2045,9 +2074,78 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
   );
 }
 
-function ProfilePanel({ session, onSignOut, signingOut }: { session: Session; onSignOut: () => void; signingOut: boolean }) {
+function ProfilePanel({
+  session,
+  onSignOut,
+  signingOut,
+  onSaveProfile,
+  onChangePassword
+}: {
+  session: Session;
+  onSignOut: () => void;
+  signingOut: boolean;
+  onSaveProfile: (input: { fullName: string; email: string }) => Promise<void>;
+  onChangePassword: (input: { currentPassword: string; newPassword: string }) => Promise<void>;
+}) {
   const roleLabel = session.user.role === "CUSTOMER" ? "Customer" : session.user.role === "RIDER" ? "Rider" : "Administrator";
   const riderStatus = session.user.riderApprovalStatus ?? "NOT SET";
+  const [editing, setEditing] = useState(false);
+  const [fullName, setFullName] = useState(session.user.fullName);
+  const [email, setEmail] = useState(session.user.email ?? "");
+  const [showPasswordForm, setShowPasswordForm] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+
+  useEffect(() => {
+    setFullName(session.user.fullName);
+    setEmail(session.user.email ?? "");
+  }, [session.user.fullName, session.user.email]);
+
+  async function saveProfile() {
+    setBusy(true);
+    setError("");
+    setSuccess("");
+    try {
+      await onSaveProfile({ fullName: fullName.trim(), email: email.trim() });
+      setEditing(false);
+      setSuccess("Your profile has been updated.");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "We couldn't update your profile. Please try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function savePassword() {
+    setError("");
+    setSuccess("");
+    if (newPassword !== confirmPassword) {
+      setError("The new password and confirmation do not match.");
+      return;
+    }
+    if (newPassword.length < 8) {
+      setError("Your new password must contain at least 8 characters.");
+      return;
+    }
+    setBusy(true);
+    try {
+      await onChangePassword({ currentPassword, newPassword });
+      setCurrentPassword("");
+      setNewPassword("");
+      setConfirmPassword("");
+      setShowPasswordForm(false);
+      setSuccess("Password changed. Other signed-in sessions have been signed out.");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "We couldn't change your password. Please try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <View style={styles.profilePage}>
       <View style={styles.profileHero}>
@@ -2057,13 +2155,33 @@ function ProfilePanel({ session, onSignOut, signingOut }: { session: Session; on
         <Text style={styles.profileName}>{session.user.fullName}</Text>
         <Text style={styles.profileRole}>{roleLabel} account</Text>
       </View>
+
       <View style={styles.card}>
-        <Text style={styles.cardTitle}>Personal information</Text>
-        <Detail label="Full name" value={session.user.fullName} />
-        <Detail label="Phone number" value={session.user.phone} />
-        <Detail label="Email address" value={session.user.email || "Not added"} />
-        <Detail label="Account type" value={roleLabel} />
+        <View style={styles.profileSectionHeader}>
+          <Text style={styles.cardTitle}>Personal information</Text>
+          <TouchableOpacity onPress={() => { setEditing((value) => !value); setError(""); setSuccess(""); }}>
+            <Text style={styles.profileActionText}>{editing ? "Cancel" : "Edit"}</Text>
+          </TouchableOpacity>
+        </View>
+        {editing ? (
+          <>
+            <Text style={styles.label}>Full name</Text>
+            <TextInput style={styles.addressInput} value={fullName} onChangeText={setFullName} placeholder="Your full name" placeholderTextColor="#98A2B3" autoCapitalize="words" />
+            <Text style={styles.label}>Email address</Text>
+            <TextInput style={styles.addressInput} value={email} onChangeText={setEmail} placeholder="name@example.com (optional)" placeholderTextColor="#98A2B3" keyboardType="email-address" autoCapitalize="none" />
+            <Text style={styles.profileHint}>Your phone number is used to sign in and identify your account, so it cannot be changed here without verification.</Text>
+            <PrimaryButton label="Save profile" loading={busy} onPress={saveProfile} disabled={busy || fullName.trim().length < 2} />
+          </>
+        ) : (
+          <>
+            <Detail label="Full name" value={session.user.fullName} />
+            <Detail label="Phone number" value={session.user.phone} />
+            <Detail label="Email address" value={session.user.email || "Not added"} />
+            <Detail label="Account type" value={roleLabel} />
+          </>
+        )}
       </View>
+
       {session.user.role === "RIDER" ? (
         <View style={styles.card}>
           <Text style={styles.cardTitle}>Rider account</Text>
@@ -2071,15 +2189,42 @@ function ProfilePanel({ session, onSignOut, signingOut }: { session: Session; on
           <Detail label="Driving licence" value={session.user.riderProfile?.licenceNumber || "Not available"} />
           <Detail label="Motorcycle" value={session.user.riderProfile?.motorcycleDescription || "Not available"} />
           <Detail label="Number plate" value={session.user.riderProfile?.motorcyclePlate || "Not available"} />
+          <Text style={styles.profileHint}>Changes to licence and motorcycle registration details require NAVIGO review so that approved rider records remain trustworthy.</Text>
         </View>
       ) : null}
-      <View style={styles.profileInfoCard}>
-        <Text style={styles.profileInfoTitle}>Account settings</Text>
-        <Text style={styles.profileInfoText}>
-          Your personal and rider details are private to your own account. Secure editing and password controls will be added with server-side verification.
-        </Text>
+
+      <View style={styles.card}>
+        <View style={styles.profileSectionHeader}>
+          <Text style={styles.cardTitle}>Account security</Text>
+          <TouchableOpacity onPress={() => { setShowPasswordForm((value) => !value); setError(""); setSuccess(""); }}>
+            <Text style={styles.profileActionText}>{showPasswordForm ? "Close" : "Change password"}</Text>
+          </TouchableOpacity>
+        </View>
+        {showPasswordForm ? (
+          <>
+            <Text style={styles.label}>Current password</Text>
+            <TextInput style={styles.addressInput} value={currentPassword} onChangeText={setCurrentPassword} secureTextEntry placeholder="Enter current password" placeholderTextColor="#98A2B3" />
+            <Text style={styles.label}>New password</Text>
+            <TextInput style={styles.addressInput} value={newPassword} onChangeText={setNewPassword} secureTextEntry placeholder="At least 8 characters" placeholderTextColor="#98A2B3" />
+            <Text style={styles.label}>Confirm new password</Text>
+            <TextInput style={styles.addressInput} value={confirmPassword} onChangeText={setConfirmPassword} secureTextEntry placeholder="Enter the new password again" placeholderTextColor="#98A2B3" />
+            <PrimaryButton label="Update password" loading={busy} onPress={savePassword} disabled={busy || !currentPassword || !newPassword || !confirmPassword} />
+            <Text style={styles.profileHint}>For your security, this change signs out other devices and refreshes this device's session.</Text>
+          </>
+        ) : (
+          <Text style={styles.profileInfoText}>Keep your password private and change it whenever you think it may have been exposed.</Text>
+        )}
       </View>
-      <TouchableOpacity style={styles.profileSignOut} onPress={onSignOut} disabled={signingOut}>
+
+      <View style={styles.profileInfoCard}>
+        <Text style={styles.profileInfoTitle}>Privacy and permissions</Text>
+        <Text style={styles.profileInfoText}>Location permission is managed in your phone's app settings. Rider location sharing is active only while you are online and using NAVIGO.</Text>
+      </View>
+
+      {error ? <Notice tone="error" text={error} /> : null}
+      {success ? <Notice tone="success" text={success} /> : null}
+
+      <TouchableOpacity style={styles.profileSignOut} onPress={onSignOut} disabled={signingOut || busy}>
         {signingOut ? <ActivityIndicator color="#B42318" /> : <Text style={styles.profileSignOutText}>Sign out of NAVIGO</Text>}
       </TouchableOpacity>
     </View>
@@ -2683,6 +2828,10 @@ const styles = StyleSheet.create({
   profileAvatarText: { color: "#174A72", fontSize: 29, fontWeight: "900" },
   profileName: { color: "#142B3D", fontSize: 19, fontWeight: "900" },
   profileRole: { color: "#667085", fontSize: 12, marginTop: 5 },
+  profileSectionHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 10 },
+  profileActionText: { color: "#236B9A", fontSize: 12, fontWeight: "800" },
+  profileHint: { color: "#8793A2", fontSize: 10, lineHeight: 15, marginTop: 7 },
+
   profileDetailRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", gap: 14, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: "#F0F2F5" },
   profileDetailLabel: { color: "#8793A2", fontSize: 11, flex: 1 },
   profileDetailValue: { color: "#344054", fontSize: 11, fontWeight: "700", flex: 1, textAlign: "right" },
