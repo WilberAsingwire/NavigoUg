@@ -128,7 +128,7 @@ export async function registerCustomer(input: {
         role: "CUSTOMER"
       }
     });
-    return await buildSession(user, "RIDER");
+    return await buildSession(user, "CUSTOMER");
   } catch (error) {
     if (isUniqueConstraintError(error)) {
       throw new AuthError(409, "ACCOUNT_EXISTS", "An account with this phone number or email already exists.");
@@ -162,7 +162,7 @@ export async function registerRider(input: {
       },
       include: { riderProfile: true }
     });
-    return await buildSession(user);
+    return await buildSession(user, "RIDER");
   } catch (error) {
     if (isUniqueConstraintError(error)) {
       throw new AuthError(409, "ACCOUNT_EXISTS", "An account with this phone number or email already exists.");
@@ -233,9 +233,7 @@ export async function refreshSession(refreshToken: string) {
 
   const user = existing.user;
   const storedRole = existing.activeRole ?? user.role;
-  const activeRole = storedRole === "RIDER" && user.riderProfile?.approvalStatus !== "APPROVED"
-    ? "CUSTOMER"
-    : user.role === "ADMIN" ? "ADMIN" : storedRole;
+  const activeRole = user.role === "ADMIN" ? "ADMIN" : storedRole;
   const accessToken = await new SignJWT({ role: activeRole })
     .setProtectedHeader({ alg: "HS256", typ: "JWT" })
     .setSubject(user.id)
