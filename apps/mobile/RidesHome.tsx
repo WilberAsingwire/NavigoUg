@@ -4,6 +4,7 @@ import * as Location from "expo-location";
 import {
   AppState,
   ActivityIndicator,
+  Keyboard,
   Animated,
   Dimensions,
   Linking,
@@ -860,8 +861,8 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
   const [locationStatus, setLocationStatus] = useState<"locating" | "ready" | "denied" | "unavailable">("locating");
   const [customerMapReady, setCustomerMapReady] = useState(false);
   const [customerMapLoaded, setCustomerMapLoaded] = useState(false);
-  const customerMapLoadFallback = useRef<ReturnType<typeof setTimeout> | null>(null);
   const customerMapRef = useRef<MapView | null>(null);
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
   const locationDetectionStarted = useRef(false);
   const [mapRegion, setMapRegion] = useState({
     latitude: 3.02,
@@ -902,15 +903,16 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
     if (isCustomer && mainTab !== "home") {
       setCustomerMapReady(false);
       setCustomerMapLoaded(false);
-      if (customerMapLoadFallback.current) {
-        clearTimeout(customerMapLoadFallback.current);
-        customerMapLoadFallback.current = null;
-      }
     }
   }, [isCustomer, mainTab]);
 
-  useEffect(() => () => {
-    if (customerMapLoadFallback.current) clearTimeout(customerMapLoadFallback.current);
+  useEffect(() => {
+    const showSubscription = Keyboard.addListener("keyboardDidShow", () => setKeyboardVisible(true));
+    const hideSubscription = Keyboard.addListener("keyboardDidHide", () => setKeyboardVisible(false));
+    return () => {
+      showSubscription.remove();
+      hideSubscription.remove();
+    };
   }, []);
 
   useEffect(() => {
@@ -1687,16 +1689,8 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                 ref={customerMapRef}
                 style={[styles.customerMap, { opacity: customerMapLoaded ? 1 : 0 }]}
                 initialRegion={mapRegion}
-                onMapReady={() => {
-                  setCustomerMapReady(true);
-                  if (customerMapLoadFallback.current) clearTimeout(customerMapLoadFallback.current);
-                  customerMapLoadFallback.current = setTimeout(() => setCustomerMapLoaded(true), 5000);
-                }}
-                onMapLoaded={() => {
-                  if (customerMapLoadFallback.current) clearTimeout(customerMapLoadFallback.current);
-                  customerMapLoadFallback.current = null;
-                  setCustomerMapLoaded(true);
-                }}
+                onMapReady={() => setCustomerMapReady(true)}
+                onMapLoaded={() => setCustomerMapLoaded(true)}
                 loadingEnabled
                 loadingBackgroundColor="#E9F0F5"
                 loadingIndicatorColor="#174A72"
@@ -2348,7 +2342,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
           </>
         ) : null}
       </ScrollView>
-      {(activeSession.user.role === "CUSTOMER" || activeSession.user.role === "RIDER") && !(isCustomer && activeLocationField !== null) ? (
+      {(activeSession.user.role === "CUSTOMER" || activeSession.user.role === "RIDER") && !(isCustomer && keyboardVisible) ? (
         <BottomNavigation role={activeSession.user.role} activeTab={mainTab} onChange={(nextTab) => {
           setMainTab(nextTab);
           if (nextTab === "home" && activeSession.user.role === "CUSTOMER") setTab("book");
