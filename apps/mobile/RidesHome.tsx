@@ -1202,6 +1202,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
       }, refreshAccessToken);
       setLocations({ pickup: pickupLocation, destination: destinationLocation });
       setQuote(result.data);
+      setMapRegion(routeMapRegion(result.data.routeCoordinates));
     } catch (quoteError) {
       setError(quoteError instanceof Error ? quoteError.message : "Unable to calculate the fare.");
     } finally {
@@ -1252,6 +1253,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
       }, refreshAccessToken);
       setParcelLocations({ pickup: pickupLocation, destination: destinationLocation });
       setParcelQuote(result.data);
+      setMapRegion(routeMapRegion(result.data.routeCoordinates));
     } catch (quoteError) {
       setError(quoteError instanceof Error ? quoteError.message : "Unable to calculate the item delivery fee.");
     } finally {
@@ -1715,16 +1717,26 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                 showsMyLocationButton={false}
                 toolbarEnabled={false}
               >
-                {(selectedPickupLocation ?? deviceLocation) ? (
+                {quote && locations ? (
+                  <Polyline coordinates={quote.routeCoordinates} strokeColor="#1F76A8" strokeWidth={5} />
+                ) : parcelQuote && parcelLocations ? (
+                  <Polyline coordinates={parcelQuote.routeCoordinates} strokeColor="#1F76A8" strokeWidth={5} />
+                ) : null}
+                {(locations?.pickup ?? parcelLocations?.pickup ?? selectedPickupLocation ?? deviceLocation) ? (
                   <Marker
-                    coordinate={selectedPickupLocation ?? deviceLocation!}
-                    title={selectedPickupLocation ? "Pickup point" : "Your current location"}
-                    description={(selectedPickupLocation ?? deviceLocation)?.description}
+                    coordinate={locations?.pickup ?? parcelLocations?.pickup ?? selectedPickupLocation ?? deviceLocation!}
+                    title={locations?.pickup || parcelLocations?.pickup || selectedPickupLocation ? "Pickup point" : "Your current location"}
+                    description={(locations?.pickup ?? parcelLocations?.pickup ?? selectedPickupLocation ?? deviceLocation)?.description}
                     pinColor="#21865B"
                   />
                 ) : null}
-                {selectedDestinationLocation ? (
-                  <Marker coordinate={selectedDestinationLocation} title="Destination point" description={selectedDestinationLocation.description} pinColor="#C54848" />
+                {(locations?.destination ?? parcelLocations?.destination ?? selectedDestinationLocation) ? (
+                  <Marker
+                    coordinate={locations?.destination ?? parcelLocations?.destination ?? selectedDestinationLocation!}
+                    title="Destination point"
+                    description={(locations?.destination ?? parcelLocations?.destination ?? selectedDestinationLocation)?.description}
+                    pinColor="#C54848"
+                  />
                 ) : null}
               </MapView>
               <View style={styles.mapBrandPill}>
