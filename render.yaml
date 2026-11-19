@@ -1,0 +1,27 @@
+services:
+  - type: web
+    name: navigou-api
+    runtime: node
+    plan: free
+    region: frankfurt
+    branch: cloud-preview-setup
+    buildCommand: npm install && npm run build:api
+    startCommand: npm run start -w @navigo/api
+    healthCheckPath: /api/v1/health/ready
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: API_HOST
+        value: 0.0.0.0
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_ACCESS_SECRET
+        generateValue: true
+      - key: JWT_ACCESS_TTL_SECONDS
+        value: "900"
+      - key: REFRESH_TOKEN_TTL_DAYS
+        value: "30"
+      - key: LOCATION_UPDATE_MIN_INTERVAL_SECONDS
+        value: "5"
+      - key: LOCATION_STALE_AFTER_SECONDS
+        value: "45"
