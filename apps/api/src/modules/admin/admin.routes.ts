@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { z } from "zod";
 import {
   AdminFareRuleInputSchema,
   AdminRiderApprovalInputSchema,
@@ -8,6 +9,8 @@ import { requireAuth, requireRole } from "../auth/auth.middleware.js";
 import {
   adminErrorHandler,
   createAdminFareRule,
+  createAdminAnnouncement,
+  listAdminAnnouncements,
   listAdminFareRules,
   listAdminRiders,
   reviewRider,
@@ -31,6 +34,35 @@ function validationError(
 function validUuid(value: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
+
+const adminAnnouncementSchema = z.object({
+  title: z.string().trim().min(1).max(120),
+  body: z.string().trim().min(1).max(500),
+  audience: z.enum(["CUSTOMER", "RIDER", "BOTH"])
+}).strict();
+
+adminRouter.get("/announcements", async (_request, response, next) => {
+  try {
+    response.status(200).json({ data: await listAdminAnnouncements() });
+  } catch (error) {
+    next(error);
+  }
+});
+
+adminRouter.post("/announcements", async (request, response, next) => {
+  const parsed = adminAnnouncementSchema.safeParse(request.body);
+  if (!parsed.success) {
+    validationError(response, "Enter a title, message and valid recipient group.", parsed.error.issues);
+    return;
+  }
+  try {
+    response.status(201).json({
+      data: await createAdminAnnouncement(request.auth!.userId, parsed.data)
+    });
+  } catch (error) {
+    next(error);
+  }
+});
 
 adminRouter.get("/riders", async (request, response, next) => {
   const rawStatus = request.query.status;
