@@ -199,6 +199,15 @@ export async function createParcel(senderId: string, input: CreateParcelInput) {
         note: "Parcel delivery request created"
       }
     });
+    await tx.notification.create({
+      data: {
+        userId: senderId,
+        title: "Item delivery request received",
+        body: "Your item delivery request has been created. We will update you when a rider accepts it.",
+        requestType: "PARCEL",
+        requestId: parcel.id
+      }
+    });
 
     return parcel;
   });
@@ -302,6 +311,15 @@ export async function acceptParcel(riderId: string, parcelId: string) {
     if (!parcel) {
       throw new ParcelError(404, "PARCEL_NOT_FOUND", "The parcel request could not be found.");
     }
+    await tx.notification.create({
+      data: {
+        userId: parcel.senderId,
+        title: "Your delivery has been accepted",
+        body: "A NAVIGO rider has accepted your item delivery request.",
+        requestType: "PARCEL",
+        requestId: parcel.id
+      }
+    });
     return withoutVerificationSecrets(parcel);
   });
 }
