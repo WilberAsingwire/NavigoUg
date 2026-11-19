@@ -10,7 +10,6 @@ import {
   TouchableOpacity,
   View
 } from "react-native";
-import * as Location from "expo-location";
 import { StatusBar } from "expo-status-bar";
 
 type Session = {
@@ -448,12 +447,60 @@ function describeMapFeature(
 async function geocodeAruaAddress(value: string): Promise<RideLocation> {
   const trimmed = value.trim();
   if (trimmed.length < 3) throw new Error("Enter a pickup or destination address.");
+
+  // Use the same Arua-bounded Photon map search as autocomplete.
+  // Address geocoding must not depend on Android device-location permission.
   const query = /uganda/i.test(trimmed) ? trimmed : `${trimmed}, Arua, Uganda`;
-  const results = await Location.geocodeAsync(query);
-  const firstResult = results[0];
-  if (!firstResult) {
-    throw new Error(`We couldn't locate "${trimmed}". Try adding a nearby landmark or a clearer Arua address.`);
+  const params = [
+    `q=${encodeURIComponent(query)}`,
+    "lat=3.02",
+    "lon=30.92",
+    "zoom=11",
+    "location_bias_scale=0.2",
+    "limit=5",
+    "lang=en",
+    "countrycode=UG",
+    "bbox=30.55,2.75,31.25,3.30"
+  ].join("&");
+
+  let response: Response;
+  try {
+    response = await fetch(`https://photon.komoot.io/api/?${params}`, {
+      headers: { Accept: "application/json" }
+    });
+  } catch {
+    throw new Error("Unable to search the Arua map right now. Check your internet connection and try again.");
   }
+
+  if (!response.ok) {
+    throw new Error("The Arua location service is temporarily unavailable. Please try again.");
+  }
+
+  const payload = await response.json() as { features?: PhotonFeature[] };
+  const candidates = (payload.features ?? []).flatMap((feature) => {
+    const coordinates = feature.geometry?.coordinates;
+    if (!coordinates || coordinates.length < 2) return [];
+    const longitude = Number(coordinates[0]);
+    const latitude = Number(coordinates[1]);
+
+    // Enforce the service area even if a provider returns an out-of-area match.
+    if (
+      !Number.isFinite(latitude) ||
+      !Number.isFinite(longitude) ||
+      longitude < 30.55 ||
+      longitude > 31.25 ||
+      latitude < 2.75 ||
+      latitude > 3.30
+    ) return [];
+
+    return [{ latitude, longitude }];
+  });
+
+  const firstResult = candidates[0];
+  if (!firstResult) {
+    throw new Error(`We couldn't find "${trimmed}" on the Arua map. Choose one of the suggested places or add a nearby landmark and try again.`);
+  }
+
   return {
     latitude: firstResult.latitude,
     longitude: firstResult.longitude,
