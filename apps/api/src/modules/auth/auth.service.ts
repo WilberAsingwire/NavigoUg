@@ -53,6 +53,13 @@ function hashRefreshToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
 }
 
+function defaultActiveRole(user: SessionUser): SessionUser["role"] {
+  if (user.role === "ADMIN") return "ADMIN";
+  return user.riderProfile?.approvalStatus === "APPROVED" && user.role === "RIDER"
+    ? "RIDER"
+    : "CUSTOMER";
+}
+
 function safeUser(user: SessionUser, activeRole: SessionUser["role"] = user.role) {
   const isApprovedRider = user.riderProfile?.approvalStatus === "APPROVED";
   const availableRoles: SessionUser["role"][] = user.role === "ADMIN"
@@ -162,7 +169,7 @@ export async function registerRider(input: {
       },
       include: { riderProfile: true }
     });
-    return await buildSession(user, "RIDER");
+    return await buildSession(user, "CUSTOMER");
   } catch (error) {
     if (isUniqueConstraintError(error)) {
       throw new AuthError(409, "ACCOUNT_EXISTS", "An account with this phone number or email already exists.");
@@ -192,7 +199,7 @@ export async function login(input: { phone: string; password: string }) {
     throw new AuthError(401, "INVALID_CREDENTIALS", "The phone number or password is incorrect.");
   }
 
-  return buildSession(user);
+  return buildSession(user, defaultActiveRole(user));
 }
 
 export async function refreshSession(refreshToken: string) {
@@ -226,14 +233,18 @@ export async function refreshSession(refreshToken: string) {
     data: {
       userId: existing.userId,
       tokenHash: hashRefreshToken(newRefreshToken),
-      activeRole: existing.activeRole ?? existing.user.role,
+      activeRole: defaultActiveRole(existing.user) === "CUSTOMER" ? "CUSTOMER" : (existing.activeRole ?? "RIDER"),
       expiresAt: new Date(Date.now() + refreshDays * 24 * 60 * 60 * 1000)
     }
   });
 
   const user = existing.user;
-  const storedRole = existing.activeRole ?? user.role;
-  const activeRole = user.role === "ADMIN" ? "ADMIN" : storedRole;
+  const storedRole = existing.activeRole ?? defaultActiveRole(user);
+  const activeRole = user.role === "ADMIN"
+    ? "ADMIN"
+    : storedRole === "RIDER" && user.riderProfile?.approvalStatus === "APPROVED"
+      ? "RIDER"
+      : "CUSTOMER";
   const accessToken = await new SignJWT({ role: activeRole })
     .setProtectedHeader({ alg: "HS256", typ: "JWT" })
     .setSubject(user.id)
