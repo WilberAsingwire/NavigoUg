@@ -10,6 +10,28 @@ Allowed progression:
 
 CANCELLED and EXPIRED are terminal states. State transitions must be checked centrally; requests must not jump between arbitrary statuses.
 
+
+## Motorcycle ride booking implementation notes
+- The customer app requests a fare quote before creating a ride. The API calculates straight-line distance from the submitted coordinates and applies an active RIDE distance rule, or an exact active pickup-to-destination landmark fare when both landmark IDs are supplied.
+- Straight-line distance is an estimate, not road distance. It must be labelled as an estimate in the UI and fares must be calibrated for the pilot area. The customer never submits a trusted fare amount.
+- If no active fare rule covers the estimated distance and no exact landmark fare exists, the API refuses the quote/request. It does not invent a price.
+- Creating a ride records a PENDING history event and an UNPAID payment record using CASH by default, or the customer's selected CASH/MOBILE_MONEY method.
+- Only active, APPROVED riders can list or accept pending rides. Pending rides are claimed with a conditional database update so only one rider can win an acceptance race.
+- Only the assigned rider can progress a ride: ACCEPTED → ARRIVED_AT_PICKUP → IN_PROGRESS → COMPLETED. The API rejects skipped or repeated transitions.
+- The customer who created the ride can cancel it while PENDING or ACCEPTED. Cancellation is not available after the trip starts.
+- The API exposes customer/rider ride history separately. Rider phone details are disclosed only on the assigned ride, not in the public request queue.
+
+## Ride API
+- `POST /api/v1/rides/fare-quote` — customer-only estimate for a pickup/destination pair.
+- `POST /api/v1/rides` — customer-only request creation; fare is calculated by the API.
+- `GET /api/v1/rides/mine` — authenticated customer's or rider's own ride history.
+- `GET /api/v1/rides/available` — approved rider's pending requests, excluding requests they rejected.
+- `POST /api/v1/rides/:rideId/accept` — approved rider atomically claims a pending ride.
+- `PATCH /api/v1/rides/:rideId/status` — assigned rider advances the trip one allowed stage.
+- `POST /api/v1/rides/:rideId/cancel` — customer cancels an eligible ride before the trip starts.
+
+All ride endpoints require a valid bearer access token. The API enforces role, rider approval, ownership and permitted state transitions.
+
 ## Ready-parcel delivery
 Allowed progression:
 1. **PENDING** — sender creates request and receives separate pickup and delivery codes.
