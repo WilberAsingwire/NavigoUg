@@ -858,6 +858,8 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
   const [activeLocationField, setActiveLocationField] = useState<"pickup" | "destination" | null>(null);
   const [deviceLocation, setDeviceLocation] = useState<RideLocation | null>(null);
   const [locationStatus, setLocationStatus] = useState<"locating" | "ready" | "denied" | "unavailable">("locating");
+  const [customerMapReady, setCustomerMapReady] = useState(false);
+  const customerMapRef = useRef<MapView | null>(null);
   const locationDetectionStarted = useRef(false);
   const [mapRegion, setMapRegion] = useState({
     latitude: 3.02,
@@ -889,6 +891,11 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
     animation.start();
     return () => animation.stop();
   }, [mapSheetExpanded, mapSheetExpandedHeight, mapSheetCollapsedHeight, mapSheetHeight]);
+
+  useEffect(() => {
+    if (!customerMapReady) return;
+    customerMapRef.current?.animateToRegion(mapRegion, 650);
+  }, [mapRegion, customerMapReady]);
 
   useEffect(() => {
     if (!isApprovedRider || mainTab !== "home" || !riderMapPickup || !riderMapDestination) return;
@@ -1704,9 +1711,11 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
               <>
             <View style={styles.customerMapFrame}>
               <MapView
+                ref={customerMapRef}
                 style={styles.customerMap}
-                region={mapRegion}
-                onRegionChangeComplete={setMapRegion}
+                initialRegion={mapRegion}
+                onMapReady={() => setCustomerMapReady(true)}
+                loadingEnabled
                 onPress={(event) => {
                   if (mapSelectionField) void selectCustomerMapPoint(event.nativeEvent.coordinate);
                 }}
@@ -1739,28 +1748,24 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                   />
                 ) : null}
               </MapView>
+              {!customerMapReady ? (
+                <View style={styles.customerMapLoadingOverlay}>
+                  <ActivityIndicator color="#174A72" size="small" />
+                  <Text style={styles.customerMapLoadingText}>Loading NAVIGO map...</Text>
+                </View>
+              ) : null}
               <View style={styles.mapBrandPill}>
                 <Text style={styles.mapBrandText}>NAVIGO  •  ARUA</Text>
               </View>
-              <View style={styles.mapSelectionControls}>
-                <TouchableOpacity
-                  style={[styles.mapSelectionButton, mapSelectionField === "pickup" ? styles.mapSelectionButtonActive : null]}
-                  onPress={() => setMapSelectionField(mapSelectionField === "pickup" ? null : "pickup")}
-                >
-                  <Text style={[styles.mapSelectionButtonText, mapSelectionField === "pickup" ? styles.mapSelectionButtonTextActive : null]}>Set pickup</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.mapSelectionButton, mapSelectionField === "destination" ? styles.mapSelectionButtonActive : null]}
-                  onPress={() => setMapSelectionField(mapSelectionField === "destination" ? null : "destination")}
-                >
-                  <Text style={[styles.mapSelectionButtonText, mapSelectionField === "destination" ? styles.mapSelectionButtonTextActive : null]}>Set destination</Text>
-                </TouchableOpacity>
-              </View>
-              {!mapSelectionField ? (
-                <TouchableOpacity style={styles.customerMapRecenterButton} onPress={() => void detectPickupLocation(false)}>
-                  <Text style={styles.mapRecenterText}>◎</Text>
-                </TouchableOpacity>
-              ) : null}
+              <TouchableOpacity style={styles.customerMapRecenterButton} onPress={() => {
+                if (deviceLocation && customerMapRef.current) {
+                  customerMapRef.current.animateToRegion({ latitude: deviceLocation.latitude, longitude: deviceLocation.longitude, latitudeDelta: 0.035, longitudeDelta: 0.035 }, 700);
+                } else {
+                  void detectPickupLocation(false);
+                }
+              }}>
+                <Text style={styles.mapRecenterText}>◎</Text>
+              </TouchableOpacity>
               {mapSelectionField ? (
                 <View style={[styles.mapSelectionHint, styles.mapSelectionHintAboveSheet]}>
                   <Text style={styles.mapSelectionHintText}>Tap the map to choose your {mapSelectionField} point</Text>
@@ -2368,7 +2373,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
           </>
         ) : null}
       </ScrollView>
-      {activeSession.user.role === "CUSTOMER" || activeSession.user.role === "RIDER" ? (
+      {(activeSession.user.role === "CUSTOMER" || activeSession.user.role === "RIDER") && !(isCustomer && activeLocationField !== null) ? (
         <BottomNavigation role={activeSession.user.role} activeTab={mainTab} onChange={(nextTab) => {
           setMainTab(nextTab);
           if (nextTab === "home" && activeSession.user.role === "CUSTOMER") setTab("book");
@@ -3577,7 +3582,9 @@ const baseStyles = StyleSheet.create({
   locationChangeText: { color: "#174A72", fontSize: 11, fontWeight: "800" },
   locationRetryPill: { position: "absolute", top: 57, right: 12, backgroundColor: "#FFFFFF", borderRadius: 18, paddingHorizontal: 12, paddingVertical: 9, elevation: 3 },
   locationRetryText: { color: "#174A72", fontSize: 10, fontWeight: "800" },
-  customerMap: { width: "100%", height: "100%" },
+  customerMap: { width: "100%", height: "100%", backgroundColor: "#E9F0F5" },
+  customerMapLoadingOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: "#E9F0F5", alignItems: "center", justifyContent: "center", gap: 8 },
+  customerMapLoadingText: { color: "#526779", fontSize: 11, fontWeight: "700" },
   mapBrandPill: { position: "absolute", top: 13, left: 13, backgroundColor: "#FFFFFF", borderRadius: 20, paddingHorizontal: 12, paddingVertical: 8, shadowColor: "#102A43", shadowOpacity: 0.12, shadowRadius: 8, elevation: 3 },
   mapBrandText: { color: "#174A72", fontSize: 10, fontWeight: "900", letterSpacing: 1.2 },
   mapHintPill: { position: "absolute", bottom: 13, left: 13, right: 13, backgroundColor: "rgba(255,255,255,0.94)", borderRadius: 12, paddingHorizontal: 13, paddingVertical: 10 },
