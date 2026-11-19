@@ -1,4 +1,5 @@
 import type { AdminFareRuleInput, AdminRiderApprovalInput, RiderApprovalStatus } from "@navigo/shared";
+import type { Prisma } from "../../generated/prisma/client.js";
 import { prisma } from "../../lib/prisma.js";
 
 export class AdminError extends Error {
@@ -102,7 +103,7 @@ function asFareRuleData(input: AdminFareRuleInput) {
 }
 
 async function assertNoOverlappingFareRule(
-  tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0],
+  tx: Prisma.TransactionClient,
   input: AdminFareRuleInput,
   excludedId?: string
 ) {
