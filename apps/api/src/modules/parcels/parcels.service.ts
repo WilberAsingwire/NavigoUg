@@ -597,3 +597,98 @@ export function parcelErrorHandler(
   }
   next(error);
 }
+
+
+const ARUA_TRACKING_BOUNDS = { minLat: 2.75, maxLat: 3.30, minLon: 30.55, maxLon: 31.25 };
+
+function validateTrackingPoint(latitude: number, longitude: number, accuracyMeters: number) {
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude) ||
+      latitude < ARUA_TRACKING_BOUNDS.minLat || latitude > ARUA_TRACKING_BOUNDS.maxLat ||
+      longitude < ARUA_TRACKING_BOUNDS.minLon || longitude > ARUA_TRACKING_BOUNDS.maxLon ||
+      !Number.isFinite(accuracyMeters) || accuracyMeters < 0 || accuracyMeters > 500) {
+    throw new ParcelError(400, "INVALID_TRACKING_LOCATION", "A valid, reasonably accurate location inside the Arua pilot area is required.");
+  }
+}
+
+export async function startParcelTracking(riderId: string, parcelId: string) {
+  const parcel = await prisma.parcelRequest.findFirst({ where: { id: parcelId, riderId } });
+  if (!parcel) throw new ParcelError(404, "PARCEL_NOT_FOUND", "The assigned parcel was not found.");
+  if (!["ACCEPTED", "ARRIVED_AT_PICKUP", "COLLECTED", "IN_TRANSIT", "ARRIVED_AT_DESTINATION"].includes(parcel.status)) {
+    throw new ParcelError(409, "TRACKING_NOT_AVAILABLE", "Tracking is available only while this delivery is active.");
+  }
+  return prisma.parcelTrackingSession.upsert({
+    where: { parcelRequestId: parcelId },
+    create: { parcelRequestId: parcelId, riderSharingEnabled: true, riderConsentAt: new Date(), startedAt: new Date() },
+    update: { riderSharingEnabled: true, riderConsentAt: new Date(), endedAt: null }
+  });
+}
+
+export async function updateParcelRiderLocation(
+  riderId: string,
+  parcelId: string,
+  point: { latitude: number; longitude: number; accuracyMeters: number }
+) {
+  validateTrackingPoint(point.latitude, point.longitude, point.accuracyMeters);
+  const parcel = await prisma.parcelRequest.findFirst({ where: { id: parcelId, riderId } });
+  if (!parcel) throw new ParcelError(404, "PARCEL_NOT_FOUND", "The assigned parcel was not found.");
+  if (!["ACCEPTED", "ARRIVED_AT_PICKUP", "COLLECTED", "IN_TRANSIT", "ARRIVED_AT_DESTINATION"].includes(parcel.status)) {
+    throw new ParcelError(409, "TRACKING_NOT_AVAILABLE", "This delivery is no longer active.");
+  }
+  const tracking = await prisma.parcelTrackingSession.findUnique({ where: { parcelRequestId: parcelId } });
+  if (!tracking?.riderSharingEnabled || tracking.endedAt) {
+    throw new ParcelError(403, "TRACKING_NOT_ENABLED", "Enable location sharing before sending location updates.");
+  }
+  const now = new Date();
+  return prisma.parcelTrackingSession.update({
+    where: { parcelRequestId: parcelId },
+    data: {
+      riderLatitude: point.latitude,
+      riderLongitude: point.longitude,
+      riderAccuracyMeters: point.accuracyMeters,
+      riderLocationUpdatedAt: now
+    },
+    select: { riderLocationUpdatedAt: true }
+  });
+}
+
+export async function getSenderParcelTracking(senderId: string, parcelId: string) {
+  const parcel = await prisma.parcelRequest.findFirst({
+    where: { id: parcelId, senderId },
+    select: {
+      id: true,
+      status: true,
+      pickupLatitude: true,
+      pickupLongitude: true,
+      destinationLatitude: true,
+      destinationLongitude: true,
+      tracking: { select: {
+        riderSharingEnabled: true,
+        riderLatitude: true,
+        riderLongitude: true,
+        riderAccuracyMeters: true,
+        riderLocationUpdatedAt: true,
+        startedAt: true,
+        endedAt: true
+      } }
+    }
+  });
+  if (!parcel) throw new ParcelError(404, "PARCEL_NOT_FOUND", "The parcel request was not found.");
+  const tracking = parcel.tracking;
+  const fresh = Boolean(tracking?.riderLocationUpdatedAt &&
+    Date.now() - tracking.riderLocationUpdatedAt.getTime() <= 120000 && !tracking.endedAt);
+  return {
+    parcelId: parcel.id,
+    status: parcel.status,
+    pickup: { latitude: Number(parcel.pickupLatitude), longitude: Number(parcel.pickupLongitude) },
+    destination: { latitude: Number(parcel.destinationLatitude), longitude: Number(parcel.destinationLongitude) },
+    rider: tracking?.riderSharingEnabled && fresh && tracking.riderLatitude !== null && tracking.riderLongitude !== null
+      ? {
+          latitude: Number(tracking.riderLatitude),
+          longitude: Number(tracking.riderLongitude),
+          accuracyMeters: tracking.riderAccuracyMeters,
+          updatedAt: tracking.riderLocationUpdatedAt
+        }
+      : null,
+    sharingEnabled: Boolean(tracking?.riderSharingEnabled && !tracking?.endedAt)
+  };
+}
