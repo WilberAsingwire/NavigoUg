@@ -14,6 +14,7 @@ import {
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import * as SecureStore from "expo-secure-store";
+import RidesHome from "./RidesHome";
 
 const API_BASE_URL = "https://navigou-api-2978.onrender.com";
 const SESSION_KEY = "navigo.session";
@@ -222,51 +223,12 @@ export default function App() {
   }
 
   if (session) {
-    const riderPending =
-      session.user.role === "RIDER" && session.user.riderApprovalStatus === "PENDING";
-
     return (
-      <SafeAreaView style={styles.safeArea}>
-        <StatusBar style="dark" />
-        <ScrollView contentContainerStyle={styles.dashboard}>
-          <Brand />
-          <View style={styles.welcomeCard}>
-            <Text style={styles.eyebrow}>YOUR NAVIGO ACCOUNT</Text>
-            <Text style={styles.welcomeTitle}>Hello, {session.user.fullName.split(" ")[0]}.</Text>
-            <Text style={styles.bodyText}>
-              {session.user.role === "RIDER"
-                ? riderPending
-                  ? "Your rider application has been received. An administrator must approve your account before you can accept bookings."
-                  : session.user.riderApprovalStatus === "APPROVED"
-                    ? "Your rider account is approved. Rider booking tools will appear here as the next features are added."
-                    : "Your rider account is not currently approved. Please contact the NAVIGO administrator for assistance."
-                : "Your account is ready. Motorcycle ride booking and ready-parcel services are being added to NAVIGO."}
-            </Text>
-            {session.user.role === "RIDER" && (
-              <View style={styles.statusPill}>
-                <Text style={styles.statusText}>
-                  RIDER STATUS: {session.user.riderApprovalStatus ?? "NOT SET"}
-                </Text>
-              </View>
-            )}
-          </View>
-          <View style={styles.infoCard}>
-            <Text style={styles.infoTitle}>Account details</Text>
-            <Detail label="Name" value={session.user.fullName} />
-            <Detail label="Phone" value={session.user.phone} />
-            <Detail label="Account type" value={session.user.role} />
-          </View>
-          <TouchableOpacity
-            accessibilityRole="button"
-            style={[styles.secondaryButton, busy && styles.buttonDisabled]}
-            onPress={signOut}
-            disabled={busy}
-          >
-            {busy ? <ActivityIndicator color="#174A72" /> : <Text style={styles.secondaryButtonText}>Sign out</Text>}
-          </TouchableOpacity>
-          <Text style={styles.footer}>Arua, Uganda</Text>
-        </ScrollView>
-      </SafeAreaView>
+      <RidesHome
+        session={session}
+        onSignOut={signOut}
+        signingOut={busy}
+      />
     );
   }
 
