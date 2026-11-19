@@ -2,7 +2,7 @@ name: NAVIGO quality checks
 
 on:
   push:
-    branches: [main, cloud-preview-setup]
+    branches: [main, cloud-preview-setup, ux/role-based-navigation]
   pull_request:
     branches: [main]
 
