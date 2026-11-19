@@ -326,7 +326,7 @@ describe("Motorcycle ride API", () => {
     mocks.availabilityFindUnique.mockResolvedValue({ isOnline: true, latitude: 3.02, longitude: 30.91, accuracyMeters: 10, lastSeenAt: now });
     mocks.rideFindMany.mockResolvedValue([
       { id: "farther", pickupLatitude: 3.025, pickupLongitude: 30.915, destinationLatitude: 3.03, destinationLongitude: 30.92, pickupDescription: "Muni University", destinationDescription: "Arua Main Market", createdAt: now },
-      { id: "nearest", pickupLatitude: 3.0205, pickupLongitude: 30.9105, pickupLandmarkId: "private-pickup-landmark", destinationLatitude: 3.03, destinationLongitude: 30.92, destinationLandmarkId: "private-destination-landmark", pickupDescription: "Private pickup address", destinationDescription: "Private destination address", createdAt: now },
+      { id: "nearest", pickupLatitude: 3.0205, pickupLongitude: 30.9105, pickupLandmarkId: "private-pickup-landmark", destinationLatitude: 3.03, destinationLongitude: 30.92, destinationLandmarkId: "private-destination-landmark", pickupDescription: "Private pickup address", destinationDescription: "Private destination address", customer: { fullName: "Private customer name" }, createdAt: now },
       { id: "outside", pickupLatitude: 3.15, pickupLongitude: 30.91, createdAt: now }
     ]);
     const response = await request(app).get("/api/v1/rides/available").set("Authorization", `Bearer ${token}`);
@@ -340,6 +340,8 @@ describe("Motorcycle ride API", () => {
     expect(response.body.data[0]).not.toHaveProperty("pickupLandmarkId");
     expect(response.body.data[0].pickupDescription).toBe("Pickup details shared after acceptance");
     expect(response.body.data[0].destinationDescription).toBe("Destination details shared after acceptance");
+    expect(response.body.data[0]).not.toHaveProperty("customer");
+
   });
 
   it("returns an empty queue when the rider is offline", async () => {
