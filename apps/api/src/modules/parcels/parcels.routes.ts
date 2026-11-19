@@ -21,6 +21,7 @@ import {
   verifyParcelPickup,
   updateParcelRiderLocation,
   startParcelTracking,
+  stopParcelTracking,
   getParcelTracking
 } from "./parcels.service.js";
 
@@ -213,9 +214,8 @@ parcelsRouter.post("/:parcelId/tracking/location", requireRole("RIDER"), async (
     return;
   }
   const { latitude, longitude, accuracyMeters } = request.body ?? {};
-  if (typeof latitude !== "number" || typeof longitude !== "number" ||
-      (accuracyMeters !== undefined && typeof accuracyMeters !== "number")) {
-    validationError(response, "Provide valid GPS coordinates and optional accuracy.");
+  if (typeof latitude !== "number" || typeof longitude !== "number" || typeof accuracyMeters !== "number") {
+    validationError(response, "Provide GPS coordinates and their measured accuracy.");
     return;
   }
   try {
@@ -227,7 +227,22 @@ parcelsRouter.post("/:parcelId/tracking/location", requireRole("RIDER"), async (
   }
 });
 
-parcelsRouter.get("/:parcelId/tracking", async (request, response, next) => {
+parcelsRouter.post("/:parcelId/tracking/stop", requireRole("RIDER"), async (request, response, next) => {
+  const parcelId = parcelIdFromRequest(request);
+  if (!validParcelId(parcelId)) {
+    validationError(response, "A valid parcel request ID is required.");
+    return;
+  }
+  try {
+    response.status(200).json({
+      data: await stopParcelTracking(request.auth!.userId, parcelId)
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+parcelsRouter.get("/:parcelId/tracking", requireRole("CUSTOMER"), async (request, response, next) => {
   const parcelId = parcelIdFromRequest(request);
   if (!validParcelId(parcelId)) {
     validationError(response, "A valid parcel request ID is required.");
