@@ -847,7 +847,7 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
     }
   }
 
-  async function performParcelAction(parcelId: string, action: "accept" | "ARRIVED_AT_PICKUP" | "IN_TRANSIT" | "ARRIVED_AT_DESTINATION" | "verify-pickup" | "verify-delivery") {
+  async function performParcelAction(parcelId: string, action: "accept" | "cancel" | "ARRIVED_AT_PICKUP" | "IN_TRANSIT" | "ARRIVED_AT_DESTINATION" | "verify-pickup" | "verify-delivery") {
     setWorking(true);
     setError("");
     setMessage("");
@@ -1543,7 +1543,7 @@ function CustomerParcelCard({ parcel, busy, onCancel }: { parcel: RiderParcel; b
     CANCELLED: "Cancelled",
     EXPIRED: "Request expired"
   };
-  const steps = ["PENDING", "ACCEPTED", "COLLECTED", "IN_TRANSIT", "DELIVERED"];
+  const steps = ["PENDING", "ACCEPTED", "ARRIVED_AT_PICKUP", "COLLECTED", "IN_TRANSIT", "ARRIVED_AT_DESTINATION", "DELIVERED"];
   const current = steps.indexOf(parcel.status);
   return (
     <View style={styles.rideCard}>
