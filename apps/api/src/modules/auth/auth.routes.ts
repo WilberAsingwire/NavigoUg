@@ -104,7 +104,7 @@ authRouter.patch("/me", requireAuth, async (request, response, next) => {
     return;
   }
   try {
-    response.status(200).json({ data: await updateOwnProfile(request.auth!.userId, parsed.data) });
+    response.status(200).json({ data: await updateOwnProfile(request.auth!.userId, parsed.data, request.auth!.role) });
   } catch (error) { next(error); }
 });
 
@@ -115,7 +115,7 @@ authRouter.post("/change-password", requireAuth, authLimiter, async (request, re
     return;
   }
   try {
-    response.status(200).json({ data: await changeOwnPassword(request.auth!.userId, parsed.data) });
+    response.status(200).json({ data: await changeOwnPassword(request.auth!.userId, parsed.data, request.auth!.role) });
   } catch (error) { next(error); }
 });
 
@@ -143,7 +143,7 @@ authRouter.post("/switch-workspace", requireAuth, async (request, response, next
 
 authRouter.get("/me", requireAuth, async (request, response, next) => {
   try {
-    response.status(200).json({ data: await getSafeCurrentUser(request.auth!.userId) });
+    response.status(200).json({ data: await getSafeCurrentUser(request.auth!.userId, request.auth!.role) });
   } catch (error) { next(error); }
 });
 
