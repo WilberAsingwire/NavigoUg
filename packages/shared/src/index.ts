@@ -158,3 +158,42 @@ export const ApiErrorSchema = z.object({
     requestId: z.string().optional()
   })
 });
+
+export const AdminRiderApprovalInputSchema = z.object({
+  approvalStatus: z.enum(["APPROVED", "REJECTED", "SUSPENDED"]),
+  rejectionReason: z.string().trim().max(500).optional()
+});
+export type AdminRiderApprovalInput = z.infer<typeof AdminRiderApprovalInputSchema>;
+
+export const AdminFareRuleInputSchema = z.object({
+  requestType: z.enum(["RIDE", "PARCEL"]),
+  parcelSize: ParcelSizeCategorySchema.nullable().optional().default(null),
+  minDistanceKm: z.number().min(0).max(500),
+  maxDistanceKm: z.number().gt(0).max(500).nullable().optional().default(null),
+  fareUgx: z.number().int().min(500).max(10000000),
+  isActive: z.boolean().default(true)
+}).superRefine((value, context) => {
+  if (value.requestType === "PARCEL" && !value.parcelSize) {
+    context.addIssue({
+      code: "custom",
+      path: ["parcelSize"],
+      message: "Choose a size category for item-delivery fares."
+    });
+  }
+  if (value.requestType === "RIDE" && value.parcelSize !== null) {
+    context.addIssue({
+      code: "custom",
+      path: ["parcelSize"],
+      message: "Motorcycle ride fares must not have an item size category."
+    });
+  }
+  if (value.maxDistanceKm !== null && value.maxDistanceKm <= value.minDistanceKm) {
+    context.addIssue({
+      code: "custom",
+      path: ["maxDistanceKm"],
+      message: "The maximum distance must be greater than the minimum distance."
+    });
+  }
+});
+export type AdminFareRuleInput = z.infer<typeof AdminFareRuleInputSchema>;
+
