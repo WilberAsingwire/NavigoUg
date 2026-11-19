@@ -1,6 +1,7 @@
 import type { CreateRideInput, RideFareQuoteInput } from "@navigo/shared";
 import { prisma } from "../../lib/prisma.js";
 import { RIDE_DISTANCE_TARIFF } from "./fare-rules.js";
+import { getMotorcycleRoute, MotorcycleRoutingError } from "./routing.service.js";
 
 const EARTH_RADIUS_KM = 6371.0088;
 
@@ -39,13 +40,32 @@ type FareQuote = {
   distanceKm: number;
   fareAmountUgx: number;
   fareBasis: "LANDMARK_FARE" | "DISTANCE_RULE";
+  durationSeconds: number;
+  routeCoordinates: { latitude: number; longitude: number }[];
+  routingProvider: "GOOGLE_TWO_WHEELER" | "VALHALLA_MOTORCYCLE";
 };
 
 async function calculateFare(input: RideFareQuoteInput): Promise<FareQuote> {
-  const distance = calculateStraightLineDistanceKm(input.pickup, input.destination);
-  if (!Number.isFinite(distance) || distance < 0.05) {
+  const directDistance = calculateStraightLineDistanceKm(input.pickup, input.destination);
+  if (!Number.isFinite(directDistance) || directDistance < 0.05) {
     throw new RideError(400, "INVALID_ROUTE", "Choose two different pickup and destination points.");
   }
+
+  let roadRoute;
+  try {
+    roadRoute = await getMotorcycleRoute(input.pickup, input.destination);
+  } catch (error) {
+    if (error instanceof MotorcycleRoutingError) {
+      throw new RideError(error.statusCode, error.code, error.message);
+    }
+    throw new RideError(
+      503,
+      "ROUTE_PROVIDER_UNAVAILABLE",
+      "NAVIGO could not calculate a motorcycle road route. Please try again."
+    );
+  }
+
+  const roundedDistance = Math.round(roadRoute.distanceKm * 100) / 100;
 
   if (input.pickup.landmarkId || input.destination.landmarkId) {
     if (!input.pickup.landmarkId || !input.destination.landmarkId) {
@@ -77,16 +97,17 @@ async function calculateFare(input: RideFareQuoteInput): Promise<FareQuote> {
 
     if (landmarkFare) {
       return {
-        distanceKm: Math.round(distance * 100) / 100,
+        distanceKm: roundedDistance,
         fareAmountUgx: landmarkFare.fareUgx,
-        fareBasis: "LANDMARK_FARE"
+        fareBasis: "LANDMARK_FARE",
+        durationSeconds: roadRoute.durationSeconds,
+        routeCoordinates: roadRoute.coordinates,
+        routingProvider: roadRoute.provider
       };
     }
   }
 
-  // Match using the same 2-decimal distance shown to the customer so fare
-  // band boundaries are deterministic and do not create tiny decimal gaps.
-  const roundedDistance = Math.round(distance * 100) / 100;
+  // Match using the same 2-decimal road distance shown to the customer.
   const rules = await prisma.fareRule.findMany({
     where: { requestType: "RIDE", parcelSize: null, isActive: true },
     orderBy: { minDistanceKm: "desc" },
@@ -123,7 +144,10 @@ async function calculateFare(input: RideFareQuoteInput): Promise<FareQuote> {
   return {
     distanceKm: roundedDistance,
     fareAmountUgx: selectedFare,
-    fareBasis: "DISTANCE_RULE"
+    fareBasis: "DISTANCE_RULE",
+    durationSeconds: roadRoute.durationSeconds,
+    routeCoordinates: roadRoute.coordinates,
+    routingProvider: roadRoute.provider
   };
 }
 
