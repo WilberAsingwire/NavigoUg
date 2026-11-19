@@ -41,6 +41,11 @@ export type PaymentMethod = z.infer<typeof PaymentMethodSchema>;
 export const PaymentStatusSchema = z.enum(["UNPAID", "PAID"]);
 export type PaymentStatus = z.infer<typeof PaymentStatusSchema>;
 
+export const RecordPaymentInputSchema = z.object({
+  transactionReference: z.string().trim().min(3).max(120).optional()
+}).strict();
+export type RecordPaymentInput = z.infer<typeof RecordPaymentInputSchema>;
+
 export const CoordinatesSchema = z.object({
   latitude: z.number().min(-90).max(90),
   longitude: z.number().min(-180).max(180)
