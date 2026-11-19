@@ -358,7 +358,19 @@ export async function listAvailableRides(riderId: string) {
       latitude: Number(ride.pickupLatitude), longitude: Number(ride.pickupLongitude)
     });
     return pickupDistanceKm <= dispatchRadiusKm(ride.createdAt)
-      ? [{ ...ride, pickupDistanceKm: Math.round(pickupDistanceKm * 100) / 100 }]
+      ? [{
+          ...ride,
+          pickupLatitude: undefined,
+          pickupLongitude: undefined,
+          pickupLandmarkId: undefined,
+          destinationLatitude: undefined,
+          destinationLongitude: undefined,
+          destinationLandmarkId: undefined,
+          pickupDescription: "Pickup details shared after acceptance",
+          destinationDescription: "Destination details shared after acceptance",
+          customer: undefined,
+          pickupDistanceKm: Math.round(pickupDistanceKm * 100) / 100
+        }]
       : [];
   }).sort((a, b) => a.pickupDistanceKm - b.pickupDistanceKm);
 }

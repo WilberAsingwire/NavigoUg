@@ -274,7 +274,20 @@ export async function listAvailableParcels(riderId: string) {
       sender: { select: { fullName: true } }
     }
   });
-  return parcels.map(withoutVerificationSecrets);
+  return parcels.map((parcel) => ({
+    ...withoutVerificationSecrets(parcel),
+    sender: undefined,
+    recipientName: "Recipient details shared after acceptance",
+    recipientPhone: undefined,
+    pickupLatitude: undefined,
+    pickupLongitude: undefined,
+    pickupLandmarkId: undefined,
+    destinationLatitude: undefined,
+    destinationLongitude: undefined,
+    destinationLandmarkId: undefined,
+    pickupDescription: "Pickup details shared after acceptance",
+    destinationDescription: "Destination details shared after acceptance"
+  }));
 }
 
 export async function acceptParcel(riderId: string, parcelId: string) {

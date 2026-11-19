@@ -4,6 +4,10 @@ import * as Location from "expo-location";
 import {
   AppState,
   ActivityIndicator,
+  Animated,
+  Dimensions,
+  Linking,
+  PanResponder,
   SafeAreaView,
   ScrollView,
   StyleSheet,
@@ -48,6 +52,10 @@ type Ride = {
   estimatedDistanceKm: number | string | null;
   createdAt: string;
   pickupDistanceKm?: number | null;
+  pickupLatitude?: number | string;
+  pickupLongitude?: number | string;
+  destinationLatitude?: number | string;
+  destinationLongitude?: number | string;
   riderArrivalEstimateMinutes?: number | null;
   riderArrivalEstimateUpdatedAt?: string | null;
   customer?: { fullName: string } | null;
@@ -78,6 +86,14 @@ type Quote = {
   routeCoordinates: RouteCoordinate[];
   routingProvider: "GOOGLE_TWO_WHEELER" | "VALHALLA_MOTORCYCLE";
 };
+
+function coordinateFromValues(latitude: number | string | undefined, longitude: number | string | undefined): RouteCoordinate | null {
+  if (latitude === undefined || longitude === undefined) return null;
+  const parsedLatitude = Number(latitude);
+  const parsedLongitude = Number(longitude);
+  if (!Number.isFinite(parsedLatitude) || !Number.isFinite(parsedLongitude) || parsedLatitude < -90 || parsedLatitude > 90 || parsedLongitude < -180 || parsedLongitude > 180) return null;
+  return { latitude: parsedLatitude, longitude: parsedLongitude };
+}
 
 function routeMapRegion(coordinates: RouteCoordinate[]) {
   const latitudes = coordinates.map((point) => point.latitude);
@@ -118,9 +134,13 @@ type RiderParcel = {
   pickupDescription: string;
   destinationDescription: string;
   recipientName: string;
-  recipientPhone: string;
+  recipientPhone?: string;
   parcelDescription: string;
   sizeCategory: ParcelSize;
+  pickupLatitude?: number | string;
+  pickupLongitude?: number | string;
+  destinationLatitude?: number | string;
+  destinationLongitude?: number | string;
   fareAmountUgx: number;
   estimatedDistanceKm: number | string | null;
   createdAt: string;
@@ -783,10 +803,29 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
   const [rides, setRides] = useState<Ride[]>([]);
   const [availableRides, setAvailableRides] = useState<Ride[]>([]);
   const [riderOnline, setRiderOnline] = useState(false);
+  const [riderDeviceLocation, setRiderDeviceLocation] = useState<RideLocation | null>(null);
   const [availableParcels, setAvailableParcels] = useState<RiderParcel[]>([]);
   const [assignedParcels, setAssignedParcels] = useState<RiderParcel[]>([]);
   const [sentParcels, setSentParcels] = useState<RiderParcel[]>([]);
   const hasActiveCustomerRides = isCustomer && rides.some((ride) => !["COMPLETED", "CANCELLED", "EXPIRED"].includes(ride.status));
+  const activeRiderRide = rides.find((ride) => ["ACCEPTED", "ARRIVED_AT_PICKUP", "IN_PROGRESS"].includes(ride.status));
+  const activeRiderParcel = assignedParcels.find((parcel) => ["ACCEPTED", "ARRIVED_AT_PICKUP", "COLLECTED", "IN_TRANSIT", "ARRIVED_AT_DESTINATION"].includes(parcel.status));
+  const riderMapPickup = activeRiderRide
+    ? coordinateFromValues(activeRiderRide.pickupLatitude, activeRiderRide.pickupLongitude)
+    : activeRiderParcel
+      ? coordinateFromValues(activeRiderParcel.pickupLatitude, activeRiderParcel.pickupLongitude)
+      : null;
+  const riderMapDestination = activeRiderRide
+    ? coordinateFromValues(activeRiderRide.destinationLatitude, activeRiderRide.destinationLongitude)
+    : activeRiderParcel
+      ? coordinateFromValues(activeRiderParcel.destinationLatitude, activeRiderParcel.destinationLongitude)
+      : null;
+  const riderMapJobKey = activeRiderRide?.id ?? activeRiderParcel?.id ?? null;
+  const riderMapNavigationTarget = activeRiderRide
+    ? activeRiderRide.status === "ACCEPTED" ? riderMapPickup : riderMapDestination
+    : activeRiderParcel
+      ? ["ACCEPTED", "ARRIVED_AT_PICKUP"].includes(activeRiderParcel.status) ? riderMapPickup : riderMapDestination
+      : null;
   const [parcelCodeInputs, setParcelCodeInputs] = useState<Record<string, string>>({});
   const [ridePaymentReferences, setRidePaymentReferences] = useState<Record<string, string>>({});
   const [parcelPaymentReferences, setParcelPaymentReferences] = useState<Record<string, string>>({});
@@ -826,6 +865,35 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
     latitudeDelta: 0.035,
     longitudeDelta: 0.035
   });
+  const [mapSelectionField, setMapSelectionField] = useState<"pickup" | "destination" | null>(null);
+  const mapSheetCollapsedHeight = 168;
+  const mapSheetExpandedHeight = Math.min(Dimensions.get("window").height * 0.72, 590);
+  const [mapSheetExpanded, setMapSheetExpanded] = useState(false);
+  const mapSheetHeight = useRef(new Animated.Value(mapSheetCollapsedHeight)).current;
+  const mapSheetPanResponder = useRef(PanResponder.create({
+    onStartShouldSetPanResponder: () => false,
+    onMoveShouldSetPanResponder: (_event, gesture) => Math.abs(gesture.dy) > 8,
+    onPanResponderRelease: (_event, gesture) => {
+      if (gesture.dy < -30) setMapSheetExpanded(true);
+      else if (gesture.dy > 30) setMapSheetExpanded(false);
+    }
+  })).current;
+
+  useEffect(() => {
+    const animation = Animated.spring(mapSheetHeight, {
+      toValue: mapSheetExpanded ? mapSheetExpandedHeight : mapSheetCollapsedHeight,
+      useNativeDriver: false,
+      tension: 64,
+      friction: 13
+    });
+    animation.start();
+    return () => animation.stop();
+  }, [mapSheetExpanded, mapSheetExpandedHeight, mapSheetCollapsedHeight, mapSheetHeight]);
+
+  useEffect(() => {
+    if (!isApprovedRider || mainTab !== "home" || !riderMapPickup || !riderMapDestination) return;
+    setMapRegion(routeMapRegion([riderMapPickup, riderMapDestination]));
+  }, [isApprovedRider, mainTab, riderMapJobKey, riderMapPickup?.latitude, riderMapPickup?.longitude, riderMapDestination?.latitude, riderMapDestination?.longitude]);
 
   const loadDashboard = useCallback(async () => {
     setLoading(true);
@@ -963,6 +1031,49 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
     return () => { disposed = true; };
   }, [isCustomer, sentParcels, activeSession.accessToken, refreshAccessToken]);
 
+  async function selectCustomerMapPoint(coordinate: { latitude: number; longitude: number }) {
+    const target = mapSelectionField;
+    if (!target) return;
+
+    let description = `${coordinate.latitude.toFixed(5)}, ${coordinate.longitude.toFixed(5)}`;
+    try {
+      const reverse = await Location.reverseGeocodeAsync(coordinate);
+      const place = reverse[0];
+      const resolved = [
+        place?.name,
+        place?.street,
+        place?.district,
+        place?.city,
+        place?.region
+      ].filter(Boolean).filter((value, index, all) => all.indexOf(value) === index).join(", ");
+      if (resolved) description = resolved;
+    } catch {
+      // Coordinates remain valid even when reverse geocoding is unavailable.
+    }
+
+    const selected: RideLocation = { ...coordinate, description };
+    if (target === "pickup") {
+      setPickup(description);
+      setSelectedPickupLocation(selected);
+      setSelectedPickupSearchQuery("");
+      setQuote(null);
+      setLocations(null);
+      setParcelQuote(null);
+      setParcelLocations(null);
+    } else {
+      setDestination(description);
+      setSelectedDestinationLocation(selected);
+      setSelectedDestinationSearchQuery("");
+      setQuote(null);
+      setLocations(null);
+      setParcelQuote(null);
+      setParcelLocations(null);
+    }
+    setActiveLocationField(null);
+    setMapSelectionField(null);
+    setMessage(`${target === "pickup" ? "Pickup" : "Destination"} selected on the map.`);
+  }
+
   const detectPickupLocation = useCallback(async (allowReplace = false) => {
     setLocationStatus("locating");
     try {
@@ -991,8 +1102,8 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
       setMapRegion({
         latitude,
         longitude,
-        latitudeDelta: 0.012,
-        longitudeDelta: 0.012
+        latitudeDelta: 0.075,
+        longitudeDelta: 0.075
       });
       if (allowReplace || !pickup.trim()) {
         setPickup(description);
@@ -1014,6 +1125,33 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
     }
   }, [isCustomer]);
 
+  async function centerRiderMap() {
+    try {
+      const permission = await Location.requestForegroundPermissionsAsync();
+      if (permission.status !== "granted") throw new Error("Allow location access while using NAVIGO to center the rider map.");
+      const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High, mayShowUserSettingsDialog: true });
+      const point: RideLocation = { latitude: position.coords.latitude, longitude: position.coords.longitude, description: "Your current location" };
+      setRiderDeviceLocation(point);
+      setMapRegion({ latitude: point.latitude, longitude: point.longitude, latitudeDelta: 0.045, longitudeDelta: 0.045 });
+    } catch (locationError) {
+      setError(locationError instanceof Error ? locationError.message : "Unable to find your current location.");
+    }
+  }
+
+  async function openRiderMapDirections() {
+    if (!riderMapNavigationTarget) {
+      setError("Your accepted job's location coordinates are not available yet.");
+      return;
+    }
+    const { latitude, longitude } = riderMapNavigationTarget;
+    const url = `https://www.google.com/maps/dir/?api=1&destination=${latitude},${longitude}&travelmode=driving`;
+    try {
+      await Linking.openURL(url);
+    } catch {
+      setError("Unable to open directions on this device.");
+    }
+  }
+
   async function toggleRiderAvailability() {
     setWorking(true);
     setError("");
@@ -1034,6 +1172,9 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
           method: "POST",
           body: JSON.stringify({ latitude: position.coords.latitude, longitude: position.coords.longitude, accuracyMeters })
         }, refreshAccessToken);
+        const riderLocation = { latitude: position.coords.latitude, longitude: position.coords.longitude, description: "Your current location" };
+        setRiderDeviceLocation(riderLocation);
+        setMapRegion({ latitude: riderLocation.latitude, longitude: riderLocation.longitude, latitudeDelta: 0.055, longitudeDelta: 0.055 });
         setRiderOnline(true);
         setMessage("You are online. NAVIGO will show you ride requests near your current location.");
       }
@@ -1061,6 +1202,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
       }, refreshAccessToken);
       setLocations({ pickup: pickupLocation, destination: destinationLocation });
       setQuote(result.data);
+      setMapRegion(routeMapRegion(result.data.routeCoordinates));
     } catch (quoteError) {
       setError(quoteError instanceof Error ? quoteError.message : "Unable to calculate the fare.");
     } finally {
@@ -1111,6 +1253,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
       }, refreshAccessToken);
       setParcelLocations({ pickup: pickupLocation, destination: destinationLocation });
       setParcelQuote(result.data);
+      setMapRegion(routeMapRegion(result.data.routeCoordinates));
     } catch (quoteError) {
       setError(quoteError instanceof Error ? quoteError.message : "Unable to calculate the item delivery fee.");
     } finally {
@@ -1278,6 +1421,11 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
         const watcher = await Location.watchPositionAsync({ accuracy: Location.Accuracy.Highest, timeInterval: 10_000, distanceInterval: 12 }, (position) => {
           const accuracyMeters = position.coords.accuracy;
           if (accuracyMeters === null || accuracyMeters > 500) return;
+          setRiderDeviceLocation({
+            latitude: position.coords.latitude,
+            longitude: position.coords.longitude,
+            description: "Your latest GPS location"
+          });
           void apiRequest("/api/v1/rides/availability/location", activeSession.accessToken, {
             method: "POST",
             body: JSON.stringify({ latitude: position.coords.latitude, longitude: position.coords.longitude, accuracyMeters })
@@ -1529,7 +1677,13 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
   return (
     <SafeAreaView style={styles.safeArea}>
       <StatusBar style={appearance === "DARK" ? "light" : "dark"} />
-      <ScrollView style={styles.mainScroll} contentContainerStyle={styles.page} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+      <ScrollView
+        style={styles.mainScroll}
+        contentContainerStyle={[styles.page, isCustomer && mainTab === "home" ? styles.mapHomePage : null]}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+      >
+        {!(isCustomer && mainTab === "home") ? (
         <View style={styles.topBar}>
           <View>
             <Text style={styles.brandSmall}>NAVIGO</Text>
@@ -1542,6 +1696,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
             </TouchableOpacity>
           ) : null}
         </View>
+        ) : null}
 
         {isCustomer ? (
           <>
@@ -1552,6 +1707,9 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                 style={styles.customerMap}
                 region={mapRegion}
                 onRegionChangeComplete={setMapRegion}
+                onPress={(event) => {
+                  if (mapSelectionField) void selectCustomerMapPoint(event.nativeEvent.coordinate);
+                }}
                 customMapStyle={LIGHT_MAP_STYLE}
                 showsCompass={false}
                 showsScale={false}
@@ -1559,34 +1717,72 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                 showsMyLocationButton={false}
                 toolbarEnabled={false}
               >
-                {deviceLocation ? (
-                  <Marker coordinate={deviceLocation} title="Your current location" description={deviceLocation.description} pinColor="#21865B" />
+                {quote && locations ? (
+                  <Polyline coordinates={quote.routeCoordinates} strokeColor="#1F76A8" strokeWidth={5} />
+                ) : parcelQuote && parcelLocations ? (
+                  <Polyline coordinates={parcelQuote.routeCoordinates} strokeColor="#1F76A8" strokeWidth={5} />
+                ) : null}
+                {(locations?.pickup ?? parcelLocations?.pickup ?? selectedPickupLocation ?? deviceLocation) ? (
+                  <Marker
+                    coordinate={locations?.pickup ?? parcelLocations?.pickup ?? selectedPickupLocation ?? deviceLocation!}
+                    title={locations?.pickup || parcelLocations?.pickup || selectedPickupLocation ? "Pickup point" : "Your current location"}
+                    description={(locations?.pickup ?? parcelLocations?.pickup ?? selectedPickupLocation ?? deviceLocation)?.description}
+                    pinColor="#21865B"
+                  />
+                ) : null}
+                {(locations?.destination ?? parcelLocations?.destination ?? selectedDestinationLocation) ? (
+                  <Marker
+                    coordinate={locations?.destination ?? parcelLocations?.destination ?? selectedDestinationLocation!}
+                    title="Destination point"
+                    description={(locations?.destination ?? parcelLocations?.destination ?? selectedDestinationLocation)?.description}
+                    pinColor="#C54848"
+                  />
                 ) : null}
               </MapView>
               <View style={styles.mapBrandPill}>
                 <Text style={styles.mapBrandText}>NAVIGO  •  ARUA</Text>
               </View>
-              <View style={styles.pickupLocationPill}>
-                <View style={styles.pickupLocationCopy}>
-                  <Text style={styles.pickupLocationLabel}>YOUR PICKUP LOCATION</Text>
-                  <Text numberOfLines={1} style={styles.pickupLocationValue}>
-                    {locationStatus === "locating" ? "Finding your location..." : pickup || (locationStatus === "denied" ? "Location permission needed" : "Set your pickup location")}
-                  </Text>
-                </View>
-                <TouchableOpacity style={styles.locationChangeButton} onPress={() => {
-                  setActiveLocationField("pickup");
-                  setTab("book");
-                }}>
-                  <Text style={styles.locationChangeText}>Change</Text>
+              <View style={styles.mapSelectionControls}>
+                <TouchableOpacity
+                  style={[styles.mapSelectionButton, mapSelectionField === "pickup" ? styles.mapSelectionButtonActive : null]}
+                  onPress={() => setMapSelectionField(mapSelectionField === "pickup" ? null : "pickup")}
+                >
+                  <Text style={[styles.mapSelectionButtonText, mapSelectionField === "pickup" ? styles.mapSelectionButtonTextActive : null]}>Set pickup</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.mapSelectionButton, mapSelectionField === "destination" ? styles.mapSelectionButtonActive : null]}
+                  onPress={() => setMapSelectionField(mapSelectionField === "destination" ? null : "destination")}
+                >
+                  <Text style={[styles.mapSelectionButtonText, mapSelectionField === "destination" ? styles.mapSelectionButtonTextActive : null]}>Set destination</Text>
                 </TouchableOpacity>
               </View>
+              {!mapSelectionField ? (
+                <TouchableOpacity style={styles.customerMapRecenterButton} onPress={() => void detectPickupLocation(false)}>
+                  <Text style={styles.mapRecenterText}>◎</Text>
+                </TouchableOpacity>
+              ) : null}
+              {mapSelectionField ? (
+                <View style={[styles.mapSelectionHint, styles.mapSelectionHintAboveSheet]}>
+                  <Text style={styles.mapSelectionHintText}>Tap the map to choose your {mapSelectionField} point</Text>
+                  <TouchableOpacity onPress={() => setMapSelectionField(null)}><Text style={styles.mapSelectionCancel}>Cancel</Text></TouchableOpacity>
+                </View>
+              ) : null}
               {locationStatus !== "ready" ? (
-                <TouchableOpacity style={styles.locationRetryPill} onPress={() => void detectPickupLocation(true)}>
+                <TouchableOpacity style={[styles.locationRetryPill, styles.mapLocationRetryPill]} onPress={() => void detectPickupLocation(true)}>
                   <Text style={styles.locationRetryText}>{locationStatus === "locating" ? "Locating..." : "Use my location"}</Text>
                 </TouchableOpacity>
               ) : null}
-            </View>
-
+            <Animated.View style={[styles.customerMapSheet, { height: mapSheetHeight }]}>
+              <View style={styles.mapSheetDragArea} {...mapSheetPanResponder.panHandlers}>
+                <View style={styles.mapSheetGrip} />
+                <TouchableOpacity style={styles.mapSheetWhereTo} onPress={() => setMapSheetExpanded((expanded) => !expanded)}>
+                  <Text style={styles.mapSheetWhereToText}>{destination.trim() || "Where to?"}</Text>
+                  <Text style={styles.mapSheetPickupSummary} numberOfLines={1}>
+                    Pickup: {pickup || (locationStatus === "locating" ? "Finding your location..." : "Choose your pickup point")}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+              <ScrollView style={styles.mapSheetScroll} contentContainerStyle={styles.mapSheetContent} keyboardShouldPersistTaps="handled" nestedScrollEnabled showsVerticalScrollIndicator={false}>
             <View style={styles.serviceHeading}>
               <Text style={styles.serviceHeadingTitle}>Where can we help you go?</Text>
               <Text style={styles.serviceHeadingSubtitle}>Choose a service</Text>
@@ -1792,6 +1988,9 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
               </View>
 
             )}
+              </ScrollView>
+            </Animated.View>
+            </View>
               </>
             ) : mainTab === "activity" ? (
               <View style={styles.section}>
@@ -1850,6 +2049,35 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
               </View>
             ) : mainTab === "home" ? (
               <>
+                <View style={styles.riderMapFrame}>
+                  <MapView
+                    style={styles.customerMap}
+                    region={mapRegion}
+                    onRegionChangeComplete={setMapRegion}
+                    customMapStyle={LIGHT_MAP_STYLE}
+                    showsCompass={false}
+                    showsScale={false}
+                    showsUserLocation={riderOnline}
+                    showsMyLocationButton={false}
+                    toolbarEnabled={false}
+                  >
+                    {riderDeviceLocation ? <Marker coordinate={riderDeviceLocation} title="Your current location" pinColor="#236B9A" /> : null}
+                    {riderMapPickup ? <Marker coordinate={riderMapPickup} title="Accepted job pickup" description="Shown after this job is assigned to you" pinColor="#21865B" /> : null}
+                    {riderMapDestination ? <Marker coordinate={riderMapDestination} title="Accepted job destination" description="Shown after this job is assigned to you" pinColor="#C54848" /> : null}
+                  </MapView>
+                  <View style={styles.mapBrandPill}><Text style={styles.mapBrandText}>NAVIGO • RIDER MAP</Text></View>
+                  <TouchableOpacity style={[styles.mapRecenterButton, styles.riderMapRecenterButton]} onPress={() => void centerRiderMap()}>
+                    <Text style={styles.mapRecenterText}>◎</Text>
+                  </TouchableOpacity>
+                  {riderMapNavigationTarget ? (
+                    <TouchableOpacity style={styles.riderDirectionsButton} onPress={() => void openRiderMapDirections()}>
+                      <Text style={styles.riderDirectionsText}>
+                        Directions to {activeRiderRide?.status === "ACCEPTED" || ["ACCEPTED", "ARRIVED_AT_PICKUP"].includes(activeRiderParcel?.status ?? "") ? "pickup" : "destination"}
+                      </Text>
+                    </TouchableOpacity>
+                  ) : null}
+                  <View style={styles.riderMapStatus}><View style={[styles.riderOnlineDot, riderOnline ? styles.riderOnlineDotActive : null]} /><Text style={styles.riderMapStatusText}>{riderOnline ? "You are online" : "You are offline"}</Text></View>
+                </View>
                 <View style={styles.trackingControlPanel}>
                   <Text style={styles.sectionTitle}>Rider availability</Text>
                   <Text style={styles.trackingPrivacyText}>
@@ -2128,13 +2356,17 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
           </View>
         )}
 
-        {loading && (
-          <View style={styles.loadingRow}>
-            <ActivityIndicator color="#174A72" />
-            <Text style={styles.muted}>Loading your NAVIGO workspace...</Text>
-          </View>
-        )}
-        <Text style={styles.footer}>NAVIGO • Arua, Uganda</Text>
+        {!(isCustomer && mainTab === "home") ? (
+          <>
+            {loading && (
+              <View style={styles.loadingRow}>
+                <ActivityIndicator color="#174A72" />
+                <Text style={styles.muted}>Loading your NAVIGO workspace...</Text>
+              </View>
+            )}
+            <Text style={styles.footer}>NAVIGO • Arua, Uganda</Text>
+          </>
+        ) : null}
       </ScrollView>
       {activeSession.user.role === "CUSTOMER" || activeSession.user.role === "RIDER" ? (
         <BottomNavigation role={activeSession.user.role} activeTab={mainTab} onChange={(nextTab) => {
@@ -3167,7 +3399,11 @@ function ParcelRiderCard({
           <Text style={styles.routeAddress}>{parcel.destinationDescription}</Text>
         </View>
       </View>
-      <Text style={styles.rideMeta}>Recipient: {parcel.recipientName} • {parcel.recipientPhone}</Text>
+      {parcel.recipientPhone ? (
+        <Text style={styles.rideMeta}>Recipient: {parcel.recipientName} • {parcel.recipientPhone}</Text>
+      ) : (
+        <Text style={styles.rideMeta}>Recipient details are shared after you accept this delivery</Text>
+      )}
       {parcel.sender?.fullName ? <Text style={styles.rideMeta}>Sender: {parcel.sender.fullName}</Text> : null}
       {onToggleTracking ? (
         <View style={styles.trackingControlPanel}>
@@ -3302,7 +3538,37 @@ const baseStyles = StyleSheet.create({
   quickAccessCard: { flex: 1, minHeight: 92, backgroundColor: "#FFFFFF", borderRadius: 14, borderWidth: 1, borderColor: "#E5EAF0", padding: 13, justifyContent: "center" },
   quickAccessTitle: { color: "#174A72", fontSize: 13, fontWeight: "900" },
   quickAccessText: { color: "#667085", fontSize: 10, lineHeight: 15, marginTop: 5 },
-  customerMapFrame: { height: 285, borderRadius: 22, overflow: "hidden", marginBottom: 18, borderWidth: 1, borderColor: "#E1E8EF", backgroundColor: "#E9F0F5", position: "relative" },
+  mapHomePage: { flexGrow: 1, paddingHorizontal: 0, paddingTop: 0, paddingBottom: 0 },
+  customerMapFrame: { height: Dimensions.get("window").height - 88, borderRadius: 0, overflow: "hidden", marginBottom: 0, marginHorizontal: 0, marginTop: 0, borderWidth: 0, backgroundColor: "#E9F0F5", position: "relative" },
+  customerMapSheet: { position: "absolute", left: 0, right: 0, bottom: 0, backgroundColor: "#FFFFFF", borderTopLeftRadius: 23, borderTopRightRadius: 23, overflow: "hidden", elevation: 18, shadowColor: "#102A43", shadowOpacity: 0.17, shadowRadius: 14 },
+  mapSheetDragArea: { paddingTop: 10, paddingHorizontal: 16, paddingBottom: 10 },
+  mapSheetGrip: { alignSelf: "center", width: 42, height: 5, borderRadius: 3, backgroundColor: "#C8D0D8", marginBottom: 11 },
+  mapSheetWhereTo: { minHeight: 54, borderRadius: 14, backgroundColor: "#F4F6F8", paddingHorizontal: 15, paddingVertical: 9, justifyContent: "center" },
+  mapSheetWhereToText: { color: "#142B3D", fontSize: 15, fontWeight: "800" },
+  mapSheetPickupSummary: { color: "#667085", fontSize: 10, marginTop: 3 },
+  mapSheetScroll: { flex: 1 },
+  mapSheetContent: { paddingHorizontal: 16, paddingTop: 4, paddingBottom: 24 },
+  customerMapRecenterButton: { position: "absolute", top: 112, right: 13, width: 42, height: 42, borderRadius: 21, backgroundColor: "#FFFFFF", alignItems: "center", justifyContent: "center", elevation: 4, shadowColor: "#102A43", shadowOpacity: 0.16, shadowRadius: 7 },
+  mapLocationRetryPill: { left: 13, right: undefined, top: 61 },
+  riderMapFrame: { height: Dimensions.get("window").height * 0.48, borderRadius: 18, overflow: "hidden", marginTop: 12, marginBottom: 12, backgroundColor: "#E9F0F5", position: "relative" },
+  riderMapStatus: { position: "absolute", left: 13, bottom: 13, backgroundColor: "#FFFFFF", borderRadius: 20, paddingHorizontal: 12, paddingVertical: 9, flexDirection: "row", alignItems: "center", gap: 7, elevation: 3 },
+  riderOnlineDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: "#98A2B3" },
+  riderOnlineDotActive: { backgroundColor: "#12B76A" },
+  riderMapStatusText: { color: "#344054", fontSize: 10, fontWeight: "800" },
+  mapSelectionControls: { position: "absolute", top: 13, right: 12, gap: 7, alignItems: "flex-end" },
+  mapRecenterButton: { position: "absolute", right: 13, bottom: 80, width: 42, height: 42, borderRadius: 21, backgroundColor: "#FFFFFF", alignItems: "center", justifyContent: "center", elevation: 4, shadowColor: "#102A43", shadowOpacity: 0.16, shadowRadius: 7 },
+  mapRecenterText: { color: "#174A72", fontSize: 23, fontWeight: "800", lineHeight: 26 },
+  riderMapRecenterButton: { bottom: 120 },
+  riderDirectionsButton: { position: "absolute", right: 12, bottom: 60, backgroundColor: "#174A72", borderRadius: 20, paddingHorizontal: 13, paddingVertical: 10, elevation: 4 },
+  riderDirectionsText: { color: "#FFFFFF", fontSize: 10, fontWeight: "800" },
+  mapSelectionButton: { backgroundColor: "#FFFFFF", borderRadius: 18, paddingHorizontal: 12, paddingVertical: 9, elevation: 3 },
+  mapSelectionButtonActive: { backgroundColor: "#174A72" },
+  mapSelectionButtonText: { color: "#344054", fontSize: 10, fontWeight: "800" },
+  mapSelectionButtonTextActive: { color: "#FFFFFF" },
+  mapSelectionHint: { position: "absolute", bottom: 78, left: 12, right: 12, backgroundColor: "rgba(23,74,114,0.96)", borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
+  mapSelectionHintAboveSheet: { bottom: 180 },
+  mapSelectionHintText: { color: "#FFFFFF", fontSize: 10, fontWeight: "700", flex: 1 },
+  mapSelectionCancel: { color: "#FFFFFF", fontSize: 10, fontWeight: "900" },
   pickupLocationPill: { position: "absolute", left: 12, right: 12, bottom: 12, backgroundColor: "#FFFFFF", borderRadius: 15, padding: 11, flexDirection: "row", alignItems: "center", shadowColor: "#102A43", shadowOpacity: 0.15, shadowRadius: 10, elevation: 4 },
   pickupLocationCopy: { flex: 1, paddingRight: 8 },
   pickupLocationLabel: { color: "#8793A2", fontSize: 8, fontWeight: "900", letterSpacing: 1 },

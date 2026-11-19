@@ -174,6 +174,31 @@ describe("Parcel delivery API", () => {
     expect(mocks.parcelFindMany).not.toHaveBeenCalled();
   });
 
+  it("hides exact parcel locations from the available queue until a rider accepts", async () => {
+    const token = await accessToken("RIDER");
+    mocks.userFindUnique.mockResolvedValue({ isActive: true, riderProfile: { approvalStatus: "APPROVED" } });
+    mocks.parcelFindMany.mockResolvedValue([{ ...fakeParcel, sender: { fullName: "Sender" } }]);
+
+    const response = await request(app)
+      .get("/api/v1/parcels/available")
+      .set("Authorization", `Bearer ${token}`);
+
+    expect(response.status).toBe(200);
+    expect(response.body.data).toHaveLength(1);
+    expect(response.body.data[0]).not.toHaveProperty("pickupLatitude");
+    expect(response.body.data[0]).not.toHaveProperty("pickupLongitude");
+    expect(response.body.data[0]).not.toHaveProperty("destinationLatitude");
+    expect(response.body.data[0]).not.toHaveProperty("destinationLongitude");
+    expect(response.body.data[0]).not.toHaveProperty("pickupLandmarkId");
+    expect(response.body.data[0].pickupDescription).toBe("Pickup details shared after acceptance");
+    expect(response.body.data[0].destinationDescription).toBe("Destination details shared after acceptance");
+    expect(response.body.data[0].recipientName).toBe("Recipient details shared after acceptance");
+    expect(response.body.data[0]).not.toHaveProperty("recipientPhone");
+    expect(response.body.data[0]).not.toHaveProperty("sender");
+    expect(response.body.data[0]).not.toHaveProperty("pickupCodeHash");
+    expect(response.body.data[0]).not.toHaveProperty("deliveryCodeHash");
+  });
+
   it("calculates a parcel fare using the matching size-specific road-distance rule", async () => {
     const token = await accessToken("CUSTOMER");
     const response = await request(app)
