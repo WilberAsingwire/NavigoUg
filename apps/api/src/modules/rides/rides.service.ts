@@ -83,6 +83,9 @@ async function calculateFare(input: RideFareQuoteInput): Promise<FareQuote> {
     }
   }
 
+  // Match using the same 2-decimal distance shown to the customer so fare
+  // band boundaries are deterministic and do not create tiny decimal gaps.
+  const roundedDistance = Math.round(distance * 100) / 100;
   const rules = await prisma.fareRule.findMany({
     where: { requestType: "RIDE", parcelSize: null, isActive: true },
     orderBy: { minDistanceKm: "desc" },
@@ -92,19 +95,19 @@ async function calculateFare(input: RideFareQuoteInput): Promise<FareQuote> {
   const matchedRule = rules.find((rule) => {
     const minimum = Number(rule.minDistanceKm);
     const maximum = rule.maxDistanceKm === null ? null : Number(rule.maxDistanceKm);
-    return distance >= minimum && (maximum === null || distance <= maximum);
+    return roundedDistance >= minimum && (maximum === null || roundedDistance <= maximum);
   });
 
   if (!matchedRule) {
     throw new RideError(
       422,
       "FARE_NOT_CONFIGURED",
-      "A fare has not yet been configured for this distance. Please try another route or contact NAVIGO support."
+      "NAVIGO's current Arua pilot tariff covers journeys up to 30 km. Please choose a nearer destination."
     );
   }
 
   return {
-    distanceKm: Math.round(distance * 100) / 100,
+    distanceKm: roundedDistance,
     fareAmountUgx: matchedRule.fareUgx,
     fareBasis: "DISTANCE_RULE"
   };
