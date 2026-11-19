@@ -1913,13 +1913,13 @@ export default function RidesHome({
                 {message ? <Notice tone="success" text={message} /> : null}
               </View>
             ) : (
-              <ProfilePanel session={activeSession} onSignOut={onSignOut} signingOut={signingOut} onSaveProfile={saveOwnProfile} onChangePassword={changeOwnPassword} onSwitchWorkspace={switchWorkspace} onApplyRider={applyForRider} refreshAccessToken={refreshAccessToken} appearance={appearance} textSize={textSize} onUpdateUiPreferences={onUpdateUiPreferences} onEnablePushNotifications={onEnablePushNotifications} onDisablePushNotifications={onDisablePushNotifications} pushNotificationsEnabled={pushNotificationsEnabled} pushNotificationsBusy={pushNotificationsBusy} />
+              <ProfilePanel session={activeSession} onSignOut={onSignOut} signingOut={signingOut} onSaveProfile={saveOwnProfile} onChangePassword={changeOwnPassword} onSwitchWorkspace={switchWorkspace} onApplyRider={applyForRider} refreshAccessToken={refreshAccessToken} appearance={appearance} textSize={textSize} onUpdateUiPreferences={updateUiPreferences} onEnablePushNotifications={onEnablePushNotifications} onDisablePushNotifications={onDisablePushNotifications} pushNotificationsEnabled={pushNotificationsEnabled} pushNotificationsBusy={pushNotificationsBusy} />
             )}
           </>
         ) : activeSession.user.role === "RIDER" ? (
           <>
             {mainTab === "profile" ? (
-              <ProfilePanel session={activeSession} onSignOut={onSignOut} signingOut={signingOut} onSaveProfile={saveOwnProfile} onChangePassword={changeOwnPassword} onSwitchWorkspace={switchWorkspace} onApplyRider={applyForRider} refreshAccessToken={refreshAccessToken} appearance={appearance} textSize={textSize} onUpdateUiPreferences={onUpdateUiPreferences} onEnablePushNotifications={onEnablePushNotifications} onDisablePushNotifications={onDisablePushNotifications} pushNotificationsEnabled={pushNotificationsEnabled} pushNotificationsBusy={pushNotificationsBusy} />
+              <ProfilePanel session={activeSession} onSignOut={onSignOut} signingOut={signingOut} onSaveProfile={saveOwnProfile} onChangePassword={changeOwnPassword} onSwitchWorkspace={switchWorkspace} onApplyRider={applyForRider} refreshAccessToken={refreshAccessToken} appearance={appearance} textSize={textSize} onUpdateUiPreferences={updateUiPreferences} onEnablePushNotifications={onEnablePushNotifications} onDisablePushNotifications={onDisablePushNotifications} pushNotificationsEnabled={pushNotificationsEnabled} pushNotificationsBusy={pushNotificationsBusy} />
             ) : activeSession.user.riderApprovalStatus !== "APPROVED" ? (
               <View style={styles.card}>
                 <Text style={styles.cardTitle}>Rider application status</Text>
@@ -2046,7 +2046,7 @@ export default function RidesHome({
                 )}
               </View>
             ) : (
-              <ProfilePanel session={activeSession} onSignOut={onSignOut} signingOut={signingOut} onSaveProfile={saveOwnProfile} onChangePassword={changeOwnPassword} onSwitchWorkspace={switchWorkspace} onApplyRider={applyForRider} refreshAccessToken={refreshAccessToken} appearance={appearance} textSize={textSize} onUpdateUiPreferences={onUpdateUiPreferences} onEnablePushNotifications={onEnablePushNotifications} onDisablePushNotifications={onDisablePushNotifications} pushNotificationsEnabled={pushNotificationsEnabled} pushNotificationsBusy={pushNotificationsBusy} />
+              <ProfilePanel session={activeSession} onSignOut={onSignOut} signingOut={signingOut} onSaveProfile={saveOwnProfile} onChangePassword={changeOwnPassword} onSwitchWorkspace={switchWorkspace} onApplyRider={applyForRider} refreshAccessToken={refreshAccessToken} appearance={appearance} textSize={textSize} onUpdateUiPreferences={updateUiPreferences} onEnablePushNotifications={onEnablePushNotifications} onDisablePushNotifications={onDisablePushNotifications} pushNotificationsEnabled={pushNotificationsEnabled} pushNotificationsBusy={pushNotificationsBusy} />
             )}
             {error ? <Notice tone="error" text={error} /> : null}
             {message ? <Notice tone="success" text={message} /> : null}
@@ -2556,7 +2556,7 @@ function ProfilePanel({
           <View style={styles.card}>
             <Text style={styles.profileMenuGroupTitle}>APP SETTINGS</Text>
             {menuItem("Preferences and accessibility", "Appearance, text size and notifications", "preferences")}
-            {menuItem("Notifications", "Ride and item-delivery updates", "notifications", unreadCount > 0 ? String(unreadCount) : undefined)}
+            {menuItem("Notifications", "Ride, delivery and NAVIGO announcements", "notifications", unreadCount > 0 ? String(unreadCount) : undefined)}
           </View>
           <View style={styles.card}>
             <Text style={styles.profileMenuGroupTitle}>HELP AND INFORMATION</Text>
@@ -2729,7 +2729,7 @@ function ProfilePanel({
                 <Detail label="Push alerts" value={pushNotificationsEnabled ? "Enabled on this device" : "Not enabled"} />
                 {pushNotificationsEnabled ? (
                   <>
-                    <Text style={styles.profileHint}>Booking alerts are enabled on this Android device. You can manage notification permission in your phone settings.</Text>
+                    <Text style={styles.profileHint}>NAVIGO announcements and booking alerts are enabled on this Android device. You can manage notification permission in your phone settings.</Text>
                     <TouchableOpacity
                       accessibilityRole="button"
                       style={[styles.profileChoiceButton, { marginTop: 10, minHeight: 46 }]}
@@ -2743,7 +2743,7 @@ function ProfilePanel({
                   </>
                 ) : (
                   <>
-                    <Text style={styles.profileHint}>Enable Android alerts to receive ride and item-delivery updates even when NAVIGO is not open. The in-app inbox remains available.</Text>
+                    <Text style={styles.profileHint}>Enable Android alerts to receive ride, item-delivery and NAVIGO announcement updates even when the app is not open. The in-app inbox remains available.</Text>
                     <TouchableOpacity
                       accessibilityRole="button"
                       style={[styles.profileChoiceButton, styles.profileChoiceButtonSelected, { marginTop: 10, minHeight: 46 }]}
