@@ -234,7 +234,7 @@ async function getValhallaMotorcycleRoute(
             use_trails: 0.1
           }
         },
-        units: "kilometers",
+        units: "km",
         language: "en"
       }),
       signal: AbortSignal.timeout(ROUTE_TIMEOUT_MS)
