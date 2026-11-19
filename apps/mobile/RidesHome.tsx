@@ -2344,13 +2344,17 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
           </View>
         )}
 
-        {loading && (
-          <View style={styles.loadingRow}>
-            <ActivityIndicator color="#174A72" />
-            <Text style={styles.muted}>Loading your NAVIGO workspace...</Text>
-          </View>
-        )}
-        <Text style={styles.footer}>NAVIGO • Arua, Uganda</Text>
+        {!(isCustomer && mainTab === "home") ? (
+          <>
+            {loading && (
+              <View style={styles.loadingRow}>
+                <ActivityIndicator color="#174A72" />
+                <Text style={styles.muted}>Loading your NAVIGO workspace...</Text>
+              </View>
+            )}
+            <Text style={styles.footer}>NAVIGO • Arua, Uganda</Text>
+          </>
+        ) : null}
       </ScrollView>
       {activeSession.user.role === "CUSTOMER" || activeSession.user.role === "RIDER" ? (
         <BottomNavigation role={activeSession.user.role} activeTab={mainTab} onChange={(nextTab) => {
