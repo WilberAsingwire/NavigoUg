@@ -1712,6 +1712,11 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                   <Text style={[styles.mapSelectionButtonText, mapSelectionField === "destination" ? styles.mapSelectionButtonTextActive : null]}>Set destination</Text>
                 </TouchableOpacity>
               </View>
+              {!mapSelectionField ? (
+                <TouchableOpacity style={styles.mapRecenterButton} onPress={() => void detectPickupLocation(false)}>
+                  <Text style={styles.mapRecenterText}>◎</Text>
+                </TouchableOpacity>
+              ) : null}
               {mapSelectionField ? (
                 <View style={styles.mapSelectionHint}>
                   <Text style={styles.mapSelectionHintText}>Tap the map to choose your {mapSelectionField} point</Text>
@@ -2015,8 +2020,20 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                     toolbarEnabled={false}
                   >
                     {riderDeviceLocation ? <Marker coordinate={riderDeviceLocation} title="Your current location" pinColor="#236B9A" /> : null}
+                    {riderMapPickup ? <Marker coordinate={riderMapPickup} title="Accepted job pickup" description="Shown after this job is assigned to you" pinColor="#21865B" /> : null}
+                    {riderMapDestination ? <Marker coordinate={riderMapDestination} title="Accepted job destination" description="Shown after this job is assigned to you" pinColor="#C54848" /> : null}
                   </MapView>
                   <View style={styles.mapBrandPill}><Text style={styles.mapBrandText}>NAVIGO • RIDER MAP</Text></View>
+                  <TouchableOpacity style={styles.mapRecenterButton} onPress={() => void centerRiderMap()}>
+                    <Text style={styles.mapRecenterText}>◎</Text>
+                  </TouchableOpacity>
+                  {riderMapNavigationTarget ? (
+                    <TouchableOpacity style={styles.riderDirectionsButton} onPress={() => void openRiderMapDirections()}>
+                      <Text style={styles.riderDirectionsText}>
+                        Directions to {activeRiderRide?.status === "ACCEPTED" || ["ACCEPTED", "ARRIVED_AT_PICKUP"].includes(activeRiderParcel?.status ?? "") ? "pickup" : "destination"}
+                      </Text>
+                    </TouchableOpacity>
+                  ) : null}
                   <View style={styles.riderMapStatus}><View style={[styles.riderOnlineDot, riderOnline ? styles.riderOnlineDotActive : null]} /><Text style={styles.riderMapStatusText}>{riderOnline ? "You are online" : "You are offline"}</Text></View>
                 </View>
                 <View style={styles.trackingControlPanel}>
@@ -3478,6 +3495,10 @@ const baseStyles = StyleSheet.create({
   riderOnlineDotActive: { backgroundColor: "#12B76A" },
   riderMapStatusText: { color: "#344054", fontSize: 10, fontWeight: "800" },
   mapSelectionControls: { position: "absolute", top: 13, right: 12, gap: 7, alignItems: "flex-end" },
+  mapRecenterButton: { position: "absolute", right: 13, bottom: 80, width: 42, height: 42, borderRadius: 21, backgroundColor: "#FFFFFF", alignItems: "center", justifyContent: "center", elevation: 4, shadowColor: "#102A43", shadowOpacity: 0.16, shadowRadius: 7 },
+  mapRecenterText: { color: "#174A72", fontSize: 23, fontWeight: "800", lineHeight: 26 },
+  riderDirectionsButton: { position: "absolute", right: 12, bottom: 60, backgroundColor: "#174A72", borderRadius: 20, paddingHorizontal: 13, paddingVertical: 10, elevation: 4 },
+  riderDirectionsText: { color: "#FFFFFF", fontSize: 10, fontWeight: "800" },
   mapSelectionButton: { backgroundColor: "#FFFFFF", borderRadius: 18, paddingHorizontal: 12, paddingVertical: 9, elevation: 3 },
   mapSelectionButtonActive: { backgroundColor: "#174A72" },
   mapSelectionButtonText: { color: "#344054", fontSize: 10, fontWeight: "800" },
