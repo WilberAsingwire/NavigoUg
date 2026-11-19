@@ -16,7 +16,7 @@ notificationsRouter.get("/", requireAuth, async (request, response, next) => {
 
 notificationsRouter.patch("/:id/read", requireAuth, async (request, response, next) => {
   const id = request.params.id;
-  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)) {
+  if (!id || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)) {
     response.status(400).json({ error: { code: "INVALID_NOTIFICATION_ID", message: "This notification could not be found." } });
     return;
   }
