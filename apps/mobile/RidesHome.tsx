@@ -82,6 +82,9 @@ const NEXT_RIDER_STATUS: Record<string, "ARRIVED_AT_PICKUP" | "IN_PROGRESS" | "C
 };
 
 const ARUA_LOCATION_SUGGESTIONS = [
+  "Muni Site",
+  "Muni University",
+  "Muni Girls",
   "Arua Central Market",
   "Old Bus Park, Arua",
   "Arua Regional Referral Hospital",
@@ -97,6 +100,25 @@ const ARUA_LOCATION_SUGGESTIONS = [
   "Anyafio, Arua",
   "Arua Airport"
 ];
+
+type LocationSuggestion = {
+  label: string;
+  latitude?: number;
+  longitude?: number;
+};
+
+type PhotonFeature = {
+  geometry?: { coordinates?: number[] };
+  properties?: {
+    name?: string;
+    street?: string;
+    district?: string;
+    city?: string;
+    county?: string;
+    state?: string;
+    country?: string;
+  };
+};
 
 async function apiRequest<T>(
   path: string,
@@ -201,6 +223,8 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("CASH");
   const [quote, setQuote] = useState<Quote | null>(null);
   const [locations, setLocations] = useState<{ pickup: RideLocation; destination: RideLocation } | null>(null);
+  const [selectedPickupLocation, setSelectedPickupLocation] = useState<RideLocation | null>(null);
+  const [selectedDestinationLocation, setSelectedDestinationLocation] = useState<RideLocation | null>(null);
   const [rides, setRides] = useState<Ride[]>([]);
   const [availableRides, setAvailableRides] = useState<Ride[]>([]);
   const [loading, setLoading] = useState(true);
@@ -246,8 +270,8 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
     setLocations(null);
     try {
       const [pickupLocation, destinationLocation] = await Promise.all([
-        geocodeAruaAddress(pickup),
-        geocodeAruaAddress(destination)
+        selectedPickupLocation ?? geocodeAruaAddress(pickup),
+        selectedDestinationLocation ?? geocodeAruaAddress(destination)
       ]);
       const result = await apiRequest<{ data: Quote }>("/api/v1/rides/fare-quote", activeSession.accessToken, {
         method: "POST",
@@ -346,28 +370,48 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
                   style={styles.addressInput}
                   value={pickup}
                   onFocus={() => setActiveLocationField("pickup")}
-                  onChangeText={(value) => { setPickup(value); setQuote(null); setLocations(null); }}
-                  placeholder="e.g. Arua Main Market"
+                  onChangeText={(value) => { setPickup(value); setSelectedPickupLocation(null); setQuote(null); setLocations(null); }}
+                  placeholder="e.g. Muni University or Arua Main Market"
                   placeholderTextColor="#98A2B3"
                 />
                 <LocationSuggestions
                   visible={activeLocationField === "pickup"}
                   query={pickup}
-                  onSelect={(value) => { setPickup(value); setActiveLocationField(null); setQuote(null); setLocations(null); }}
+                  onSelect={(suggestion) => {
+                    setPickup(suggestion.label);
+                    setSelectedPickupLocation(
+                      suggestion.latitude !== undefined && suggestion.longitude !== undefined
+                        ? { latitude: suggestion.latitude, longitude: suggestion.longitude, description: suggestion.label }
+                        : null
+                    );
+                    setActiveLocationField(null);
+                    setQuote(null);
+                    setLocations(null);
+                  }}
                 />
                 <Text style={styles.label}>Destination</Text>
                 <TextInput
                   style={styles.addressInput}
                   value={destination}
                   onFocus={() => setActiveLocationField("destination")}
-                  onChangeText={(value) => { setDestination(value); setQuote(null); setLocations(null); }}
-                  placeholder="e.g. Arua Hill"
+                  onChangeText={(value) => { setDestination(value); setSelectedDestinationLocation(null); setQuote(null); setLocations(null); }}
+                  placeholder="e.g. Muni Site or Arua Hill"
                   placeholderTextColor="#98A2B3"
                 />
                 <LocationSuggestions
                   visible={activeLocationField === "destination"}
                   query={destination}
-                  onSelect={(value) => { setDestination(value); setActiveLocationField(null); setQuote(null); setLocations(null); }}
+                  onSelect={(suggestion) => {
+                    setDestination(suggestion.label);
+                    setSelectedDestinationLocation(
+                      suggestion.latitude !== undefined && suggestion.longitude !== undefined
+                        ? { latitude: suggestion.latitude, longitude: suggestion.longitude, description: suggestion.label }
+                        : null
+                    );
+                    setActiveLocationField(null);
+                    setQuote(null);
+                    setLocations(null);
+                  }}
                 />
 
                 <Text style={styles.label}>Payment preference</Text>
@@ -487,29 +531,122 @@ function LocationSuggestions({
 }: {
   visible: boolean;
   query: string;
-  onSelect: (value: string) => void;
+  onSelect: (suggestion: LocationSuggestion) => void;
 }) {
-  if (!visible) return null;
+  const [remoteMatches, setRemoteMatches] = useState<LocationSuggestion[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [searchFailed, setSearchFailed] = useState(false);
+
+  useEffect(() => {
+    const term = query.trim();
+    if (!visible || !term) {
+      setRemoteMatches([]);
+      setSearching(false);
+      setSearchFailed(false);
+      return undefined;
+    }
+
+    let cancelled = false;
+    const controller = new AbortController();
+    setSearching(true);
+    setSearchFailed(false);
+
+    const timer = setTimeout(async () => {
+      try {
+        const params = [
+          `q=${encodeURIComponent(term)}`,
+          "lat=3.02",
+          "lon=30.92",
+          "zoom=11",
+          "location_bias_scale=0.2",
+          "limit=12",
+          "lang=en",
+          "countrycode=UG",
+          "bbox=30.55,2.75,31.25,3.30"
+        ].join("&");
+        const response = await fetch(`https://photon.komoot.io/api/?${params}`, {
+          headers: { Accept: "application/json" },
+          signal: controller.signal
+        });
+        if (!response.ok) throw new Error("Location search is temporarily unavailable.");
+
+        const payload = await response.json() as { features?: PhotonFeature[] };
+        const mapped = (payload.features ?? []).flatMap((feature): LocationSuggestion[] => {
+          const properties = feature.properties;
+          const coordinates = feature.geometry?.coordinates;
+          if (!properties || !coordinates || coordinates.length < 2) return [];
+          const longitude = Number(coordinates[0]);
+          const latitude = Number(coordinates[1]);
+          if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return [];
+
+          const primary = properties.name || properties.street || properties.district || properties.city;
+          if (!primary) return [];
+          const details = [
+            properties.district,
+            properties.city,
+            properties.county,
+            properties.state,
+            properties.country
+          ].filter((part): part is string => Boolean(part) && part !== primary);
+          const uniqueDetails = [...new Set(details)];
+          return [{
+            label: [primary, ...uniqueDetails].join(", "),
+            latitude,
+            longitude
+          }];
+        });
+
+        if (!cancelled) setRemoteMatches(mapped);
+      } catch (error) {
+        if (!cancelled && !(error instanceof Error && error.name === "AbortError")) {
+          setSearchFailed(true);
+          setRemoteMatches([]);
+        }
+      } finally {
+        if (!cancelled) setSearching(false);
+      }
+    }, 350);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [query, visible]);
+
+  if (!visible || !query.trim()) return null;
 
   const normalized = query.trim().toLowerCase();
-  const matches = ARUA_LOCATION_SUGGESTIONS
+  const localMatches: LocationSuggestion[] = ARUA_LOCATION_SUGGESTIONS
     .filter((location) => location.toLowerCase().includes(normalized))
-    .slice(0, 6);
+    .map((label) => ({ label }));
+  const combined = [...localMatches, ...remoteMatches];
+  const uniqueMatches = combined.filter((item, index, all) =>
+    all.findIndex((candidate) => candidate.label.toLowerCase() === item.label.toLowerCase()) === index
+  ).slice(0, 8);
 
   return (
     <View style={styles.suggestionList}>
-      <Text style={styles.suggestionHeading}>SUGGESTED ARUA LOCATIONS</Text>
-      {matches.length ? matches.map((location) => (
+      <View style={styles.suggestionTitleRow}>
+        <Text style={styles.suggestionHeading}>PLACES NEAR ARUA</Text>
+        {searching ? <Text style={styles.suggestionLoading}>Searching...</Text> : null}
+      </View>
+      {uniqueMatches.length ? uniqueMatches.map((suggestion) => (
         <TouchableOpacity
-          key={location}
+          key={suggestion.label}
           style={styles.suggestionItem}
-          onPress={() => onSelect(location)}
+          onPress={() => onSelect(suggestion)}
         >
-          <Text style={styles.suggestionText}>{location}</Text>
+          <Text style={styles.suggestionText}>{suggestion.label}</Text>
         </TouchableOpacity>
-      )) : (
-        <Text style={styles.noSuggestionText}>No saved area matches. You can still enter a full address.</Text>
+      )) : searching ? null : (
+        <Text style={styles.noSuggestionText}>
+          {searchFailed
+            ? "Online place search is unavailable. You can still enter a full location."
+            : "No places matched yet. Try more letters or enter the full location."}
+        </Text>
       )}
+      <Text style={styles.attributionText}>Place data © OpenStreetMap contributors</Text>
     </View>
   );
 }
@@ -653,10 +790,13 @@ const styles = StyleSheet.create({
   label: { color: "#344054", fontSize: 12, fontWeight: "700", marginBottom: 7, marginTop: 10 },
   addressInput: { minHeight: 48, borderWidth: 1, borderColor: "#DCE3EB", borderRadius: 11, paddingHorizontal: 13, color: "#182230", backgroundColor: "#FBFCFE", fontSize: 13 },
   suggestionList: { backgroundColor: "#FFFFFF", borderWidth: 1, borderColor: "#E5EAF0", borderRadius: 11, marginTop: 5, marginBottom: 5, paddingHorizontal: 11, paddingVertical: 8 },
+  suggestionTitleRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   suggestionHeading: { color: "#98A2B3", fontSize: 9, fontWeight: "800", letterSpacing: 1, paddingVertical: 5 },
+  suggestionLoading: { color: "#236B9A", fontSize: 9, fontWeight: "700" },
   suggestionItem: { paddingVertical: 10, borderTopWidth: 1, borderTopColor: "#F0F2F5" },
   suggestionText: { color: "#344054", fontSize: 12, fontWeight: "600" },
   noSuggestionText: { color: "#8793A2", fontSize: 11, lineHeight: 16, paddingVertical: 8 },
+  attributionText: { color: "#A0A8B2", fontSize: 8, marginTop: 5, textAlign: "right" },
   paymentRow: { flexDirection: "row", gap: 9, marginTop: 2, marginBottom: 13 },
   choiceButton: { flex: 1, alignItems: "center", borderWidth: 1, borderColor: "#DCE3EB", borderRadius: 10, paddingVertical: 11, backgroundColor: "#FFFFFF" },
   choiceButtonSelected: { borderColor: "#2B719F", backgroundColor: "#F0F7FC" },
