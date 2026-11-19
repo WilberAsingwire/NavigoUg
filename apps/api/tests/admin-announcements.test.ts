@@ -24,6 +24,9 @@ vi.mock("../src/lib/prisma.js", () => ({
 }));
 
 vi.mock("../src/modules/notifications/notifications.service.js", () => ({
+  listUserNotifications: vi.fn(),
+  markAllUserNotificationsRead: vi.fn(),
+  markUserNotificationRead: vi.fn(),
   sendPushNotificationToUsers: mocks.sendPushNotificationToUsers
 }));
 
