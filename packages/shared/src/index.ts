@@ -56,6 +56,21 @@ export const LoginInputSchema = z.object({
   password: z.string().min(8).max(128)
 });
 
+export const UpdateOwnProfileInputSchema = z.object({
+  fullName: z.string().trim().min(2).max(100),
+  email: z.union([z.email(), z.literal("")]).optional()
+}).strict();
+export type UpdateOwnProfileInput = z.infer<typeof UpdateOwnProfileInputSchema>;
+
+export const ChangeOwnPasswordInputSchema = z.object({
+  currentPassword: z.string().min(8).max(128),
+  newPassword: z.string().min(8).max(128)
+}).strict().refine((value) => value.currentPassword !== value.newPassword, {
+  path: ["newPassword"],
+  message: "Your new password must be different from your current password."
+});
+export type ChangeOwnPasswordInput = z.infer<typeof ChangeOwnPasswordInputSchema>;
+
 export const RegisterCustomerInputSchema = z.object({
   fullName: z.string().trim().min(2).max(100),
   phone: z.string().trim().min(7).max(20),
