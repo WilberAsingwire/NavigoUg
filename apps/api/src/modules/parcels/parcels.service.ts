@@ -276,6 +276,9 @@ export async function listAvailableParcels(riderId: string) {
   });
   return parcels.map((parcel) => ({
     ...withoutVerificationSecrets(parcel),
+    sender: undefined,
+    recipientName: "Recipient details shared after acceptance",
+    recipientPhone: undefined,
     pickupLatitude: undefined,
     pickupLongitude: undefined,
     pickupLandmarkId: undefined,
