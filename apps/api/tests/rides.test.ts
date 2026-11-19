@@ -94,6 +94,7 @@ const route = {
 describe("Motorcycle ride API", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.notificationCreate.mockResolvedValue({ id: "notification-id" });
     mocks.availabilityFindUnique.mockResolvedValue(null);
     mocks.availabilityUpsert.mockResolvedValue({ isOnline: true, lastSeenAt: new Date() });
     mocks.getMotorcycleRoute.mockResolvedValue({
