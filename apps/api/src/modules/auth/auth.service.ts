@@ -233,7 +233,7 @@ export async function refreshSession(refreshToken: string) {
     data: {
       userId: existing.userId,
       tokenHash: hashRefreshToken(newRefreshToken),
-      activeRole: defaultActiveRole(existing.user) === "CUSTOMER" ? "CUSTOMER" : (existing.activeRole ?? "RIDER"),
+      activeRole: existing.activeRole ?? defaultActiveRole(existing.user),
       expiresAt: new Date(Date.now() + refreshDays * 24 * 60 * 60 * 1000)
     }
   });
