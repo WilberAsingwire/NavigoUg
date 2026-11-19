@@ -4,8 +4,10 @@ import * as Location from "expo-location";
 import {
   AppState,
   ActivityIndicator,
+  Animated,
   Dimensions,
   Linking,
+  PanResponder,
   SafeAreaView,
   ScrollView,
   StyleSheet,
@@ -864,6 +866,29 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
     longitudeDelta: 0.035
   });
   const [mapSelectionField, setMapSelectionField] = useState<"pickup" | "destination" | null>(null);
+  const mapSheetCollapsedHeight = 168;
+  const mapSheetExpandedHeight = Math.min(Dimensions.get("window").height * 0.72, 590);
+  const [mapSheetExpanded, setMapSheetExpanded] = useState(false);
+  const mapSheetHeight = useRef(new Animated.Value(mapSheetCollapsedHeight)).current;
+  const mapSheetPanResponder = useRef(PanResponder.create({
+    onStartShouldSetPanResponder: () => false,
+    onMoveShouldSetPanResponder: (_event, gesture) => Math.abs(gesture.dy) > 8,
+    onPanResponderRelease: (_event, gesture) => {
+      if (gesture.dy < -30) setMapSheetExpanded(true);
+      else if (gesture.dy > 30) setMapSheetExpanded(false);
+    }
+  })).current;
+
+  useEffect(() => {
+    const animation = Animated.spring(mapSheetHeight, {
+      toValue: mapSheetExpanded ? mapSheetExpandedHeight : mapSheetCollapsedHeight,
+      useNativeDriver: false,
+      tension: 64,
+      friction: 13
+    });
+    animation.start();
+    return () => animation.stop();
+  }, [mapSheetExpanded, mapSheetExpandedHeight, mapSheetCollapsedHeight, mapSheetHeight]);
 
   useEffect(() => {
     if (!isApprovedRider || mainTab !== "home" || !riderMapPickup || !riderMapDestination) return;
@@ -1650,7 +1675,13 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
   return (
     <SafeAreaView style={styles.safeArea}>
       <StatusBar style={appearance === "DARK" ? "light" : "dark"} />
-      <ScrollView style={styles.mainScroll} contentContainerStyle={styles.page} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+      <ScrollView
+        style={styles.mainScroll}
+        contentContainerStyle={[styles.page, isCustomer && mainTab === "home" ? styles.mapHomePage : null]}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+      >
+        {!(isCustomer && mainTab === "home") ? (
         <View style={styles.topBar}>
           <View>
             <Text style={styles.brandSmall}>NAVIGO</Text>
@@ -1663,6 +1694,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
             </TouchableOpacity>
           ) : null}
         </View>
+        ) : null}
 
         {isCustomer ? (
           <>
@@ -1713,37 +1745,32 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                 </TouchableOpacity>
               </View>
               {!mapSelectionField ? (
-                <TouchableOpacity style={styles.mapRecenterButton} onPress={() => void detectPickupLocation(false)}>
+                <TouchableOpacity style={styles.customerMapRecenterButton} onPress={() => void detectPickupLocation(false)}>
                   <Text style={styles.mapRecenterText}>◎</Text>
                 </TouchableOpacity>
               ) : null}
               {mapSelectionField ? (
-                <View style={styles.mapSelectionHint}>
+                <View style={[styles.mapSelectionHint, styles.mapSelectionHintAboveSheet]}>
                   <Text style={styles.mapSelectionHintText}>Tap the map to choose your {mapSelectionField} point</Text>
                   <TouchableOpacity onPress={() => setMapSelectionField(null)}><Text style={styles.mapSelectionCancel}>Cancel</Text></TouchableOpacity>
                 </View>
               ) : null}
-              <View style={styles.pickupLocationPill}>
-                <View style={styles.pickupLocationCopy}>
-                  <Text style={styles.pickupLocationLabel}>YOUR PICKUP LOCATION</Text>
-                  <Text numberOfLines={1} style={styles.pickupLocationValue}>
-                    {locationStatus === "locating" ? "Finding your location..." : pickup || (locationStatus === "denied" ? "Location permission needed" : "Set your pickup location")}
-                  </Text>
-                </View>
-                <TouchableOpacity style={styles.locationChangeButton} onPress={() => {
-                  setActiveLocationField("pickup");
-                  setTab("book");
-                }}>
-                  <Text style={styles.locationChangeText}>Change</Text>
-                </TouchableOpacity>
-              </View>
               {locationStatus !== "ready" ? (
-                <TouchableOpacity style={styles.locationRetryPill} onPress={() => void detectPickupLocation(true)}>
+                <TouchableOpacity style={[styles.locationRetryPill, styles.mapLocationRetryPill]} onPress={() => void detectPickupLocation(true)}>
                   <Text style={styles.locationRetryText}>{locationStatus === "locating" ? "Locating..." : "Use my location"}</Text>
                 </TouchableOpacity>
               ) : null}
-            </View>
-
+            <Animated.View style={[styles.customerMapSheet, { height: mapSheetHeight }]}>
+              <View style={styles.mapSheetDragArea} {...mapSheetPanResponder.panHandlers}>
+                <View style={styles.mapSheetGrip} />
+                <TouchableOpacity style={styles.mapSheetWhereTo} onPress={() => setMapSheetExpanded((expanded) => !expanded)}>
+                  <Text style={styles.mapSheetWhereToText}>{destination.trim() || "Where to?"}</Text>
+                  <Text style={styles.mapSheetPickupSummary} numberOfLines={1}>
+                    Pickup: {pickup || (locationStatus === "locating" ? "Finding your location..." : "Choose your pickup point")}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+              <ScrollView style={styles.mapSheetScroll} contentContainerStyle={styles.mapSheetContent} keyboardShouldPersistTaps="handled" nestedScrollEnabled showsVerticalScrollIndicator={false}>
             <View style={styles.serviceHeading}>
               <Text style={styles.serviceHeadingTitle}>Where can we help you go?</Text>
               <Text style={styles.serviceHeadingSubtitle}>Choose a service</Text>
@@ -1949,6 +1976,9 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
               </View>
 
             )}
+              </ScrollView>
+            </Animated.View>
+            </View>
               </>
             ) : mainTab === "activity" ? (
               <View style={styles.section}>
@@ -3488,7 +3518,18 @@ const baseStyles = StyleSheet.create({
   quickAccessCard: { flex: 1, minHeight: 92, backgroundColor: "#FFFFFF", borderRadius: 14, borderWidth: 1, borderColor: "#E5EAF0", padding: 13, justifyContent: "center" },
   quickAccessTitle: { color: "#174A72", fontSize: 13, fontWeight: "900" },
   quickAccessText: { color: "#667085", fontSize: 10, lineHeight: 15, marginTop: 5 },
-  customerMapFrame: { height: Dimensions.get("window").height * 0.72, borderRadius: 0, overflow: "hidden", marginBottom: 18, marginHorizontal: -19, marginTop: -20, borderWidth: 0, backgroundColor: "#E9F0F5", position: "relative" },
+  mapHomePage: { flexGrow: 1, paddingHorizontal: 0, paddingTop: 0, paddingBottom: 0 },
+  customerMapFrame: { height: Dimensions.get("window").height - 88, borderRadius: 0, overflow: "hidden", marginBottom: 0, marginHorizontal: 0, marginTop: 0, borderWidth: 0, backgroundColor: "#E9F0F5", position: "relative" },
+  customerMapSheet: { position: "absolute", left: 0, right: 0, bottom: 0, backgroundColor: "#FFFFFF", borderTopLeftRadius: 23, borderTopRightRadius: 23, overflow: "hidden", elevation: 18, shadowColor: "#102A43", shadowOpacity: 0.17, shadowRadius: 14 },
+  mapSheetDragArea: { paddingTop: 10, paddingHorizontal: 16, paddingBottom: 10 },
+  mapSheetGrip: { alignSelf: "center", width: 42, height: 5, borderRadius: 3, backgroundColor: "#C8D0D8", marginBottom: 11 },
+  mapSheetWhereTo: { minHeight: 54, borderRadius: 14, backgroundColor: "#F4F6F8", paddingHorizontal: 15, paddingVertical: 9, justifyContent: "center" },
+  mapSheetWhereToText: { color: "#142B3D", fontSize: 15, fontWeight: "800" },
+  mapSheetPickupSummary: { color: "#667085", fontSize: 10, marginTop: 3 },
+  mapSheetScroll: { flex: 1 },
+  mapSheetContent: { paddingHorizontal: 16, paddingTop: 4, paddingBottom: 24 },
+  customerMapRecenterButton: { position: "absolute", top: 112, right: 13, width: 42, height: 42, borderRadius: 21, backgroundColor: "#FFFFFF", alignItems: "center", justifyContent: "center", elevation: 4, shadowColor: "#102A43", shadowOpacity: 0.16, shadowRadius: 7 },
+  mapLocationRetryPill: { left: 13, right: undefined, top: 61 },
   riderMapFrame: { height: Dimensions.get("window").height * 0.48, borderRadius: 18, overflow: "hidden", marginTop: 12, marginBottom: 12, backgroundColor: "#E9F0F5", position: "relative" },
   riderMapStatus: { position: "absolute", left: 13, bottom: 13, backgroundColor: "#FFFFFF", borderRadius: 20, paddingHorizontal: 12, paddingVertical: 9, flexDirection: "row", alignItems: "center", gap: 7, elevation: 3 },
   riderOnlineDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: "#98A2B3" },
@@ -3505,6 +3546,7 @@ const baseStyles = StyleSheet.create({
   mapSelectionButtonText: { color: "#344054", fontSize: 10, fontWeight: "800" },
   mapSelectionButtonTextActive: { color: "#FFFFFF" },
   mapSelectionHint: { position: "absolute", bottom: 78, left: 12, right: 12, backgroundColor: "rgba(23,74,114,0.96)", borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
+  mapSelectionHintAboveSheet: { bottom: 180 },
   mapSelectionHintText: { color: "#FFFFFF", fontSize: 10, fontWeight: "700", flex: 1 },
   mapSelectionCancel: { color: "#FFFFFF", fontSize: 10, fontWeight: "900" },
   pickupLocationPill: { position: "absolute", left: 12, right: 12, bottom: 12, backgroundColor: "#FFFFFF", borderRadius: 15, padding: 11, flexDirection: "row", alignItems: "center", shadowColor: "#102A43", shadowOpacity: 0.15, shadowRadius: 10, elevation: 4 },
