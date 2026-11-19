@@ -229,15 +229,6 @@ export async function refreshSession(refreshToken: string) {
     throw new AuthError(401, "INVALID_REFRESH_TOKEN", "This refresh token has already been used.");
   }
 
-  await prisma.refreshToken.create({
-    data: {
-      userId: existing.userId,
-      tokenHash: hashRefreshToken(newRefreshToken),
-      activeRole: existing.activeRole ?? defaultActiveRole(existing.user),
-      expiresAt: new Date(Date.now() + refreshDays * 24 * 60 * 60 * 1000)
-    }
-  });
-
   const user = existing.user;
   const storedRole = existing.activeRole ?? defaultActiveRole(user);
   const activeRole = user.role === "ADMIN"
@@ -245,6 +236,15 @@ export async function refreshSession(refreshToken: string) {
     : storedRole === "RIDER" && user.riderProfile?.approvalStatus === "APPROVED"
       ? "RIDER"
       : "CUSTOMER";
+
+  await prisma.refreshToken.create({
+    data: {
+      userId: existing.userId,
+      tokenHash: hashRefreshToken(newRefreshToken),
+      activeRole,
+      expiresAt: new Date(Date.now() + refreshDays * 24 * 60 * 60 * 1000)
+    }
+  });
   const accessToken = await new SignJWT({ role: activeRole })
     .setProtectedHeader({ alg: "HS256", typ: "JWT" })
     .setSubject(user.id)
@@ -305,7 +305,18 @@ export async function switchWorkspace(
     });
   }
 
-  return buildSession(user, role);
+  // Issue the new workspace session, then revoke every previous refresh token
+  // for this account so another device cannot keep refreshing into the old workspace.
+  const session = await buildSession(user, role);
+  await prisma.refreshToken.updateMany({
+    where: {
+      userId,
+      revokedAt: null,
+      tokenHash: { not: hashRefreshToken(session.refreshToken) }
+    },
+    data: { revokedAt: new Date() }
+  });
+  return session;
 }
 
 export async function applyForRider(userId: string, input: {
