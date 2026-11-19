@@ -15,6 +15,11 @@ import {
 import { StatusBar } from "expo-status-bar";
 import MapView, { Marker, Polyline } from "react-native-maps";
 
+type UiAppearance = "LIGHT" | "DARK";
+type UiTextSize = "COMPACT" | "STANDARD" | "LARGE";
+type UiPreferences = { appearance: UiAppearance; textSize: UiTextSize };
+const UI_PREFERENCES_KEY = "navigo.uiPreferences";
+
 type Session = {
   accessToken: string;
   refreshToken: string;
@@ -627,7 +632,37 @@ async function geocodeAruaAddress(value: string): Promise<RideLocation> {
 export default function RidesHome({ session, onSignOut, signingOut }: Props) {
   const [activeSession, setActiveSession] = useState(session);
   const [mainTab, setMainTab] = useState<WorkspaceTab>("home");
+  const [appearance, setAppearance] = useState<UiAppearance>("LIGHT");
+  const [textSize, setTextSize] = useState<UiTextSize>("STANDARD");
   const isCustomer = activeSession.user.role === "CUSTOMER";
+
+  useEffect(() => {
+    let mounted = true;
+    SecureStore.getItemAsync(UI_PREFERENCES_KEY).then((stored) => {
+      if (!stored) return;
+      const parsed = JSON.parse(stored) as Partial<UiPreferences>;
+      const nextAppearance: UiAppearance = parsed.appearance === "DARK" ? "DARK" : "LIGHT";
+      const nextTextSize: UiTextSize = parsed.textSize === "COMPACT" || parsed.textSize === "LARGE"
+        ? parsed.textSize
+        : "STANDARD";
+      if (!mounted) return;
+      styles = createAppStyles(nextAppearance, nextTextSize);
+      setAppearance(nextAppearance);
+      setTextSize(nextTextSize);
+    }).catch(() => undefined);
+    return () => { mounted = false; };
+  }, []);
+
+  const updateUiPreferences = useCallback(async (changes: Partial<UiPreferences>) => {
+    const next: UiPreferences = {
+      appearance: changes.appearance ?? appearance,
+      textSize: changes.textSize ?? textSize
+    };
+    styles = createAppStyles(next.appearance, next.textSize);
+    setAppearance(next.appearance);
+    setTextSize(next.textSize);
+    await SecureStore.setItemAsync(UI_PREFERENCES_KEY, JSON.stringify(next)).catch(() => undefined);
+  }, [appearance, textSize]);
   const isApprovedRider = activeSession.user.role === "RIDER" && activeSession.user.riderApprovalStatus === "APPROVED";
   const refreshTokenRef = useRef(session.refreshToken);
   refreshTokenRef.current = activeSession.refreshToken;
@@ -1784,7 +1819,7 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
                 {message ? <Notice tone="success" text={message} /> : null}
               </View>
             ) : (
-              <ProfilePanel session={activeSession} onSignOut={onSignOut} signingOut={signingOut} onSaveProfile={saveOwnProfile} onChangePassword={changeOwnPassword} onSwitchWorkspace={switchWorkspace} onApplyRider={applyForRider} refreshAccessToken={refreshAccessToken} />
+              <ProfilePanel session={activeSession} onSignOut={onSignOut} signingOut={signingOut} onSaveProfile={saveOwnProfile} onChangePassword={changeOwnPassword} onSwitchWorkspace={switchWorkspace} onApplyRider={applyForRider} refreshAccessToken={refreshAccessToken} appearance={appearance} textSize={textSize} onUpdateUiPreferences={updateUiPreferences} />
             )}
           </>
         ) : activeSession.user.role === "RIDER" ? (
@@ -2121,7 +2156,10 @@ function ProfilePanel({
   onChangePassword,
   onSwitchWorkspace,
   onApplyRider,
-  refreshAccessToken
+  refreshAccessToken,
+  appearance,
+  textSize,
+  onUpdateUiPreferences
 }: {
   session: Session;
   onSignOut: () => void;
@@ -2131,6 +2169,9 @@ function ProfilePanel({
   onSwitchWorkspace: (role: "CUSTOMER" | "RIDER") => Promise<void>;
   onApplyRider: (input: { licenceNumber: string; motorcyclePlate: string; motorcycleDescription: string }) => Promise<void>;
   refreshAccessToken: () => Promise<string>;
+  appearance: UiAppearance;
+  textSize: UiTextSize;
+  onUpdateUiPreferences: (changes: Partial<UiPreferences>) => Promise<void>;
 }) {
   const roleLabel = session.user.role === "CUSTOMER" ? "Customer" : session.user.role === "RIDER" ? "Rider" : "Administrator";
   const riderStatus = session.user.riderApprovalStatus ?? "NOT SET";
@@ -2215,6 +2256,20 @@ function ProfilePanel({
       setSuccess("Password changed. Other devices will need to sign in again.");
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "We couldn't change your password. Please try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function updatePreferences(changes: Partial<UiPreferences>) {
+    setBusy(true);
+    setError("");
+    setSuccess("");
+    try {
+      await onUpdateUiPreferences(changes);
+      setSuccess("Your display preferences have been saved.");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Your preferences could not be saved.");
     } finally {
       setBusy(false);
     }
@@ -2467,12 +2522,45 @@ function ProfilePanel({
             <>
               <View style={styles.card}>
                 <Text style={styles.cardTitle}>Appearance</Text>
-                <Detail label="Current app appearance" value="Light" />
-                <Text style={styles.profileInfoText}>A full in-app light/dark theme selector is not enabled yet. NAVIGO currently uses its standard light appearance throughout the app.</Text>
+                <Text style={styles.profileInfoText}>Choose the appearance used throughout NAVIGO.</Text>
+                <View style={styles.profileChoiceRow}>
+                  {(["LIGHT", "DARK"] as UiAppearance[]).map((option) => (
+                    <TouchableOpacity
+                      key={option}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected: appearance === option }}
+                      style={[styles.profileChoiceButton, appearance === option && styles.profileChoiceButtonSelected]}
+                      onPress={() => updatePreferences({ appearance: option })}
+                      disabled={busy}
+                    >
+                      <Text style={[styles.profileChoiceText, appearance === option && styles.profileChoiceTextSelected]}>
+                        {option === "LIGHT" ? "Light" : "Dark"}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+                <Detail label="Current appearance" value={appearance === "DARK" ? "Dark" : "Light"} />
               </View>
               <View style={styles.card}>
-                <Text style={styles.cardTitle}>Text size and accessibility</Text>
-                <Text style={styles.profileInfoText}>NAVIGO supports your phone's system font scaling. Change Font size or Display size in your device accessibility or display settings to adjust text throughout the app.</Text>
+                <Text style={styles.cardTitle}>Text size</Text>
+                <Text style={styles.profileInfoText}>Adjust text throughout NAVIGO. Your phone's accessibility font scaling remains supported too.</Text>
+                <View style={styles.profileChoiceRow}>
+                  {(["COMPACT", "STANDARD", "LARGE"] as UiTextSize[]).map((option) => (
+                    <TouchableOpacity
+                      key={option}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected: textSize === option }}
+                      style={[styles.profileChoiceButton, textSize === option && styles.profileChoiceButtonSelected]}
+                      onPress={() => updatePreferences({ textSize: option })}
+                      disabled={busy}
+                    >
+                      <Text style={[styles.profileChoiceText, textSize === option && styles.profileChoiceTextSelected]}>
+                        {option === "COMPACT" ? "Small" : option === "STANDARD" ? "Standard" : "Large"}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+                <Detail label="Current text size" value={textSize === "COMPACT" ? "Small" : textSize === "LARGE" ? "Large" : "Standard"} />
               </View>
               <View style={styles.card}>
                 <Text style={styles.cardTitle}>Notifications</Text>
@@ -3145,7 +3233,7 @@ const LIGHT_MAP_STYLE = [
   { featureType: "water", elementType: "geometry", stylers: [{ color: "#CFE3EF" }] }
 ];
 
-const styles = StyleSheet.create({
+const baseStyles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: "#F3F6FA" },
   mainScroll: { flex: 1 },
   page: { flexGrow: 1, paddingHorizontal: 19, paddingTop: 20, paddingBottom: 30 },
@@ -3178,6 +3266,11 @@ const styles = StyleSheet.create({
   profileBack: { alignSelf: "flex-start", paddingVertical: 5, paddingRight: 12 },
   profileBackText: { color: "#236B9A", fontSize: 12, fontWeight: "800" },
   profileSubTitle: { color: "#142B3D", fontSize: 20, fontWeight: "900", marginBottom: 2 },
+  profileChoiceRow: { flexDirection: "row", gap: 7, marginTop: 11, marginBottom: 9 },
+  profileChoiceButton: { flex: 1, minHeight: 40, borderRadius: 10, borderWidth: 1, borderColor: "#DCE3EB", backgroundColor: "#FBFCFE", alignItems: "center", justifyContent: "center", paddingHorizontal: 5 },
+  profileChoiceButtonSelected: { borderColor: "#236B9A", backgroundColor: "#EAF3F9" },
+  profileChoiceText: { color: "#667085", fontSize: 11, fontWeight: "700" },
+  profileChoiceTextSelected: { color: "#174A72", fontWeight: "900" },
   notificationItem: { paddingVertical: 13, borderTopWidth: 1, borderTopColor: "#F0F2F5" },
   notificationItemUnread: { backgroundColor: "#F7FAFC", marginHorizontal: -4, paddingHorizontal: 4, borderRadius: 8 },
   notificationHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 8 },
@@ -3327,3 +3420,84 @@ const styles = StyleSheet.create({
   loadingRow: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10, marginTop: 10 },
   footer: { color: "#98A2B3", fontSize: 10, textAlign: "center", marginTop: 23 }
 });
+
+type AppStyles = typeof baseStyles;
+let styles: AppStyles = baseStyles;
+
+function appThemeColor(color: string, property: string, appearance: UiAppearance): string {
+  if (appearance !== "DARK") return color;
+
+  if (property === "backgroundColor") {
+    const backgrounds: Record<string, string> = {
+      "#FFFFFF": "#152638",
+      "#F3F6FA": "#0B1521",
+      "#FBFCFE": "#102031",
+      "#F0F3F7": "#1A2B3D",
+      "#F7FAFC": "#1A2B3D",
+      "#F0F7FC": "#183349",
+      "#EAF3F9": "#20394F",
+      "#FFF4E5": "#47331E",
+      "#FEF3F2": "#482525",
+      "#E9F0F5": "#1A2C3D",
+      "#E1E8EF": "#32475B"
+    };
+    return backgrounds[color.toUpperCase()] ?? color;
+  }
+
+  if (property === "borderColor" || property === "borderTopColor" || property === "borderBottomColor") {
+    const borders: Record<string, string> = {
+      "#E5EAF0": "#304456",
+      "#E6EBF1": "#304456",
+      "#E8EDF2": "#304456",
+      "#F0F2F5": "#304456",
+      "#DCE3EB": "#3A5065",
+      "#E0E6ED": "#3A5065",
+      "#E1E8EF": "#3A5065",
+      "#D5DFE8": "#3A5065",
+      "#D3E6F3": "#31516B",
+      "#F2C7C4": "#6B4141"
+    };
+    return borders[color.toUpperCase()] ?? color;
+  }
+
+  if (property === "color") {
+    const textColors: Record<string, string> = {
+      "#142B3D": "#EAF2F8",
+      "#182230": "#EAF2F8",
+      "#243B4D": "#EAF2F8",
+      "#344054": "#D5E1EC",
+      "#667085": "#AABACB",
+      "#8793A2": "#9AACC0",
+      "#98A2B3": "#9AACC0",
+      "#526779": "#C1D1DF",
+      "#174A72": "#77BCE8",
+      "#236B9A": "#7FC5ED",
+      "#B42318": "#FCA5A5",
+      "#067647": "#6EE7B7",
+      "#93370D": "#FDBA8C"
+    };
+    return textColors[color.toUpperCase()] ?? color;
+  }
+
+  if (property === "shadowColor") return "#000000";
+  return color;
+}
+
+function createAppStyles(appearance: UiAppearance, textSize: UiTextSize): AppStyles {
+  const scale = textSize === "COMPACT" ? 0.92 : textSize === "LARGE" ? 1.16 : 1;
+  const themed: Record<string, Record<string, unknown>> = {};
+
+  for (const [name, baseStyle] of Object.entries(baseStyles)) {
+    const nextStyle: Record<string, unknown> = { ...baseStyle };
+    for (const [property, value] of Object.entries(nextStyle)) {
+      if ((property === "fontSize" || property === "lineHeight") && typeof value === "number") {
+        nextStyle[property] = Math.max(9, Math.round(value * scale));
+      } else if (typeof value === "string" && /^#[0-9A-F]{6}$/i.test(value)) {
+        nextStyle[property] = appThemeColor(value, property, appearance);
+      }
+    }
+    themed[name] = nextStyle;
+  }
+
+  return StyleSheet.create(themed as never) as AppStyles;
+}
