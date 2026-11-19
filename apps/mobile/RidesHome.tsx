@@ -134,7 +134,7 @@ type RiderParcel = {
   pickupDescription: string;
   destinationDescription: string;
   recipientName: string;
-  recipientPhone: string;
+  recipientPhone?: string;
   parcelDescription: string;
   sizeCategory: ParcelSize;
   pickupLatitude?: number | string;
@@ -3399,7 +3399,11 @@ function ParcelRiderCard({
           <Text style={styles.routeAddress}>{parcel.destinationDescription}</Text>
         </View>
       </View>
-      <Text style={styles.rideMeta}>Recipient: {parcel.recipientName} • {parcel.recipientPhone}</Text>
+      {parcel.recipientPhone ? (
+        <Text style={styles.rideMeta}>Recipient: {parcel.recipientName} • {parcel.recipientPhone}</Text>
+      ) : (
+        <Text style={styles.rideMeta}>Recipient details are shared after you accept this delivery</Text>
+      )}
       {parcel.sender?.fullName ? <Text style={styles.rideMeta}>Sender: {parcel.sender.fullName}</Text> : null}
       {onToggleTracking ? (
         <View style={styles.trackingControlPanel}>
