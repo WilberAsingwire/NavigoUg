@@ -204,8 +204,8 @@ describe("Parcel delivery API", () => {
     expect(response.status).toBe(201);
     expect(response.body.data.id).toBe(fakeParcel.id);
     expect(response.body.data.status).toBe("PENDING");
-    expect(response.body.data.pickupCode).toMatch(/^\\d{6}$/);
-    expect(response.body.data.deliveryCode).toMatch(/^\\d{6}$/);
+    expect(response.body.data.pickupCode).toMatch(/^\d{6}$/);
+    expect(response.body.data.deliveryCode).toMatch(/^\d{6}$/);
     expect(response.body.data).not.toHaveProperty("pickupCodeHash");
     expect(response.body.data).not.toHaveProperty("deliveryCodeHash");
     expect(mocks.parcelHistoryCreate).toHaveBeenCalled();
