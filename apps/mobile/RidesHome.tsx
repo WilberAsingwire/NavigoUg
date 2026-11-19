@@ -1767,7 +1767,8 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                 </View>
               )}
               <ScrollView style={styles.mapSheetScroll} contentContainerStyle={styles.mapSheetContent} keyboardShouldPersistTaps="handled" nestedScrollEnabled showsVerticalScrollIndicator={false}>
-            {activeLocationField === null ? <View style={styles.serviceHeading}>
+            {activeLocationField === null ? <>
+            <View style={styles.serviceHeading}>
               <Text style={styles.serviceHeadingTitle}>Where can we help you go?</Text>
               <Text style={styles.serviceHeadingSubtitle}>Choose a service</Text>
             </View>
@@ -1782,7 +1783,8 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                 <Text style={styles.serviceTitle}>Send an Item</Text>
                 <Text style={styles.serviceDescription}>Pickup and delivery</Text>
               </TouchableOpacity>
-            </View> : null}
+            </View>
+            </> : null}
 
 
             {tab === "parcel" ? (
