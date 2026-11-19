@@ -159,7 +159,7 @@ const ARUA_LOCATION_SUGGESTIONS: LocationSuggestion[] = [
     label: "Divine Mercy Hostel",
     category: "Student hostel · inspected 2026",
     searchTerms: ["hostel", "accommodation", "student residence", "Muni"],
-    searchQuery: "Divine Mercy Hostel, Muni Hill, Arua, Uganda"
+    searchQuery: "Divine Mercy Hostel, Arua, Uganda"
   },
   {
     label: "Schorla Hostel",
@@ -177,7 +177,7 @@ const ARUA_LOCATION_SUGGESTIONS: LocationSuggestion[] = [
     label: "Jesse Hostel",
     category: "Student hostel · inspected 2026",
     searchTerms: ["hostel", "accommodation", "student residence", "Muni", "Muni Girls"],
-    searchQuery: "Jesse Hostel, Muni Site, Arua, Uganda"
+    searchQuery: "Jesse Hostel, Arua, Uganda"
   },
   {
     label: "Ellianze Hostel",
@@ -189,7 +189,7 @@ const ARUA_LOCATION_SUGGESTIONS: LocationSuggestion[] = [
     label: "Scholars' Residence",
     category: "Student residence · inspected 2026",
     searchTerms: ["hostel", "accommodation", "student hostel", "Muni"],
-    searchQuery: "Scholars' Residence, Muni, Arua, Uganda"
+    searchQuery: "Scholars' Residence, Arua, Uganda"
   },
   {
     label: "Jimex Hostel",
@@ -201,7 +201,7 @@ const ARUA_LOCATION_SUGGESTIONS: LocationSuggestion[] = [
     label: "Jehovah Jireh Hostel",
     category: "Student hostel · inspected 2026",
     searchTerms: ["hostel", "accommodation", "student residence", "Muni"],
-    searchQuery: "Jehovah Jireh Hostel, Muni, Arua, Uganda"
+    searchQuery: "Jehovah Jireh Hostel, Arua, Uganda"
   },
   {
     label: "Apex Hostel",
@@ -219,7 +219,7 @@ const ARUA_LOCATION_SUGGESTIONS: LocationSuggestion[] = [
     label: "New York Hostel",
     category: "Student hostel · inspected 2026",
     searchTerms: ["hostel", "accommodation", "student residence", "Muni"],
-    searchQuery: "New York Hostel, Muni Site, Arua, Uganda"
+    searchQuery: "New York Hostel, Arua, Uganda"
   },
   {
     label: "Muni Residences",
