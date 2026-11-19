@@ -105,17 +105,49 @@ describe("Motorcycle ride API", () => {
     expect(response.body.data.distanceKm).toBeGreaterThan(0);
   });
 
-  it("uses the researched Arua pilot tariff when the database has no active rule", async () => {
+  it("applies the UGX 1,000 minimum to a 0.9 km journey", async () => {
     mocks.fareRuleFindMany.mockResolvedValue([]);
     const token = await accessToken("CUSTOMER");
     const response = await request(app)
       .post("/api/v1/rides/fare-quote")
       .set("Authorization", `Bearer ${token}`)
-      .send(route);
+      .send({
+        pickup: {
+          latitude: 3.0200,
+          longitude: 30.9100,
+          description: "Hostel"
+        },
+        destination: {
+          latitude: 3.0200,
+          longitude: 30.9181,
+          description: "Muni University"
+        }
+      });
 
     expect(response.status).toBe(200);
-    expect(response.body.data.fareAmountUgx).toBe(2000);
+    expect(response.body.data.distanceKm).toBeCloseTo(0.9, 1);
+    expect(response.body.data.fareAmountUgx).toBe(1000);
     expect(response.body.data.fareBasis).toBe("DISTANCE_RULE");
+  });
+
+  it("calculates fares proportionally at UGX 500 per kilometre above the minimum", async () => {
+    mocks.fareRuleFindMany.mockResolvedValue([]);
+    const token = await accessToken("CUSTOMER");
+    const response = await request(app)
+      .post("/api/v1/rides/fare-quote")
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        pickup: route.pickup,
+        destination: {
+          latitude: 3.0200,
+          longitude: 30.9460,
+          description: "Four kilometres away"
+        }
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body.data.distanceKm).toBeCloseTo(4, 1);
+    expect(response.body.data.fareAmountUgx).toBe(2000);
   });
 
   it("does not quote journeys beyond the pilot tariff coverage", async () => {
