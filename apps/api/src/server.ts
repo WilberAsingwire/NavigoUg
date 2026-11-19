@@ -2,11 +2,12 @@ import "dotenv/config";
 import { createServer } from "node:http";
 import { app } from "./app.js";
 
-const port = Number(process.env.API_PORT ?? 4000);
+// Cloud hosts such as Render provide PORT; local development falls back to API_PORT.
+const port = Number(process.env.PORT ?? process.env.API_PORT ?? 4000);
 const host = process.env.API_HOST ?? "0.0.0.0";
 
 if (!Number.isInteger(port) || port < 1 || port > 65535) {
-  throw new Error("API_PORT must be a valid TCP port.");
+  throw new Error("PORT or API_PORT must be a valid TCP port.");
 }
 
 const server = createServer(app);
