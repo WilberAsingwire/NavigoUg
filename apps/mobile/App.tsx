@@ -227,6 +227,7 @@ export default function App() {
       <RidesHome
         session={session}
         onSignOut={signOut}
+        onSessionChange={setSession}
         signingOut={busy}
       />
     );
