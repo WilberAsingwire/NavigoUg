@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import * as SecureStore from "expo-secure-store";
 import {
   ActivityIndicator,
   SafeAreaView,
@@ -80,15 +81,44 @@ const NEXT_RIDER_STATUS: Record<string, "ARRIVED_AT_PICKUP" | "IN_PROGRESS" | "C
   IN_PROGRESS: "COMPLETED"
 };
 
-async function apiRequest<T>(path: string, token: string, init: Parameters<typeof fetch>[1] = {}): Promise<T> {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
+const ARUA_LOCATION_SUGGESTIONS = [
+  "Arua Central Market",
+  "Old Bus Park, Arua",
+  "Arua Regional Referral Hospital",
+  "Arua Hill",
+  "Arua Hill Stadium",
+  "West Nile Golf Course",
+  "Mvara, Arua",
+  "Ediofe, Arua",
+  "Onduparaka, Arua",
+  "Awindiri, Arua",
+  "Oli, Arua",
+  "Manibe, Arua",
+  "Anyafio, Arua",
+  "Arua Airport"
+];
+
+async function apiRequest<T>(
+  path: string,
+  token: string,
+  init: Parameters<typeof fetch>[1] = {},
+  refreshAccessToken?: () => Promise<string>
+): Promise<T> {
+  const send = (accessToken: string) => fetch(`${API_BASE_URL}${path}`, {
     ...init,
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
+      Authorization: `Bearer ${accessToken}`,
       ...(init.headers ?? {})
     }
   });
+
+  let response = await send(token);
+  if (response.status === 401 && refreshAccessToken) {
+    const renewedToken = await refreshAccessToken();
+    response = await send(renewedToken);
+  }
+
   const payload = await response.json().catch(() => null) as T | { error?: { message?: string } } | null;
   if (!response.ok) {
     const message = (payload as { error?: { message?: string } } | null)?.error?.message;
@@ -110,7 +140,7 @@ function formatDistance(value: number | string | null): string {
 async function geocodeAruaAddress(value: string): Promise<RideLocation> {
   const trimmed = value.trim();
   if (trimmed.length < 3) throw new Error("Enter a pickup or destination address.");
-  const query = /arua/i.test(trimmed) ? trimmed : `${trimmed}, Arua, Uganda`;
+  const query = /uganda/i.test(trimmed) ? trimmed : `${trimmed}, Arua, Uganda`;
   const results = await Location.geocodeAsync(query);
   const firstResult = results[0];
   if (!firstResult) {
@@ -126,6 +156,45 @@ async function geocodeAruaAddress(value: string): Promise<RideLocation> {
 export default function RidesHome({ session, onSignOut, signingOut }: Props) {
   const isCustomer = session.user.role === "CUSTOMER";
   const isApprovedRider = session.user.role === "RIDER" && session.user.riderApprovalStatus === "APPROVED";
+  const [activeSession, setActiveSession] = useState(session);
+  const refreshTokenRef = useRef(session.refreshToken);
+  refreshTokenRef.current = activeSession.refreshToken;
+  const refreshInFlight = useRef<Promise<string> | null>(null);
+
+  const refreshAccessToken = useCallback(async (): Promise<string> => {
+    if (refreshInFlight.current) return refreshInFlight.current;
+
+    const pending = (async () => {
+      const response = await fetch(`${API_BASE_URL}/api/v1/auth/refresh`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ refreshToken: refreshTokenRef.current })
+      });
+      const payload = await response.json().catch(() => null) as
+        | { data?: Session; error?: { message?: string } }
+        | null;
+
+      if (!response.ok || !payload?.data?.accessToken || !payload.data.refreshToken) {
+        if (response.status === 401) {
+          await onSignOut();
+        }
+        throw new Error(payload?.error?.message || "Your session has expired. Please sign in again.");
+      }
+
+      const renewedSession = payload.data;
+      await SecureStore.setItemAsync("navigo.session", JSON.stringify(renewedSession));
+      setActiveSession(renewedSession);
+      return renewedSession.accessToken;
+    })();
+
+    refreshInFlight.current = pending;
+    try {
+      return await pending;
+    } finally {
+      if (refreshInFlight.current === pending) refreshInFlight.current = null;
+    }
+  }, [onSignOut]);
+
   const [tab, setTab] = useState<"book" | "history">("book");
   const [pickup, setPickup] = useState("");
   const [destination, setDestination] = useState("");
@@ -138,6 +207,7 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
   const [working, setWorking] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [activeLocationField, setActiveLocationField] = useState<"pickup" | "destination" | null>(null);
 
   const loadDashboard = useCallback(async () => {
     if (session.user.role === "ADMIN") {
@@ -149,10 +219,10 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
     setLoading(true);
     setError("");
     try {
-      const mine = await apiRequest<{ data: Ride[] }>("/api/v1/rides/mine", session.accessToken);
+      const mine = await apiRequest<{ data: Ride[] }>("/api/v1/rides/mine", activeSession.accessToken, undefined, refreshAccessToken);
       setRides(mine.data ?? []);
       if (isApprovedRider) {
-        const available = await apiRequest<{ data: Ride[] }>("/api/v1/rides/available", session.accessToken);
+        const available = await apiRequest<{ data: Ride[] }>("/api/v1/rides/available", activeSession.accessToken, undefined, refreshAccessToken);
         setAvailableRides(available.data ?? []);
       } else {
         setAvailableRides([]);
@@ -162,7 +232,7 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
     } finally {
       setLoading(false);
     }
-  }, [session.accessToken, session.user.role, isApprovedRider]);
+  }, [activeSession.accessToken, session.user.role, isApprovedRider, refreshAccessToken]);
 
   useEffect(() => {
     void loadDashboard();
@@ -179,10 +249,10 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
         geocodeAruaAddress(pickup),
         geocodeAruaAddress(destination)
       ]);
-      const result = await apiRequest<{ data: Quote }>("/api/v1/rides/fare-quote", session.accessToken, {
+      const result = await apiRequest<{ data: Quote }>("/api/v1/rides/fare-quote", activeSession.accessToken, {
         method: "POST",
         body: JSON.stringify({ pickup: pickupLocation, destination: destinationLocation })
-      });
+      }, refreshAccessToken);
       setLocations({ pickup: pickupLocation, destination: destinationLocation });
       setQuote(result.data);
     } catch (quoteError) {
@@ -198,10 +268,10 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
     setError("");
     setMessage("");
     try {
-      await apiRequest<{ data: Ride }>("/api/v1/rides", session.accessToken, {
+      await apiRequest<{ data: Ride }>("/api/v1/rides", activeSession.accessToken, {
         method: "POST",
         body: JSON.stringify({ ...locations, paymentMethod })
-      });
+      }, refreshAccessToken);
       setMessage("Your ride request has been sent. We'll show it here as soon as a rider accepts.");
       setQuote(null);
       setLocations(null);
@@ -222,14 +292,14 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
     setMessage("");
     try {
       if (action === "accept") {
-        await apiRequest(`/api/v1/rides/${rideId}/accept`, session.accessToken, { method: "POST" });
+        await apiRequest(`/api/v1/rides/${rideId}/accept`, activeSession.accessToken, { method: "POST" }, refreshAccessToken);
       } else if (action === "cancel") {
-        await apiRequest(`/api/v1/rides/${rideId}/cancel`, session.accessToken, { method: "POST" });
+        await apiRequest(`/api/v1/rides/${rideId}/cancel`, activeSession.accessToken, { method: "POST" }, refreshAccessToken);
       } else {
-        await apiRequest(`/api/v1/rides/${rideId}/status`, session.accessToken, {
+        await apiRequest(`/api/v1/rides/${rideId}/status`, activeSession.accessToken, {
           method: "PATCH",
           body: JSON.stringify({ status: action })
-        });
+        }, refreshAccessToken);
       }
       setMessage(action === "accept" ? "Ride accepted. The customer can now see your assignment." : "Ride status updated.");
       await loadDashboard();
@@ -275,17 +345,29 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
                 <TextInput
                   style={styles.addressInput}
                   value={pickup}
+                  onFocus={() => setActiveLocationField("pickup")}
                   onChangeText={(value) => { setPickup(value); setQuote(null); setLocations(null); }}
                   placeholder="e.g. Arua Main Market"
                   placeholderTextColor="#98A2B3"
+                />
+                <LocationSuggestions
+                  visible={activeLocationField === "pickup"}
+                  query={pickup}
+                  onSelect={(value) => { setPickup(value); setActiveLocationField(null); setQuote(null); setLocations(null); }}
                 />
                 <Text style={styles.label}>Destination</Text>
                 <TextInput
                   style={styles.addressInput}
                   value={destination}
+                  onFocus={() => setActiveLocationField("destination")}
                   onChangeText={(value) => { setDestination(value); setQuote(null); setLocations(null); }}
                   placeholder="e.g. Arua Hill"
                   placeholderTextColor="#98A2B3"
+                />
+                <LocationSuggestions
+                  visible={activeLocationField === "destination"}
+                  query={destination}
+                  onSelect={(value) => { setDestination(value); setActiveLocationField(null); setQuote(null); setLocations(null); }}
                 />
 
                 <Text style={styles.label}>Payment preference</Text>
@@ -395,6 +477,40 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
         <Text style={styles.footer}>NAVIGO • Arua, Uganda</Text>
       </ScrollView>
     </SafeAreaView>
+  );
+}
+
+function LocationSuggestions({
+  visible,
+  query,
+  onSelect
+}: {
+  visible: boolean;
+  query: string;
+  onSelect: (value: string) => void;
+}) {
+  if (!visible) return null;
+
+  const normalized = query.trim().toLowerCase();
+  const matches = ARUA_LOCATION_SUGGESTIONS
+    .filter((location) => location.toLowerCase().includes(normalized))
+    .slice(0, 6);
+
+  return (
+    <View style={styles.suggestionList}>
+      <Text style={styles.suggestionHeading}>SUGGESTED ARUA LOCATIONS</Text>
+      {matches.length ? matches.map((location) => (
+        <TouchableOpacity
+          key={location}
+          style={styles.suggestionItem}
+          onPress={() => onSelect(location)}
+        >
+          <Text style={styles.suggestionText}>{location}</Text>
+        </TouchableOpacity>
+      )) : (
+        <Text style={styles.noSuggestionText}>No saved area matches. You can still enter a full address.</Text>
+      )}
+    </View>
   );
 }
 
@@ -536,6 +652,11 @@ const styles = StyleSheet.create({
   cardTitle: { color: "#182230", fontSize: 17, fontWeight: "800", marginBottom: 16 },
   label: { color: "#344054", fontSize: 12, fontWeight: "700", marginBottom: 7, marginTop: 10 },
   addressInput: { minHeight: 48, borderWidth: 1, borderColor: "#DCE3EB", borderRadius: 11, paddingHorizontal: 13, color: "#182230", backgroundColor: "#FBFCFE", fontSize: 13 },
+  suggestionList: { backgroundColor: "#FFFFFF", borderWidth: 1, borderColor: "#E5EAF0", borderRadius: 11, marginTop: 5, marginBottom: 5, paddingHorizontal: 11, paddingVertical: 8 },
+  suggestionHeading: { color: "#98A2B3", fontSize: 9, fontWeight: "800", letterSpacing: 1, paddingVertical: 5 },
+  suggestionItem: { paddingVertical: 10, borderTopWidth: 1, borderTopColor: "#F0F2F5" },
+  suggestionText: { color: "#344054", fontSize: 12, fontWeight: "600" },
+  noSuggestionText: { color: "#8793A2", fontSize: 11, lineHeight: 16, paddingVertical: 8 },
   paymentRow: { flexDirection: "row", gap: 9, marginTop: 2, marginBottom: 13 },
   choiceButton: { flex: 1, alignItems: "center", borderWidth: 1, borderColor: "#DCE3EB", borderRadius: 10, paddingVertical: 11, backgroundColor: "#FFFFFF" },
   choiceButtonSelected: { borderColor: "#2B719F", backgroundColor: "#F0F7FC" },
