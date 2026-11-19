@@ -246,6 +246,74 @@ export async function revokeRefreshToken(refreshToken: string): Promise<void> {
   });
 }
 
+export async function updateOwnProfile(userId: string, input: { fullName: string; email?: string }) {
+  const normalizedEmail = input.email?.trim().toLowerCase() || null;
+  try {
+    const user = await prisma.user.update({
+      where: { id: userId },
+      data: {
+        fullName: input.fullName.trim(),
+        email: normalizedEmail
+      },
+      include: { riderProfile: true }
+    });
+    return safeUser(user);
+  } catch (error) {
+    if (isUniqueConstraintError(error)) {
+      throw new AuthError(409, "EMAIL_ALREADY_USED", "That email address is already linked to another NAVIGO account.");
+    }
+    throw error;
+  }
+}
+
+export async function changeOwnPassword(
+  userId: string,
+  input: { currentPassword: string; newPassword: string }
+) {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    include: { riderProfile: true }
+  });
+
+  if (!user || !user.isActive) {
+    throw new AuthError(401, "ACCOUNT_UNAVAILABLE", "This account is not available.");
+  }
+
+  let matches = false;
+  try {
+    matches = await argon2.verify(user.passwordHash, input.currentPassword);
+  } catch {
+    matches = false;
+  }
+
+  if (!matches) {
+    throw new AuthError(400, "CURRENT_PASSWORD_INCORRECT", "Your current password is incorrect.");
+  }
+
+  const passwordHash = await argon2.hash(input.newPassword, { type: argon2.argon2id });
+  await prisma.$transaction(async (transaction) => {
+    await transaction.user.update({
+      where: { id: userId },
+      data: { passwordHash }
+    });
+    await transaction.refreshToken.updateMany({
+      where: { userId, revokedAt: null },
+      data: { revokedAt: new Date() }
+    });
+  });
+
+  const updatedUser = await prisma.user.findUnique({
+    where: { id: userId },
+    include: { riderProfile: true }
+  });
+  if (!updatedUser || !updatedUser.isActive) {
+    throw new AuthError(401, "ACCOUNT_UNAVAILABLE", "This account is not available.");
+  }
+
+  // Replace the sessions revoked above with a fresh session for this device.
+  return buildSession(updatedUser);
+}
+
 export async function getSafeCurrentUser(userId: string) {
   const user = await prisma.user.findUnique({
     where: { id: userId },
