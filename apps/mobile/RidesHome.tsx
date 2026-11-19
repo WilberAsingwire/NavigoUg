@@ -3552,7 +3552,7 @@ const baseStyles = StyleSheet.create({
   locationRetryPill: { position: "absolute", top: 57, right: 12, backgroundColor: "#FFFFFF", borderRadius: 18, paddingHorizontal: 12, paddingVertical: 9, elevation: 3 },
   locationRetryText: { color: "#174A72", fontSize: 10, fontWeight: "800" },
   customerMap: { width: "100%", height: "100%", backgroundColor: "#E9F0F5" },
-  customerMapLoadingOverlay: { ...StyleSheet.absoluteFill, backgroundColor: "#E9F0F5", alignItems: "center", justifyContent: "center", gap: 8 },
+  customerMapLoadingOverlay: { ...StyleSheet.absoluteFill, zIndex: 10, elevation: 10, backgroundColor: "#E9F0F5", alignItems: "center", justifyContent: "center", gap: 8 },
   customerMapLoadingText: { color: "#526779", fontSize: 11, fontWeight: "700" },
   mapBrandPill: { position: "absolute", top: 13, left: 13, backgroundColor: "#FFFFFF", borderRadius: 20, paddingHorizontal: 12, paddingVertical: 8, shadowColor: "#102A43", shadowOpacity: 0.12, shadowRadius: 8, elevation: 3 },
   mapBrandText: { color: "#174A72", fontSize: 10, fontWeight: "900", letterSpacing: 1.2 },
