@@ -459,6 +459,93 @@ export async function verifyParcelDelivery(riderId: string, parcelId: string, co
   return verifyParcelCode(riderId, parcelId, code, "DELIVERY");
 }
 
+
+const ARUA_BOUNDS = { minLat: 2.75, maxLat: 3.3, minLng: 30.55, maxLng: 31.25 };
+
+export async function updateParcelRiderLocation(
+  riderId: string,
+  parcelId: string,
+  location: { latitude: number; longitude: number; accuracyMeters?: number }
+) {
+  await assertApprovedRider(riderId);
+  if (!Number.isFinite(location.latitude) || !Number.isFinite(location.longitude) ||
+      location.latitude < ARUA_BOUNDS.minLat || location.latitude > ARUA_BOUNDS.maxLat ||
+      location.longitude < ARUA_BOUNDS.minLng || location.longitude > ARUA_BOUNDS.maxLng ||
+      (location.accuracyMeters !== undefined && (!Number.isFinite(location.accuracyMeters) || location.accuracyMeters < 0 || location.accuracyMeters > 1000))) {
+    throw new ParcelError(400, "INVALID_LOCATION", "A valid GPS location within the NAVIGO Arua service area is required.");
+  }
+  const parcel = await prisma.parcelRequest.findFirst({
+    where: { id: parcelId, riderId, status: { in: ["ACCEPTED", "ARRIVED_AT_PICKUP", "COLLECTED", "IN_TRANSIT", "ARRIVED_AT_DESTINATION"] } },
+    select: { id: true }
+  });
+  if (!parcel) throw new ParcelError(404, "ACTIVE_PARCEL_NOT_FOUND", "No active item delivery was found for this rider.");
+
+  const now = new Date();
+  return prisma.parcelTrackingSession.upsert({
+    where: { parcelRequestId: parcelId },
+    create: {
+      parcelRequestId: parcelId,
+      riderSharingEnabled: true,
+      riderConsentAt: now,
+      riderLatitude: location.latitude,
+      riderLongitude: location.longitude,
+      riderAccuracyMeters: location.accuracyMeters ?? null,
+      riderLocationUpdatedAt: now,
+      startedAt: now
+    },
+    update: {
+      riderSharingEnabled: true,
+      riderConsentAt: now,
+      riderLatitude: location.latitude,
+      riderLongitude: location.longitude,
+      riderAccuracyMeters: location.accuracyMeters ?? null,
+      riderLocationUpdatedAt: now,
+      endedAt: null
+    },
+    select: {
+      riderSharingEnabled: true,
+      riderLatitude: true,
+      riderLongitude: true,
+      riderAccuracyMeters: true,
+      riderLocationUpdatedAt: true
+    }
+  });
+}
+
+export async function getParcelTracking(viewerId: string, parcelId: string) {
+  const parcel = await prisma.parcelRequest.findFirst({
+    where: { id: parcelId, OR: [{ senderId: viewerId }, { riderId: viewerId }] },
+    select: { id: true, status: true, senderId: true, riderId: true }
+  });
+  if (!parcel) throw new ParcelError(404, "PARCEL_NOT_FOUND", "The item delivery could not be found.");
+  const tracking = await prisma.parcelTrackingSession.findUnique({
+    where: { parcelRequestId: parcelId },
+    select: {
+      riderSharingEnabled: true,
+      riderLatitude: true,
+      riderLongitude: true,
+      riderAccuracyMeters: true,
+      riderLocationUpdatedAt: true,
+      startedAt: true,
+      endedAt: true
+    }
+  });
+  const fresh = tracking?.riderLocationUpdatedAt &&
+    Date.now() - tracking.riderLocationUpdatedAt.getTime() <= 2 * 60 * 1000;
+  return {
+    status: parcel.status,
+    riderLocation: tracking?.riderSharingEnabled && fresh && tracking.riderLatitude !== null && tracking.riderLongitude !== null
+      ? {
+          latitude: Number(tracking.riderLatitude),
+          longitude: Number(tracking.riderLongitude),
+          accuracyMeters: tracking.riderAccuracyMeters,
+          updatedAt: tracking.riderLocationUpdatedAt
+        }
+      : null,
+    sharing: Boolean(tracking?.riderSharingEnabled && !tracking?.endedAt)
+  };
+}
+
 export async function cancelSenderParcel(senderId: string, parcelId: string) {
   const parcel = await prisma.parcelRequest.findUnique({ where: { id: parcelId } });
   if (!parcel || parcel.senderId !== senderId) {
