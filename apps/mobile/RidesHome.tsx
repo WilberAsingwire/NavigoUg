@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import * as SecureStore from "expo-secure-store";
+import * as Location from "expo-location";
 import {
   ActivityIndicator,
   SafeAreaView,
@@ -592,6 +593,14 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [activeLocationField, setActiveLocationField] = useState<"pickup" | "destination" | null>(null);
+  const [deviceLocation, setDeviceLocation] = useState<RideLocation | null>(null);
+  const [locationStatus, setLocationStatus] = useState<"locating" | "ready" | "denied" | "unavailable">("locating");
+  const [mapRegion, setMapRegion] = useState({
+    latitude: 3.02,
+    longitude: 30.92,
+    latitudeDelta: 0.035,
+    longitudeDelta: 0.035
+  });
 
   const loadDashboard = useCallback(async () => {
     if (session.user.role === "ADMIN") {
@@ -621,6 +630,54 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
   useEffect(() => {
     void loadDashboard();
   }, [loadDashboard]);
+
+  const detectPickupLocation = useCallback(async (allowReplace = false) => {
+    setLocationStatus("locating");
+    try {
+      const permission = await Location.requestForegroundPermissionsAsync();
+      if (permission.status !== "granted") {
+        setLocationStatus("denied");
+        return;
+      }
+      const position = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Highest,
+        mayShowUserSettingsDialog: true
+      });
+      const { latitude, longitude } = position.coords;
+      const reverse = await Location.reverseGeocodeAsync({ latitude, longitude });
+      const place = reverse[0];
+      const description = [
+        place?.name,
+        place?.street,
+        place?.district,
+        place?.city,
+        place?.region
+      ].filter(Boolean).filter((value, index, all) => all.indexOf(value) === index).join(", ")
+        || "Current device location";
+      const detected: RideLocation = { latitude, longitude, description };
+      setDeviceLocation(detected);
+      setMapRegion({
+        latitude,
+        longitude,
+        latitudeDelta: 0.012,
+        longitudeDelta: 0.012
+      });
+      if (allowReplace || !pickup.trim()) {
+        setPickup(description);
+        setSelectedPickupLocation(detected);
+        setSelectedPickupSearchQuery("");
+        setQuote(null);
+        setLocations(null);
+      }
+      setLocationStatus("ready");
+    } catch {
+      setLocationStatus("unavailable");
+    }
+  }, [pickup]); 
+
+  useEffect(() => {
+    if (isCustomer) void detectPickupLocation(false);
+  }, [isCustomer, detectPickupLocation]);
 
   async function getFareEstimate() {
     setWorking(true);
@@ -714,22 +771,41 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
             <View style={styles.customerMapFrame}>
               <MapView
                 style={styles.customerMap}
-                initialRegion={{
-                  latitude: 3.02,
-                  longitude: 30.92,
-                  latitudeDelta: 0.085,
-                  longitudeDelta: 0.085
-                }}
+                region={mapRegion}
+                onRegionChangeComplete={setMapRegion}
+                customMapStyle={LIGHT_MAP_STYLE}
                 showsCompass={false}
                 showsScale={false}
+                showsUserLocation={locationStatus === "ready"}
+                showsMyLocationButton={false}
                 toolbarEnabled={false}
-              />
+              >
+                {deviceLocation ? (
+                  <Marker coordinate={deviceLocation} title="Your current location" description={deviceLocation.description} pinColor="#21865B" />
+                ) : null}
+              </MapView>
               <View style={styles.mapBrandPill}>
                 <Text style={styles.mapBrandText}>NAVIGO  •  ARUA</Text>
               </View>
-              <View style={styles.mapHintPill}>
-                <Text style={styles.mapHintText}>Choose a service below to get started</Text>
+              <View style={styles.pickupLocationPill}>
+                <View style={styles.pickupLocationCopy}>
+                  <Text style={styles.pickupLocationLabel}>YOUR PICKUP LOCATION</Text>
+                  <Text numberOfLines={1} style={styles.pickupLocationValue}>
+                    {locationStatus === "locating" ? "Finding your location..." : pickup || (locationStatus === "denied" ? "Location permission needed" : "Set your pickup location")}
+                  </Text>
+                </View>
+                <TouchableOpacity style={styles.locationChangeButton} onPress={() => {
+                  setActiveLocationField("pickup");
+                  setTab("book");
+                }}>
+                  <Text style={styles.locationChangeText}>Change</Text>
+                </TouchableOpacity>
               </View>
+              {locationStatus !== "ready" ? (
+                <TouchableOpacity style={styles.locationRetryPill} onPress={() => void detectPickupLocation(true)}>
+                  <Text style={styles.locationRetryText}>{locationStatus === "locating" ? "Locating..." : "Use my location"}</Text>
+                </TouchableOpacity>
+              ) : null}
             </View>
 
             <View style={styles.serviceHeading}>
@@ -1219,6 +1295,20 @@ function Notice({ tone, text }: { tone: "error" | "success"; text: string }) {
   );
 }
 
+const LIGHT_MAP_STYLE = [
+  { elementType: "geometry", stylers: [{ color: "#F1F5F8" }] },
+  { elementType: "labels.text.fill", stylers: [{ color: "#536575" }] },
+  { elementType: "labels.text.stroke", stylers: [{ color: "#FFFFFF" }] },
+  { featureType: "administrative", elementType: "geometry.stroke", stylers: [{ color: "#D6E0E8" }] },
+  { featureType: "poi", elementType: "geometry", stylers: [{ color: "#E5EDF2" }] },
+  { featureType: "poi.park", elementType: "geometry", stylers: [{ color: "#DDEBDD" }] },
+  { featureType: "road", elementType: "geometry", stylers: [{ color: "#FFFFFF" }] },
+  { featureType: "road.arterial", elementType: "geometry", stylers: [{ color: "#FFFFFF" }] },
+  { featureType: "road.highway", elementType: "geometry", stylers: [{ color: "#F9DFAF" }] },
+  { featureType: "transit", elementType: "geometry", stylers: [{ color: "#E4EAF0" }] },
+  { featureType: "water", elementType: "geometry", stylers: [{ color: "#CFE3EF" }] }
+];
+
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: "#F3F6FA" },
   page: { flexGrow: 1, paddingHorizontal: 19, paddingTop: 20, paddingBottom: 30 },
@@ -1229,6 +1319,14 @@ const styles = StyleSheet.create({
   signOut: { borderWidth: 1, borderColor: "#D5DFE8", paddingHorizontal: 13, paddingVertical: 9, borderRadius: 10, backgroundColor: "#FFFFFF" },
   signOutText: { color: "#174A72", fontWeight: "700", fontSize: 12 },
   customerMapFrame: { height: 285, borderRadius: 22, overflow: "hidden", marginBottom: 18, borderWidth: 1, borderColor: "#E1E8EF", backgroundColor: "#E9F0F5", position: "relative" },
+  pickupLocationPill: { position: "absolute", left: 12, right: 12, bottom: 12, backgroundColor: "#FFFFFF", borderRadius: 15, padding: 11, flexDirection: "row", alignItems: "center", shadowColor: "#102A43", shadowOpacity: 0.15, shadowRadius: 10, elevation: 4 },
+  pickupLocationCopy: { flex: 1, paddingRight: 8 },
+  pickupLocationLabel: { color: "#8793A2", fontSize: 8, fontWeight: "900", letterSpacing: 1 },
+  pickupLocationValue: { color: "#142B3D", fontSize: 12, fontWeight: "700", marginTop: 4 },
+  locationChangeButton: { backgroundColor: "#EDF5FA", borderRadius: 10, paddingHorizontal: 12, paddingVertical: 9 },
+  locationChangeText: { color: "#174A72", fontSize: 11, fontWeight: "800" },
+  locationRetryPill: { position: "absolute", top: 57, right: 12, backgroundColor: "#FFFFFF", borderRadius: 18, paddingHorizontal: 12, paddingVertical: 9, elevation: 3 },
+  locationRetryText: { color: "#174A72", fontSize: 10, fontWeight: "800" },
   customerMap: { width: "100%", height: "100%" },
   mapBrandPill: { position: "absolute", top: 13, left: 13, backgroundColor: "#FFFFFF", borderRadius: 20, paddingHorizontal: 12, paddingVertical: 8, shadowColor: "#102A43", shadowOpacity: 0.12, shadowRadius: 8, elevation: 3 },
   mapBrandText: { color: "#174A72", fontSize: 10, fontWeight: "900", letterSpacing: 1.2 },
