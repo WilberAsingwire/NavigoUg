@@ -2024,7 +2024,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                     {riderMapDestination ? <Marker coordinate={riderMapDestination} title="Accepted job destination" description="Shown after this job is assigned to you" pinColor="#C54848" /> : null}
                   </MapView>
                   <View style={styles.mapBrandPill}><Text style={styles.mapBrandText}>NAVIGO • RIDER MAP</Text></View>
-                  <TouchableOpacity style={styles.mapRecenterButton} onPress={() => void centerRiderMap()}>
+                  <TouchableOpacity style={[styles.mapRecenterButton, styles.riderMapRecenterButton]} onPress={() => void centerRiderMap()}>
                     <Text style={styles.mapRecenterText}>◎</Text>
                   </TouchableOpacity>
                   {riderMapNavigationTarget ? (
@@ -3497,6 +3497,7 @@ const baseStyles = StyleSheet.create({
   mapSelectionControls: { position: "absolute", top: 13, right: 12, gap: 7, alignItems: "flex-end" },
   mapRecenterButton: { position: "absolute", right: 13, bottom: 80, width: 42, height: 42, borderRadius: 21, backgroundColor: "#FFFFFF", alignItems: "center", justifyContent: "center", elevation: 4, shadowColor: "#102A43", shadowOpacity: 0.16, shadowRadius: 7 },
   mapRecenterText: { color: "#174A72", fontSize: 23, fontWeight: "800", lineHeight: 26 },
+  riderMapRecenterButton: { bottom: 120 },
   riderDirectionsButton: { position: "absolute", right: 12, bottom: 60, backgroundColor: "#174A72", borderRadius: 20, paddingHorizontal: 13, paddingVertical: 10, elevation: 4 },
   riderDirectionsText: { color: "#FFFFFF", fontSize: 10, fontWeight: "800" },
   mapSelectionButton: { backgroundColor: "#FFFFFF", borderRadius: 18, paddingHorizontal: 12, paddingVertical: 9, elevation: 3 },
