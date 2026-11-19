@@ -879,6 +879,10 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
   const [customerMapReady, setCustomerMapReady] = useState(false);
   const [customerMapLoaded, setCustomerMapLoaded] = useState(false);
   const customerMapRef = useRef<MapView | null>(null);
+  const riderMapRef = useRef<MapView | null>(null);
+  const riderMapCentering = useRef(false);
+  const [riderMapReady, setRiderMapReady] = useState(false);
+  const [riderMapCenteringUi, setRiderMapCenteringUi] = useState(false);
   const [keyboardVisible, setKeyboardVisible] = useState(false);
   const locationDetectionStarted = useRef(false);
   const [mapRegion, setMapRegion] = useState({
@@ -1125,15 +1129,37 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
   }, [isCustomer]);
 
   async function centerRiderMap() {
+    if (riderMapCentering.current) return;
+    riderMapCentering.current = true;
+    setRiderMapCenteringUi(true);
+    setError("");
     try {
       const permission = await Location.requestForegroundPermissionsAsync();
       if (permission.status !== "granted") throw new Error("Allow location access while using NAVIGO to center the rider map.");
-      const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High, mayShowUserSettingsDialog: true });
-      const point: RideLocation = { latitude: position.coords.latitude, longitude: position.coords.longitude, description: "Your current location" };
+      const position = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.High,
+        mayShowUserSettingsDialog: true
+      });
+      const point: RideLocation = {
+        latitude: position.coords.latitude,
+        longitude: position.coords.longitude,
+        description: "Your current location"
+      };
       setRiderDeviceLocation(point);
-      setMapRegion({ latitude: point.latitude, longitude: point.longitude, latitudeDelta: 0.045, longitudeDelta: 0.045 });
+      if (!riderMapReady || !riderMapRef.current) {
+        throw new Error("The rider map is still loading. Please try again in a moment.");
+      }
+      riderMapRef.current.animateToRegion({
+        latitude: point.latitude,
+        longitude: point.longitude,
+        latitudeDelta: 0.045,
+        longitudeDelta: 0.045
+      }, 650);
     } catch (locationError) {
       setError(locationError instanceof Error ? locationError.message : "Unable to find your current location.");
+    } finally {
+      riderMapCentering.current = false;
+      setRiderMapCenteringUi(false);
     }
   }
 
@@ -2057,9 +2083,10 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
               <>
                 <View style={styles.riderMapFrame}>
                   <MapView
+                    ref={riderMapRef}
                     style={styles.customerMap}
-                    region={mapRegion}
-                    onRegionChangeComplete={setMapRegion}
+                    initialRegion={mapRegion}
+                    onMapReady={() => setRiderMapReady(true)}
                     customMapStyle={LIGHT_MAP_STYLE}
                     showsCompass={false}
                     showsScale={false}
@@ -2072,8 +2099,16 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                     {riderMapDestination ? <Marker coordinate={riderMapDestination} title="Accepted job destination" description="Shown after this job is assigned to you" pinColor="#C54848" /> : null}
                   </MapView>
                   <View style={styles.mapBrandPill}><Text style={styles.mapBrandText}>NAVIGO • RIDER MAP</Text></View>
-                  <TouchableOpacity style={[styles.mapRecenterButton, styles.riderMapRecenterButton]} onPress={() => void centerRiderMap()}>
-                    <Text style={styles.mapRecenterText}>◎</Text>
+                  <TouchableOpacity
+                    accessibilityRole="button"
+                    accessibilityLabel="Center rider map on current location"
+                    style={[styles.mapRecenterButton, styles.riderMapRecenterButton]}
+                    onPress={() => void centerRiderMap()}
+                    disabled={riderMapCenteringUi}
+                  >
+                    {riderMapCenteringUi
+                      ? <ActivityIndicator color="#174A72" size="small" />
+                      : <Text style={styles.mapRecenterText}>◎</Text>}
                   </TouchableOpacity>
                   {riderMapNavigationTarget ? (
                     <TouchableOpacity style={styles.riderDirectionsButton} onPress={() => void openRiderMapDirections()}>
