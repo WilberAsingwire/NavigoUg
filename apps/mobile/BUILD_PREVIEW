@@ -1,1 +1,1 @@
-Trigger a standalone Android APK preview build after the hosted API authentication connection was added.
+Rebuild NAVIGO standalone Android APK with Node.js 24.22.3 configured in the preview profile.
