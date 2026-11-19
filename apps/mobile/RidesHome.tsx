@@ -880,6 +880,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
   const [customerMapLoaded, setCustomerMapLoaded] = useState(false);
   const customerMapRef = useRef<MapView | null>(null);
   const riderMapRef = useRef<MapView | null>(null);
+  const pendingRiderMapCenter = useRef<RideLocation | null>(null);
   const riderMapCentering = useRef(false);
   const [riderMapReady, setRiderMapReady] = useState(false);
   const [riderMapCenteringUi, setRiderMapCenteringUi] = useState(false);
@@ -1128,6 +1129,19 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
     }
   }, [isCustomer]);
 
+  function animateRiderMapTo(point: RideLocation) {
+    if (!riderMapReady || !riderMapRef.current) {
+      pendingRiderMapCenter.current = point;
+      return;
+    }
+    riderMapRef.current.animateToRegion({
+      latitude: point.latitude,
+      longitude: point.longitude,
+      latitudeDelta: 0.045,
+      longitudeDelta: 0.045
+    }, 650);
+  }
+
   async function centerRiderMap() {
     if (riderMapCentering.current) return;
     riderMapCentering.current = true;
@@ -1146,15 +1160,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
         description: "Your current location"
       };
       setRiderDeviceLocation(point);
-      if (!riderMapReady || !riderMapRef.current) {
-        throw new Error("The rider map is still loading. Please try again in a moment.");
-      }
-      riderMapRef.current.animateToRegion({
-        latitude: point.latitude,
-        longitude: point.longitude,
-        latitudeDelta: 0.045,
-        longitudeDelta: 0.045
-      }, 650);
+      animateRiderMapTo(point);
     } catch (locationError) {
       setError(locationError instanceof Error ? locationError.message : "Unable to find your current location.");
     } finally {
@@ -1199,8 +1205,8 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
         }, refreshAccessToken);
         const riderLocation = { latitude: position.coords.latitude, longitude: position.coords.longitude, description: "Your current location" };
         setRiderDeviceLocation(riderLocation);
-        setMapRegion({ latitude: riderLocation.latitude, longitude: riderLocation.longitude, latitudeDelta: 0.055, longitudeDelta: 0.055 });
         setRiderOnline(true);
+        animateRiderMapTo(riderLocation);
         setMessage("You are online. NAVIGO will show you ride requests near your current location.");
       }
     } catch (availabilityError) {
@@ -2086,7 +2092,21 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                     ref={riderMapRef}
                     style={styles.customerMap}
                     initialRegion={mapRegion}
-                    onMapReady={() => setRiderMapReady(true)}
+                    onMapReady={() => {
+                      setRiderMapReady(true);
+                      const pendingCenter = pendingRiderMapCenter.current;
+                      if (pendingCenter) {
+                        pendingRiderMapCenter.current = null;
+                        requestAnimationFrame(() => {
+                          riderMapRef.current?.animateToRegion({
+                            latitude: pendingCenter.latitude,
+                            longitude: pendingCenter.longitude,
+                            latitudeDelta: 0.045,
+                            longitudeDelta: 0.045
+                          }, 650);
+                        });
+                      }
+                    }}
                     customMapStyle={LIGHT_MAP_STYLE}
                     showsCompass={false}
                     showsScale={false}
@@ -2094,7 +2114,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                     showsMyLocationButton={false}
                     toolbarEnabled={false}
                   >
-                    {riderDeviceLocation ? <Marker coordinate={riderDeviceLocation} title="Your current location" pinColor="#236B9A" /> : null}
+                    {!riderOnline && riderDeviceLocation ? <Marker coordinate={riderDeviceLocation} title="Your current location" pinColor="#236B9A" /> : null}
                     {riderMapPickup ? <Marker coordinate={riderMapPickup} title="Accepted job pickup" description="Shown after this job is assigned to you" pinColor="#21865B" /> : null}
                     {riderMapDestination ? <Marker coordinate={riderMapDestination} title="Accepted job destination" description="Shown after this job is assigned to you" pinColor="#C54848" /> : null}
                   </MapView>
