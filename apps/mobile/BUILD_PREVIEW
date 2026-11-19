@@ -1,1 +1,1 @@
-Rebuild NAVIGO standalone Android APK with Node.js 24.22.3 configured in the preview profile.
+Rebuild NAVIGO APK after fixing the explicit Expo application entry point.
