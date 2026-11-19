@@ -2,7 +2,7 @@ name: NAVIGO quality checks
 
 on:
   push:
-    branches: [main, cloud-preview-setup, ux/role-based-navigation, ux/profile-settings-hub]
+    branches: [main, cloud-preview-setup, ux/role-based-navigation, ux/profile-settings-hub, feature/android-push-notifications]
   pull_request:
     branches: [main, cloud-preview-setup, ux/role-based-navigation, feature/full-screen-customer-rider-maps]
 
