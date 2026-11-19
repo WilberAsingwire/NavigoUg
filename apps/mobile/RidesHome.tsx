@@ -112,12 +112,13 @@ async function geocodeAruaAddress(value: string): Promise<RideLocation> {
   if (trimmed.length < 3) throw new Error("Enter a pickup or destination address.");
   const query = /arua/i.test(trimmed) ? trimmed : `${trimmed}, Arua, Uganda`;
   const results = await Location.geocodeAsync(query);
-  if (!results.length) {
+  const firstResult = results[0];
+  if (!firstResult) {
     throw new Error(`We couldn't locate "${trimmed}". Try adding a nearby landmark or a clearer Arua address.`);
   }
   return {
-    latitude: results[0].latitude,
-    longitude: results[0].longitude,
+    latitude: firstResult.latitude,
+    longitude: firstResult.longitude,
     description: trimmed
   };
 }
@@ -355,15 +356,18 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
                 )) : <EmptyState title="No available rides" text="New customer requests will appear here. Pull to refresh or tap refresh." />}
 
                 <SectionHeader title="My assigned rides" onRefresh={loadDashboard} loading={loading} />
-                {rides.length ? rides.map((ride) => (
-                  <RideCard
-                    key={ride.id}
-                    ride={ride}
-                    busy={working}
-                    riderView
-                    onAdvance={NEXT_RIDER_STATUS[ride.status] ? () => performRideAction(ride.id, NEXT_RIDER_STATUS[ride.status]) : undefined}
-                  />
-                )) : <EmptyState title="No assigned rides" text="Rides you accept will appear here." />}
+                {rides.length ? rides.map((ride) => {
+                  const nextStatus = NEXT_RIDER_STATUS[ride.status];
+                  return (
+                    <RideCard
+                      key={ride.id}
+                      ride={ride}
+                      busy={working}
+                      riderView
+                      onAdvance={nextStatus ? () => performRideAction(ride.id, nextStatus) : undefined}
+                    />
+                  );
+                }) : <EmptyState title="No assigned rides" text="Rides you accept will appear here." />}
               </>
             )}
             {error ? <Notice tone="error" text={error} /> : null}
