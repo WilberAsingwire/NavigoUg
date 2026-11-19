@@ -50,8 +50,9 @@ describe("motorcycle road routing", () => {
     ];
     const encodedShape = encodePolyline(routePoints);
     const requestedUrls: string[] = [];
+    let valhallaRequestBody: Record<string, unknown> | undefined;
 
-    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       requestedUrls.push(url);
 
@@ -60,6 +61,7 @@ describe("motorcycle road routing", () => {
       }
 
       if (url === "https://valhalla.test/route") {
+        valhallaRequestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
         return new Response(JSON.stringify({
           trip: {
             status: 0,
@@ -84,6 +86,7 @@ describe("motorcycle road routing", () => {
       "https://routes.googleapis.com/directions/v2:computeRoutes",
       "https://valhalla.test/route"
     ]);
+    expect(valhallaRequestBody).toMatchObject({ costing: "motorcycle", units: "km" });
     expect(route.provider).toBe("VALHALLA_MOTORCYCLE");
     expect(route.distanceKm).toBe(4.25);
     expect(route.durationSeconds).toBe(780);
