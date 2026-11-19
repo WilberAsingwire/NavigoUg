@@ -674,6 +674,8 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
   const [assignedParcels, setAssignedParcels] = useState<RiderParcel[]>([]);
   const [sentParcels, setSentParcels] = useState<RiderParcel[]>([]);
   const [parcelCodeInputs, setParcelCodeInputs] = useState<Record<string, string>>({});
+  const [ridePaymentReferences, setRidePaymentReferences] = useState<Record<string, string>>({});
+  const [parcelPaymentReferences, setParcelPaymentReferences] = useState<Record<string, string>>({});
   const [parcelTrackings, setParcelTrackings] = useState<Record<string, ParcelTracking>>({});
   const [trackingParcelIds, setTrackingParcelIds] = useState<string[]>([]);
   const [adminRiders, setAdminRiders] = useState<AdminRider[]>([]);
@@ -992,6 +994,32 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
       await loadDashboard();
     } catch (actionError) {
       setError(actionError instanceof Error ? actionError.message : "Unable to update this item delivery.");
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function recordManualPayment(requestType: "ride" | "parcel", requestId: string) {
+    const referenceMap = requestType === "ride" ? ridePaymentReferences : parcelPaymentReferences;
+    const transactionReference = (referenceMap[requestId] ?? "").trim();
+    setWorking(true);
+    setError("");
+    setMessage("");
+    try {
+      const endpoint = requestType === "ride" ? "rides" : "parcels";
+      await apiRequest(`/api/v1/${endpoint}/${requestId}/payment/record`, activeSession.accessToken, {
+        method: "POST",
+        body: JSON.stringify(transactionReference ? { transactionReference } : {})
+      }, refreshAccessToken);
+      if (requestType === "ride") {
+        setRidePaymentReferences((current) => ({ ...current, [requestId]: "" }));
+      } else {
+        setParcelPaymentReferences((current) => ({ ...current, [requestId]: "" }));
+      }
+      setMessage("Payment marked as received. This is a manual rider confirmation; NAVIGO does not automatically verify Mobile Money transfers.");
+      await loadDashboard();
+    } catch (paymentError) {
+      setError(paymentError instanceof Error ? paymentError.message : "Unable to record this payment.");
     } finally {
       setWorking(false);
     }
@@ -1628,6 +1656,9 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
                     }
                     onVerifyPickup={parcel.status === "ARRIVED_AT_PICKUP" ? () => performParcelAction(parcel.id, "verify-pickup") : undefined}
                     onVerifyDelivery={parcel.status === "ARRIVED_AT_DESTINATION" ? () => performParcelAction(parcel.id, "verify-delivery") : undefined}
+                    paymentReference={parcelPaymentReferences[parcel.id] ?? ""}
+                    onPaymentReferenceChange={(value) => setParcelPaymentReferences((current) => ({ ...current, [parcel.id]: value }))}
+                    onRecordPayment={parcel.status === "DELIVERED" && parcel.payment?.status === "UNPAID" ? () => recordManualPayment("parcel", parcel.id) : undefined}
                     trackingEnabled={trackingParcelIds.includes(parcel.id)}
                     onToggleTracking={ACTIVE_TRACKING_STATUSES.includes(parcel.status)
                       ? () => trackingParcelIds.includes(parcel.id)
@@ -1647,6 +1678,9 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
                       busy={working}
                       riderView
                       onAdvance={nextStatus ? () => performRideAction(ride.id, nextStatus) : undefined}
+                      paymentReference={ridePaymentReferences[ride.id] ?? ""}
+                      onPaymentReferenceChange={(value) => setRidePaymentReferences((current) => ({ ...current, [ride.id]: value }))}
+                      onRecordPayment={ride.status === "COMPLETED" && ride.payment?.status === "UNPAID" ? () => recordManualPayment("ride", ride.id) : undefined}
                     />
                   );
                 }) : <EmptyState title="No assigned rides" text="Rides you accept will appear here." />}
@@ -2014,7 +2048,10 @@ function RideCard({
   busy = false,
   onCancel,
   onAccept,
-  onAdvance
+  onAdvance,
+  paymentReference,
+  onPaymentReferenceChange,
+  onRecordPayment
 }: {
   ride: Ride;
   customerView?: boolean;
@@ -2023,6 +2060,9 @@ function RideCard({
   onCancel?: () => void;
   onAccept?: () => void;
   onAdvance?: () => void;
+  paymentReference?: string;
+  onPaymentReferenceChange?: (value: string) => void;
+  onRecordPayment?: () => void;
 }) {
   const canCancel = customerView && (ride.status === "PENDING" || ride.status === "ACCEPTED");
   const nextLabel: Record<string, string> = {
@@ -2050,8 +2090,20 @@ function RideCard({
         </View>
       </View>
       <Text style={styles.rideMeta}>
-        {formatDistance(ride.estimatedDistanceKm)} • {ride.payment?.method === "MOBILE_MONEY" ? "Mobile Money" : "Cash"}
+        {formatDistance(ride.estimatedDistanceKm)} • {ride.payment?.method === "MOBILE_MONEY" ? "Mobile Money" : "Cash"} • {ride.payment?.status === "PAID" ? "Paid" : "Payment not yet recorded"}
       </Text>
+      {riderView && ride.status === "COMPLETED" && ride.payment?.status === "UNPAID" && onRecordPayment ? (
+        <View style={styles.codeEntryPanel}>
+          {ride.payment.method === "MOBILE_MONEY" ? (
+            <>
+              <Text style={styles.label}>Mobile Money transaction reference (optional)</Text>
+              <TextInput style={styles.addressInput} value={paymentReference} onChangeText={onPaymentReferenceChange} autoCapitalize="characters" placeholder="e.g. transfer receipt reference" placeholderTextColor="#98A2B3" />
+            </>
+          ) : null}
+          <Text style={styles.trackingPrivacyText}>Confirm only after receiving the cash or checking the Mobile Money transfer. NAVIGO does not verify transfers automatically.</Text>
+          <PrimaryButton label="Confirm payment received" loading={busy} onPress={onRecordPayment} disabled={busy} />
+        </View>
+      ) : null}
       {customerView && ride.rider ? (
         <View style={styles.assignedRider}>
           <Text style={styles.assignedLabel}>YOUR RIDER</Text>
@@ -2193,7 +2245,10 @@ function ParcelRiderCard({
   onVerifyPickup,
   onVerifyDelivery,
   trackingEnabled,
-  onToggleTracking
+  onToggleTracking,
+  paymentReference,
+  onPaymentReferenceChange,
+  onRecordPayment
 }: {
   parcel: RiderParcel;
   busy: boolean;
@@ -2205,6 +2260,9 @@ function ParcelRiderCard({
   onAdvance?: () => void;
   onVerifyPickup?: () => void;
   onVerifyDelivery?: () => void;
+  paymentReference?: string;
+  onPaymentReferenceChange?: (value: string) => void;
+  onRecordPayment?: () => void;
 }) {
   const statusLabels: Record<string, string> = {
     PENDING: "Waiting for a rider",
@@ -2230,7 +2288,7 @@ function ParcelRiderCard({
         <Text style={styles.rideStatus}>{statusLabels[parcel.status] ?? parcel.status}</Text>
         <Text style={styles.rideFare}>{money(parcel.fareAmountUgx)}</Text>
       </View>
-      <Text style={styles.rideMeta}>{parcel.sizeCategory} item • {formatDistance(parcel.estimatedDistanceKm)} • {parcel.payment?.method === "MOBILE_MONEY" ? "Mobile Money" : "Cash"}</Text>
+      <Text style={styles.rideMeta}>{parcel.sizeCategory} item • {formatDistance(parcel.estimatedDistanceKm)} • {parcel.payment?.method === "MOBILE_MONEY" ? "Mobile Money" : "Cash"} • {parcel.payment?.status === "PAID" ? "Paid" : "Payment not yet recorded"}</Text>
       <Text style={styles.label}>ITEM</Text>
       <Text style={styles.routeAddress}>{parcel.parcelDescription}</Text>
       <View style={styles.routeRow}>
@@ -2273,6 +2331,18 @@ function ParcelRiderCard({
           <Text style={styles.label}>Enter recipient's 6-digit delivery code</Text>
           <TextInput style={styles.addressInput} value={code} onChangeText={onCodeChange} keyboardType="number-pad" maxLength={6} placeholder="Delivery code" placeholderTextColor="#98A2B3" />
           <PrimaryButton label="Verify delivery" loading={busy} onPress={onVerifyDelivery} disabled={busy || (code ?? "").length !== 6} />
+        </View>
+      ) : null}
+      {parcel.status === "DELIVERED" && parcel.payment?.status === "UNPAID" && onRecordPayment ? (
+        <View style={styles.codeEntryPanel}>
+          {parcel.payment.method === "MOBILE_MONEY" ? (
+            <>
+              <Text style={styles.label}>Mobile Money transaction reference (optional)</Text>
+              <TextInput style={styles.addressInput} value={paymentReference} onChangeText={onPaymentReferenceChange} autoCapitalize="characters" placeholder="e.g. transfer receipt reference" placeholderTextColor="#98A2B3" />
+            </>
+          ) : null}
+          <Text style={styles.trackingPrivacyText}>Confirm only after receiving the cash or checking the Mobile Money transfer. NAVIGO does not verify transfers automatically.</Text>
+          <PrimaryButton label="Confirm payment received" loading={busy} onPress={onRecordPayment} disabled={busy} />
         </View>
       ) : null}
     </View>
