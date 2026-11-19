@@ -57,7 +57,7 @@ function safeUser(user: SessionUser, activeRole: SessionUser["role"] = user.role
   const isApprovedRider = user.riderProfile?.approvalStatus === "APPROVED";
   const availableRoles: SessionUser["role"][] = user.role === "ADMIN"
     ? ["ADMIN"]
-    : ["CUSTOMER", ...(isApprovedRider ? ["RIDER"] : [])];
+    : isApprovedRider ? ["CUSTOMER", "RIDER"] : ["CUSTOMER"];
   return {
     id: user.id,
     fullName: user.fullName,
