@@ -53,10 +53,7 @@ async function apiRequest<T>(
   const payload = await response.json().catch(() => null) as T | ApiErrorBody | null;
 
   if (!response.ok) {
-    const message =
-      payload && typeof payload === "object" && "error" in payload
-        ? payload.error?.message
-        : undefined;
+    const message = (payload as ApiErrorBody | null)?.error?.message;
     throw new Error(message || "Something went wrong. Please try again.");
   }
 
