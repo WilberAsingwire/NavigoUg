@@ -1,18 +1,22 @@
 import { Router } from "express";
 import rateLimit from "express-rate-limit";
 import {
+  ChangeOwnPasswordInputSchema,
   LoginInputSchema,
   RefreshTokenInputSchema,
+  UpdateOwnProfileInputSchema,
   RegisterCustomerInputSchema,
   RegisterRiderInputSchema
 } from "@navigo/shared";
 import {
+  changeOwnPassword,
   getSafeCurrentUser,
   login,
   refreshSession,
   registerCustomer,
   registerRider,
-  revokeRefreshToken
+  revokeRefreshToken,
+  updateOwnProfile
 } from "./auth.service.js";
 import { requireAuth } from "./auth.middleware.js";
 import { AuthError } from "./auth.service.js";
@@ -86,6 +90,28 @@ authRouter.post("/logout", requireAuth, async (request, response, next) => {
   try {
     await revokeRefreshToken(parsed.data.refreshToken);
     response.status(204).send();
+  } catch (error) { next(error); }
+});
+
+authRouter.patch("/me", requireAuth, async (request, response, next) => {
+  const parsed = validate(UpdateOwnProfileInputSchema, request.body);
+  if (!parsed.success) {
+    response.status(400).json({ error: { code: "VALIDATION_ERROR", message: "Please check your name and email address.", details: parsed.issues } });
+    return;
+  }
+  try {
+    response.status(200).json({ data: await updateOwnProfile(request.auth!.userId, parsed.data) });
+  } catch (error) { next(error); }
+});
+
+authRouter.post("/change-password", requireAuth, authLimiter, async (request, response, next) => {
+  const parsed = validate(ChangeOwnPasswordInputSchema, request.body);
+  if (!parsed.success) {
+    response.status(400).json({ error: { code: "VALIDATION_ERROR", message: "Please enter your current password and a valid new password.", details: parsed.issues } });
+    return;
+  }
+  try {
+    response.status(200).json({ data: await changeOwnPassword(request.auth!.userId, parsed.data) });
   } catch (error) { next(error); }
 });
 
