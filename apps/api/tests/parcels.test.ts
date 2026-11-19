@@ -8,8 +8,13 @@ const mocks = vi.hoisted(() => ({
   parcelCreate: vi.fn(),
   parcelFindMany: vi.fn(),
   parcelFindUnique: vi.fn(),
+  parcelFindFirst: vi.fn(),
   parcelUpdateMany: vi.fn(),
   parcelHistoryCreate: vi.fn(),
+  parcelTrackingFindUnique: vi.fn(),
+  parcelTrackingUpsert: vi.fn(),
+  parcelTrackingUpdate: vi.fn(),
+  parcelTrackingUpdateMany: vi.fn(),
   transaction: vi.fn(),
   getMotorcycleRoute: vi.fn()
 }));
@@ -22,7 +27,14 @@ vi.mock("../src/lib/prisma.js", () => ({
       create: mocks.parcelCreate,
       findMany: mocks.parcelFindMany,
       findUnique: mocks.parcelFindUnique,
+      findFirst: mocks.parcelFindFirst,
       updateMany: mocks.parcelUpdateMany
+    },
+    parcelTrackingSession: {
+      findUnique: mocks.parcelTrackingFindUnique,
+      upsert: mocks.parcelTrackingUpsert,
+      update: mocks.parcelTrackingUpdate,
+      updateMany: mocks.parcelTrackingUpdateMany
     },
     parcelStatusHistory: { create: mocks.parcelHistoryCreate },
     $transaction: mocks.transaction
@@ -130,8 +142,10 @@ describe("Parcel delivery API", () => {
           create: mocks.parcelCreate,
           findMany: mocks.parcelFindMany,
           findUnique: mocks.parcelFindUnique,
+          findFirst: mocks.parcelFindFirst,
           updateMany: mocks.parcelUpdateMany
         },
+        parcelTrackingSession: { updateMany: mocks.parcelTrackingUpdateMany },
         parcelStatusHistory: { create: mocks.parcelHistoryCreate }
       })
     );
@@ -191,6 +205,61 @@ describe("Parcel delivery API", () => {
 
     expect(response.status).toBe(422);
     expect(response.body.error.code).toBe("PARCEL_FARE_NOT_CONFIGURED");
+  });
+
+  it("requires explicit rider opt-in before accepting live GPS updates", async () => {
+    const token = await accessToken("RIDER");
+    mocks.userFindUnique.mockResolvedValue({ isActive: true, riderProfile: { approvalStatus: "APPROVED" } });
+    mocks.parcelFindFirst.mockResolvedValue({ id: fakeParcel.id });
+    mocks.parcelTrackingFindUnique.mockResolvedValue(null);
+
+    const response = await request(app)
+      .post(`/api/v1/parcels/${fakeParcel.id}/tracking/location`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ latitude: 3.02, longitude: 30.91, accuracyMeters: 20 });
+
+    expect(response.status).toBe(403);
+    expect(response.body.error.code).toBe("TRACKING_NOT_ENABLED");
+    expect(mocks.parcelTrackingUpdate).not.toHaveBeenCalled();
+  });
+
+  it("lets only the customer role access the sender tracking endpoint", async () => {
+    const token = await accessToken("RIDER");
+    const response = await request(app)
+      .get(`/api/v1/parcels/${fakeParcel.id}/tracking`)
+      .set("Authorization", `Bearer ${token}`);
+
+    expect(response.status).toBe(403);
+    expect(mocks.parcelFindFirst).not.toHaveBeenCalled();
+  });
+
+  it("hides stale rider coordinates from the sender map", async () => {
+    const token = await accessToken("CUSTOMER");
+    mocks.parcelFindFirst.mockResolvedValue({
+      id: fakeParcel.id,
+      status: "IN_TRANSIT",
+      pickupLatitude: 3.02,
+      pickupLongitude: 30.91,
+      destinationLatitude: 3.03,
+      destinationLongitude: 30.92,
+      tracking: {
+        riderSharingEnabled: true,
+        riderLatitude: 3.025,
+        riderLongitude: 30.915,
+        riderAccuracyMeters: 18,
+        riderLocationUpdatedAt: new Date(Date.now() - 180_000),
+        endedAt: null
+      }
+    });
+
+    const response = await request(app)
+      .get(`/api/v1/parcels/${fakeParcel.id}/tracking`)
+      .set("Authorization", `Bearer ${token}`);
+
+    expect(response.status).toBe(200);
+    expect(response.body.data.rider).toBeNull();
+    expect(response.body.data.pickup).toEqual({ latitude: 3.02, longitude: 30.91 });
+    expect(response.body.data.destination).toEqual({ latitude: 3.03, longitude: 30.92 });
   });
 
   it("creates a parcel request and returns one-time verification codes without exposing hashes", async () => {
