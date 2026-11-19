@@ -1035,7 +1035,7 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
                 {!createdParcel ? (
                   <PrimaryButton label={parcelQuote ? "Confirm item delivery" : "Calculate delivery fee"} loading={working} onPress={parcelQuote ? requestParcel : getParcelFareEstimate} disabled={working || !pickup.trim() || !destination.trim() || !itemDescription.trim() || !recipientName.trim() || !recipientPhone.trim()} />
                 ) : (
-                  <PrimaryButton label="Send another item" onPress={() => { setCreatedParcel(null); setPickup(""); setDestination(""); setItemDescription(""); setRecipientName(""); setRecipientPhone(""); setSelectedPickupLocation(null); setSelectedDestinationLocation(null); setParcelQuote(null); }} />
+                  <PrimaryButton label="Send another item" loading={false} onPress={() => { setCreatedParcel(null); setPickup(""); setDestination(""); setItemDescription(""); setRecipientName(""); setRecipientPhone(""); setSelectedPickupLocation(null); setSelectedDestinationLocation(null); setParcelQuote(null); }} />
                 )}
               </View>
             ) : tab === "book" ? (
