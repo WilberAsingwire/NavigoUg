@@ -4,6 +4,7 @@ import * as Location from "expo-location";
 import {
   AppState,
   ActivityIndicator,
+  Alert,
   SafeAreaView,
   ScrollView,
   StyleSheet,
@@ -165,6 +166,16 @@ type AdminFareRule = {
   maxDistanceKm: number | string | null;
   fareUgx: number;
   isActive: boolean;
+};
+
+type AdminAnnouncement = {
+  id: string;
+  title: string;
+  body: string;
+  audience: "CUSTOMER" | "RIDER" | "BOTH";
+  recipientCount: number;
+  createdAt: string;
+  senderName: string;
 };
 
 const ACTIVE_TRACKING_STATUSES = [
@@ -807,8 +818,12 @@ export default function RidesHome({
   const [trackingParcelIds, setTrackingParcelIds] = useState<string[]>([]);
   const [adminRiders, setAdminRiders] = useState<AdminRider[]>([]);
   const [adminFareRules, setAdminFareRules] = useState<AdminFareRule[]>([]);
+  const [adminAnnouncements, setAdminAnnouncements] = useState<AdminAnnouncement[]>([]);
   const [adminRiderFilter, setAdminRiderFilter] = useState<"ALL" | "PENDING" | "APPROVED" | "REJECTED" | "SUSPENDED">("PENDING");
-  const [adminTab, setAdminTab] = useState<"riders" | "fares">("riders");
+  const [adminTab, setAdminTab] = useState<"riders" | "fares" | "announcements">("riders");
+  const [announcementTitle, setAnnouncementTitle] = useState("");
+  const [announcementBody, setAnnouncementBody] = useState("");
+  const [announcementAudience, setAnnouncementAudience] = useState<"CUSTOMER" | "RIDER" | "BOTH">("BOTH");
   const [adminReviewReason, setAdminReviewReason] = useState("");
   const [fareRequestType, setFareRequestType] = useState<"RIDE" | "PARCEL">("PARCEL");
   const [fareSize, setFareSize] = useState<ParcelSize>("SMALL");
@@ -846,12 +861,14 @@ export default function RidesHome({
     if (activeSession.user.role === "ADMIN") {
       try {
         const riderQuery = adminRiderFilter === "ALL" ? "" : `?status=${adminRiderFilter}`;
-        const [riderResult, fareResult] = await Promise.all([
+        const [riderResult, fareResult, announcementResult] = await Promise.all([
           apiRequest<{ data: AdminRider[] }>(`/api/v1/admin/riders${riderQuery}`, activeSession.accessToken, undefined, refreshAccessToken),
-          apiRequest<{ data: AdminFareRule[] }>("/api/v1/admin/fare-rules", activeSession.accessToken, undefined, refreshAccessToken)
+          apiRequest<{ data: AdminFareRule[] }>("/api/v1/admin/fare-rules", activeSession.accessToken, undefined, refreshAccessToken),
+          apiRequest<{ data: AdminAnnouncement[] }>("/api/v1/admin/announcements", activeSession.accessToken, undefined, refreshAccessToken)
         ]);
         setAdminRiders(riderResult.data ?? []);
         setAdminFareRules(fareResult.data ?? []);
+        setAdminAnnouncements(announcementResult.data ?? []);
         setRides([]);
         setAvailableRides([]);
         setAvailableParcels([]);
@@ -1515,6 +1532,60 @@ export default function RidesHome({
     }
   }
 
+  function requestSendAdminAnnouncement() {
+    const title = announcementTitle.trim();
+    const body = announcementBody.trim();
+    if (!title || !body) {
+      setError("Enter both a notification title and message before sending.");
+      return;
+    }
+
+    const audienceLabel = announcementAudience === "BOTH"
+      ? "customers and riders"
+      : announcementAudience === "CUSTOMER" ? "customers" : "riders";
+    Alert.alert(
+      "Send announcement?",
+      `This will add a notification for all active ${audienceLabel}. Users who have enabled push alerts will also receive an Android push notification. This action cannot be recalled.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        { text: "Send now", onPress: () => { void sendAdminAnnouncement(); } }
+      ]
+    );
+  }
+
+  async function sendAdminAnnouncement() {
+    setWorking(true);
+    setError("");
+    setMessage("");
+    try {
+      const result = await apiRequest<{ data: AdminAnnouncement }>(
+        "/api/v1/admin/announcements",
+        activeSession.accessToken,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            title: announcementTitle.trim(),
+            body: announcementBody.trim(),
+            audience: announcementAudience
+          })
+        },
+        refreshAccessToken
+      );
+      setAnnouncementTitle("");
+      setAnnouncementBody("");
+      setMessage(
+        `Announcement added to the notification inboxes of ${result.data.recipientCount} active accounts. Push alerts are attempted for users who have enabled them.`
+      );
+      await loadDashboard();
+    } catch (announcementError) {
+      setError(announcementError instanceof Error
+        ? announcementError.message
+        : "Unable to send this announcement.");
+    } finally {
+      setWorking(false);
+    }
+  }
+
   async function performRideAction(rideId: string, action: "accept" | "cancel" | "ARRIVED_AT_PICKUP" | "IN_PROGRESS" | "COMPLETED") {
     setWorking(true);
     setError("");
@@ -1985,7 +2056,7 @@ export default function RidesHome({
             <View style={styles.heroCard}>
               <Text style={styles.heroEyebrow}>NAVIGO MANAGEMENT</Text>
               <Text style={styles.heroTitle}>Administrator workspace</Text>
-              <Text style={styles.heroText}>Review rider applications and manage the distance-based prices used by the service.</Text>
+              <Text style={styles.heroText}>Manage rider applications, service prices and messages sent to NAVIGO users.</Text>
             </View>
             <View style={styles.tabRow}>
               <TouchableOpacity style={[styles.tabButton, adminTab === "riders" ? styles.tabButtonSelected : null]} onPress={() => { setAdminTab("riders"); setMessage(""); setError(""); }}>
@@ -1993,6 +2064,9 @@ export default function RidesHome({
               </TouchableOpacity>
               <TouchableOpacity style={[styles.tabButton, adminTab === "fares" ? styles.tabButtonSelected : null]} onPress={() => { setAdminTab("fares"); setMessage(""); setError(""); }}>
                 <Text style={[styles.tabText, adminTab === "fares" ? styles.tabTextSelected : null]}>Fare rules</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.tabButton, adminTab === "announcements" ? styles.tabButtonSelected : null]} onPress={() => { setAdminTab("announcements"); setMessage(""); setError(""); }}>
+                <Text style={[styles.tabText, adminTab === "announcements" ? styles.tabTextSelected : null]}>Announcements</Text>
               </TouchableOpacity>
             </View>
 
@@ -2065,7 +2139,7 @@ export default function RidesHome({
                   </View>
                 )) : <EmptyState title="No rider applications here" text={adminRiderFilter === "PENDING" ? "New rider applications will appear here for review." : "There are no riders under this filter."} />}
               </View>
-            ) : (
+            ) : adminTab === "fares" ? (
               <View style={styles.section}>
                 <View style={styles.sectionHeader}>
                   <Text style={styles.sectionTitle}>Fare configuration</Text>
@@ -2129,6 +2203,62 @@ export default function RidesHome({
                     </View>
                   );
                 }) : <EmptyState title="No fare rules configured" text="Create a fare rule above. Item delivery quotes will remain unavailable for sizes and distances without an active rule." />}
+              </View>
+            ) : (
+              <View style={styles.section}>
+                <View style={styles.sectionHeader}>
+                  <Text style={styles.sectionTitle}>Send an announcement</Text>
+                  <TouchableOpacity onPress={loadDashboard} disabled={loading}>
+                    <Text style={styles.refreshText}>{loading ? "Loading..." : "Refresh"}</Text>
+                  </TouchableOpacity>
+                </View>
+                <Text style={styles.bodyText}>Share greetings, service news, important updates or other messages with selected NAVIGO users.</Text>
+                <View style={styles.card}>
+                  <Text style={styles.label}>Notification title</Text>
+                  <TextInput
+                    style={styles.addressInput}
+                    value={announcementTitle}
+                    onChangeText={setAnnouncementTitle}
+                    maxLength={120}
+                    placeholder="e.g. Welcome to NAVIGO"
+                    placeholderTextColor="#98A2B3"
+                  />
+                  <Text style={styles.label}>Message</Text>
+                  <TextInput
+                    style={[styles.addressInput, { minHeight: 112, textAlignVertical: "top" }]}
+                    value={announcementBody}
+                    onChangeText={setAnnouncementBody}
+                    maxLength={500}
+                    multiline
+                    placeholder="Write the message users will receive..."
+                    placeholderTextColor="#98A2B3"
+                  />
+                  <Text style={styles.label}>Send to</Text>
+                  <View style={styles.paymentRow}>
+                    <ChoiceButton label="Customers" selected={announcementAudience === "CUSTOMER"} onPress={() => setAnnouncementAudience("CUSTOMER")} />
+                    <ChoiceButton label="Riders" selected={announcementAudience === "RIDER"} onPress={() => setAnnouncementAudience("RIDER")} />
+                    <ChoiceButton label="Both" selected={announcementAudience === "BOTH"} onPress={() => setAnnouncementAudience("BOTH")} />
+                  </View>
+                  <Text style={styles.rideMeta}>Only active customer and rider accounts are included. Administrators do not receive these announcements. Push alerts are sent only to devices that have enabled them.</Text>
+                  <PrimaryButton
+                    label="Send announcement"
+                    loading={working}
+                    onPress={requestSendAdminAnnouncement}
+                    disabled={working || !announcementTitle.trim() || !announcementBody.trim()}
+                  />
+                </View>
+                <Text style={styles.sectionTitle}>Recently sent announcements</Text>
+                {adminAnnouncements.length ? adminAnnouncements.map((announcement) => (
+                  <View key={announcement.id} style={styles.rideCard}>
+                    <View style={styles.rideTopRow}>
+                      <Text style={styles.rideStatus}>{announcement.title}</Text>
+                      <Text style={styles.adminStatusText}>{announcement.audience === "BOTH" ? "CUSTOMERS + RIDERS" : announcement.audience}</Text>
+                    </View>
+                    <Text style={styles.bodyText}>{announcement.body}</Text>
+                    <Text style={styles.rideMeta}>Sent to {announcement.recipientCount} active accounts · {new Date(announcement.createdAt).toLocaleString()}</Text>
+                    <Text style={styles.rideMeta}>Sent by {announcement.senderName}</Text>
+                  </View>
+                )) : <EmptyState title="No announcements sent yet" text="Messages you send to customers or riders will appear here." />}
               </View>
             )}
             {error ? <Notice tone="error" text={error} /> : null}
