@@ -3,7 +3,8 @@ import rateLimit from "express-rate-limit";
 import {
   CreateRideInputSchema,
   RideFareQuoteInputSchema,
-  RideStatusUpdateInputSchema
+  RideStatusUpdateInputSchema,
+  RecordPaymentInputSchema
 } from "@navigo/shared";
 import { requireAuth, requireRole } from "../auth/auth.middleware.js";
 import {
@@ -15,7 +16,8 @@ import {
   listCustomerRides,
   listRiderRides,
   RideError,
-  updateRideStatus
+  updateRideStatus,
+  recordRidePayment
 } from "./rides.service.js";
 
 export const ridesRouter = Router();
@@ -130,6 +132,28 @@ ridesRouter.patch("/:rideId/status", requireRole("RIDER"), async (request, respo
         rideId,
         parsed.data.status
       )
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+ridesRouter.post("/:rideId/payment/record", requireRole("RIDER"), async (request, response, next) => {
+  const rideId = typeof request.params.rideId === "string" ? request.params.rideId : "";
+  if (!validRideId(rideId)) {
+    validationError(response, "A valid ride request ID is required.");
+    return;
+  }
+
+  const parsed = RecordPaymentInputSchema.safeParse(request.body ?? {});
+  if (!parsed.success) {
+    validationError(response, "Please provide a valid Mobile Money transaction reference.", parsed.error.issues);
+    return;
+  }
+
+  try {
+    response.status(200).json({
+      data: await recordRidePayment(request.auth!.userId, rideId, parsed.data.transactionReference)
     });
   } catch (error) {
     next(error);
