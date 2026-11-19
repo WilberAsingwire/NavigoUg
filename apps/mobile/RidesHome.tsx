@@ -2158,7 +2158,7 @@ function ProfilePanel({
   }, [session.user.fullName, session.user.email]);
 
   useEffect(() => {
-    if (page !== "notifications") return;
+    if (page !== "notifications" && page !== "home") return;
     let active = true;
     setNotificationsLoading(true);
     apiRequest<{ data: { items: ProfileNotification[]; unreadCount: number } }>(
