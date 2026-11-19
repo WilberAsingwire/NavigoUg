@@ -14,10 +14,22 @@ import {
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import * as SecureStore from "expo-secure-store";
+import * as Notifications from "expo-notifications";
+import Constants from "expo-constants";
 import RidesHome from "./RidesHome";
 
 const API_BASE_URL = "https://navigou-api-2978.onrender.com";
 const SESSION_KEY = "navigo.session";
+const PUSH_TOKEN_KEY = "navigo.pushToken";
+
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldPlaySound: true,
+    shouldSetBadge: false,
+    shouldShowBanner: true,
+    shouldShowList: true
+  })
+});
 
 type UserRole = "CUSTOMER" | "RIDER" | "ADMIN";
 type RiderApprovalStatus = "PENDING" | "APPROVED" | "REJECTED" | "SUSPENDED" | null;
@@ -77,6 +89,108 @@ export default function App() {
   const [restoring, setRestoring] = useState(true);
   const [error, setError] = useState("");
   const [session, setSession] = useState<Session | null>(null);
+  const [pushNotificationsEnabled, setPushNotificationsEnabled] = useState(false);
+  const [pushNotificationsBusy, setPushNotificationsBusy] = useState(false);
+
+  async function registerPushToken(currentSession: Session, pushToken: string) {
+    await apiRequest<{ data: { registered: boolean } }>("/api/v1/notifications/device-token", {
+      method: "POST",
+      headers: { Authorization: "Bearer " + currentSession.accessToken },
+      body: JSON.stringify({ pushToken, platform: "ANDROID" })
+    });
+    await SecureStore.setItemAsync(PUSH_TOKEN_KEY, pushToken);
+    setPushNotificationsEnabled(true);
+  }
+
+  async function enablePushNotifications(): Promise<boolean> {
+    if (!session || Platform.OS !== "android") return false;
+    setPushNotificationsBusy(true);
+    try {
+      await Notifications.setNotificationChannelAsync("default", {
+        name: "NAVIGO booking updates",
+        importance: Notifications.AndroidImportance.HIGH,
+        vibrationPattern: [0, 250, 250, 250],
+        lightColor: "#174A72"
+      });
+
+      const currentPermission = await Notifications.getPermissionsAsync();
+      const permission = currentPermission.granted
+        ? currentPermission
+        : await Notifications.requestPermissionsAsync();
+      if (!permission.granted) {
+        setPushNotificationsEnabled(false);
+        Alert.alert(
+          "Notifications are turned off",
+          "Allow NAVIGO notifications in your Android settings to receive booking alerts. You can still review updates in the in-app inbox."
+        );
+        return false;
+      }
+
+      const projectId = Constants.easConfig?.projectId ?? Constants.expoConfig?.extra?.eas?.projectId;
+      if (!projectId) {
+        throw new Error("The NAVIGO EAS project ID is missing from this build.");
+      }
+
+      const tokenResult = await Notifications.getExpoPushTokenAsync({ projectId });
+      await registerPushToken(session, tokenResult.data);
+      Alert.alert("Push alerts enabled", "NAVIGO can now send booking updates to this Android device.");
+      return true;
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : "Push notifications could not be enabled.";
+      Alert.alert("Could not enable push alerts", message);
+      return false;
+    } finally {
+      setPushNotificationsBusy(false);
+    }
+  }
+
+  useEffect(() => {
+    let active = true;
+    if (!session) {
+      setPushNotificationsEnabled(false);
+      return () => { active = false; };
+    }
+
+    void (async () => {
+      const savedToken = await SecureStore.getItemAsync(PUSH_TOKEN_KEY);
+      if (!savedToken || !active) return;
+
+      const permission = await Notifications.getPermissionsAsync();
+      if (!permission.granted || !active) {
+        setPushNotificationsEnabled(false);
+        return;
+      }
+
+      await Notifications.setNotificationChannelAsync("default", {
+        name: "NAVIGO booking updates",
+        importance: Notifications.AndroidImportance.HIGH,
+        vibrationPattern: [0, 250, 250, 250],
+        lightColor: "#174A72"
+      });
+      const projectId = Constants.easConfig?.projectId ?? Constants.expoConfig?.extra?.eas?.projectId;
+      if (!projectId) return;
+
+      const tokenResult = await Notifications.getExpoPushTokenAsync({ projectId });
+      if (!active) return;
+      const currentToken = tokenResult.data;
+      if (currentToken !== savedToken) {
+        try {
+          await apiRequest("/api/v1/notifications/device-token", {
+            method: "DELETE",
+            headers: { Authorization: "Bearer " + session.accessToken },
+            body: JSON.stringify({ pushToken: savedToken })
+          });
+        } catch {
+          // The new token registration below remains authoritative for this device.
+        }
+      }
+      await registerPushToken(session, currentToken);
+    })().catch(() => {
+      if (active) setPushNotificationsEnabled(false);
+    });
+
+    return () => { active = false; };
+  }, [session?.user.id, session?.accessToken]);
 
   useEffect(() => {
     let mounted = true;
@@ -194,6 +308,14 @@ export default function App() {
     if (!session) return;
     setBusy(true);
     try {
+      const savedPushToken = await SecureStore.getItemAsync(PUSH_TOKEN_KEY).catch(() => null);
+      if (savedPushToken) {
+        await apiRequest("/api/v1/notifications/device-token", {
+          method: "DELETE",
+          headers: { Authorization: "Bearer " + session.accessToken },
+          body: JSON.stringify({ pushToken: savedPushToken })
+        }).catch(() => undefined);
+      }
       await apiRequest<void>("/api/v1/auth/logout", {
         method: "POST",
         headers: { Authorization: `Bearer ${session.accessToken}` },
@@ -203,6 +325,8 @@ export default function App() {
       // Clear the device session even when the network is unavailable.
     } finally {
       await SecureStore.deleteItemAsync(SESSION_KEY).catch(() => undefined);
+      await SecureStore.deleteItemAsync(PUSH_TOKEN_KEY).catch(() => undefined);
+      setPushNotificationsEnabled(false);
       setSession(null);
       setMode("login");
       setRole("CUSTOMER");
@@ -229,6 +353,9 @@ export default function App() {
         onSignOut={signOut}
         onSessionChange={setSession}
         signingOut={busy}
+        onEnablePushNotifications={enablePushNotifications}
+        pushNotificationsEnabled={pushNotificationsEnabled}
+        pushNotificationsBusy={pushNotificationsBusy}
       />
     );
   }
