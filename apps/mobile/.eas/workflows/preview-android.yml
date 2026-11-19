@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - cloud-preview-setup
+    paths:
+      - apps/mobile/BUILD_PREVIEW
 
 jobs:
   build_android:
