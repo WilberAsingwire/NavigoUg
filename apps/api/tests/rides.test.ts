@@ -10,6 +10,8 @@ const mocks = vi.hoisted(() => ({
   availabilityFindUnique: vi.fn(),
   availabilityUpsert: vi.fn(),
   availabilityUpdate: vi.fn(),
+  rideArrivalEstimateFindMany: vi.fn(),
+  rideArrivalEstimateUpsert: vi.fn(),
   rideFindFirst: vi.fn(),
   rideCreate: vi.fn(),
   rideFindMany: vi.fn(),
@@ -32,6 +34,10 @@ vi.mock("../src/lib/prisma.js", () => ({
       findUnique: mocks.availabilityFindUnique,
       upsert: mocks.availabilityUpsert,
       update: mocks.availabilityUpdate
+    },
+    rideArrivalEstimate: {
+      findMany: mocks.rideArrivalEstimateFindMany,
+      upsert: mocks.rideArrivalEstimateUpsert
     },
     rideRequest: {
       create: mocks.rideCreate,
@@ -107,6 +113,7 @@ describe("Motorcycle ride API", () => {
           updateMany: mocks.rideUpdateMany
         },
         rideStatusHistory: { create: mocks.rideHistoryCreate },
+        rideArrivalEstimate: { upsert: mocks.rideArrivalEstimateUpsert },
         ridePayment: { updateMany: mocks.ridePaymentUpdateMany },
         auditLog: { create: mocks.auditLogCreate }
       })
@@ -360,7 +367,11 @@ describe("Motorcycle ride API", () => {
     const response = await request(app).post(`/api/v1/rides/${rideId}/accept`).set("Authorization", `Bearer ${token}`).send({});
     expect(response.status).toBe(200);
     expect(mocks.rideUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
-      data: expect.objectContaining({ status: "ACCEPTED", riderArrivalEstimateMinutes: 7 })
+      data: expect.objectContaining({ status: "ACCEPTED" })
+    }));
+    expect(mocks.rideArrivalEstimateUpsert).toHaveBeenCalledWith(expect.objectContaining({
+      where: { rideRequestId: rideId },
+      create: expect.objectContaining({ riderArrivalEstimateMinutes: 7 })
     }));
   });
 

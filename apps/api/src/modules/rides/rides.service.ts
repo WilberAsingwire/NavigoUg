@@ -251,11 +251,31 @@ export async function createRide(customerId: string, input: CreateRideInput) {
 }
 
 export async function listCustomerRides(userId: string) {
-  return prisma.rideRequest.findMany({
+  const rides = await prisma.rideRequest.findMany({
     where: { customerId: userId },
     orderBy: { createdAt: "desc" },
     include: rideInclude()
   });
+  const acceptedRideIds = rides.filter((ride) => ride.status === "ACCEPTED").map((ride) => ride.id);
+  if (!acceptedRideIds.length) return rides;
+  try {
+    const estimates = await prisma.rideArrivalEstimate.findMany({
+      where: { rideRequestId: { in: acceptedRideIds } },
+      select: { rideRequestId: true, riderArrivalEstimateMinutes: true, calculatedAt: true }
+    });
+    const byRideId = new Map(estimates.map((estimate) => [estimate.rideRequestId, estimate]));
+    return rides.map((ride) => {
+      const estimate = byRideId.get(ride.id);
+      return {
+        ...ride,
+        riderArrivalEstimateMinutes: estimate?.riderArrivalEstimateMinutes ?? null,
+        riderArrivalEstimateUpdatedAt: estimate?.calculatedAt ?? null
+      };
+    });
+  } catch {
+    // Ride history must remain available even before the optional ETA table is synced.
+    return rides;
+  }
 }
 
 export async function listRiderRides(userId: string) {
@@ -368,15 +388,19 @@ export async function acceptRide(riderId: string, rideId: string) {
     const acceptedAt = new Date();
     const claimed = await tx.rideRequest.updateMany({
       where: { id: rideId, status: "PENDING", riderId: null },
-      data: {
-        riderId, status: "ACCEPTED", acceptedAt,
-        riderArrivalEstimateMinutes,
-        riderArrivalEstimateUpdatedAt: riderArrivalEstimateMinutes === null ? null : acceptedAt
-      }
+      data: { riderId, status: "ACCEPTED", acceptedAt }
     });
 
     if (claimed.count !== 1) {
       throw new RideError(409, "RIDE_ALREADY_ASSIGNED", "This ride is no longer available. Refresh the list to see other requests.");
+    }
+
+    if (riderArrivalEstimateMinutes !== null) {
+      await tx.rideArrivalEstimate.upsert({
+        where: { rideRequestId: rideId },
+        create: { rideRequestId: rideId, riderArrivalEstimateMinutes, calculatedAt: acceptedAt },
+        update: { riderArrivalEstimateMinutes, calculatedAt: acceptedAt }
+      });
     }
 
     await tx.rideStatusHistory.create({
