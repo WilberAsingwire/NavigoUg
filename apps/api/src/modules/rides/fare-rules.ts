@@ -1,9 +1,23 @@
 import { prisma } from "../../lib/prisma.js";
 
-// Arua pilot tariff, derived from local short-trip fares and a simple
-// UGX 500/km marginal rate after the first 2 km. These are distance bands
-// because FareRule is intentionally database-configurable.
-export const DEFAULT_RIDE_FARE_RULES = [
+/**
+ * Arua / Muni pilot ride pricing:
+ * - UGX 500 per estimated kilometre
+ * - UGX 1,000 minimum customer fare
+ * - Round upward to the nearest UGX 100 for cash-friendly prices
+ * - The initial pilot quote range is capped at 30 km
+ */
+export const RIDE_DISTANCE_TARIFF = {
+  farePerKmUgx: 500,
+  minimumFareUgx: 1000,
+  roundingStepUgx: 100,
+  maximumDistanceKm: 30
+} as const;
+
+// Exact signature of the old 15-band default tariff deployed during initial
+// fare testing. Only these known generated rows are retired; custom rules are
+// kept active and continue to take precedence over the formula.
+const LEGACY_DEFAULT_RIDE_FARE_RULES = [
   { minDistanceKm: 0, maxDistanceKm: 2, fareUgx: 2000 },
   { minDistanceKm: 2.01, maxDistanceKm: 4, fareUgx: 3000 },
   { minDistanceKm: 4.01, maxDistanceKm: 6, fareUgx: 4000 },
@@ -21,9 +35,22 @@ export const DEFAULT_RIDE_FARE_RULES = [
   { minDistanceKm: 28.01, maxDistanceKm: 30, fareUgx: 16000 }
 ] as const;
 
+function signature(rule: {
+  minDistanceKm: unknown;
+  maxDistanceKm: unknown;
+  fareUgx: number;
+}): string {
+  const minimum = Number(rule.minDistanceKm).toFixed(2);
+  const maximum = rule.maxDistanceKm === null
+    ? "null"
+    : Number(rule.maxDistanceKm).toFixed(2);
+  return `${minimum}|${maximum}|${rule.fareUgx}`;
+}
+
 /**
- * Initializes the pilot tariff only when no active RIDE tariff exists.
- * Existing active administrator-configured fares are never overwritten.
+ * Retires only the old generated 15-band default tariff. Any administrator-
+ * configured active fare rules are preserved and continue to override the
+ * per-kilometre fallback for their configured distances.
  */
 export async function ensureDefaultRideFareRules(): Promise<void> {
   const activeRules = await prisma.fareRule.findMany({
@@ -32,24 +59,33 @@ export async function ensureDefaultRideFareRules(): Promise<void> {
       parcelSize: null,
       isActive: true
     },
-    select: { id: true }
+    select: {
+      id: true,
+      minDistanceKm: true,
+      maxDistanceKm: true,
+      fareUgx: true
+    }
   });
 
-  if (activeRules.length > 0) {
-    console.info(`NAVIGO fare tariff: ${activeRules.length} active ride rule(s) already configured; keeping them unchanged.`);
-    return;
+  const legacySignatures = new Set(
+    LEGACY_DEFAULT_RIDE_FARE_RULES.map(signature)
+  );
+  const legacyRules = activeRules.filter((rule) =>
+    legacySignatures.has(signature(rule))
+  );
+
+  if (legacyRules.length > 0) {
+    await prisma.fareRule.updateMany({
+      where: {
+        id: { in: legacyRules.map((rule) => rule.id) },
+        isActive: true
+      },
+      data: { isActive: false }
+    });
   }
 
-  await prisma.fareRule.createMany({
-    data: DEFAULT_RIDE_FARE_RULES.map((rule) => ({
-      requestType: "RIDE" as const,
-      minDistanceKm: rule.minDistanceKm,
-      maxDistanceKm: rule.maxDistanceKm,
-      parcelSize: null,
-      fareUgx: rule.fareUgx,
-      isActive: true
-    }))
-  });
-
-  console.info(`NAVIGO fare tariff: initialized ${DEFAULT_RIDE_FARE_RULES.length} Arua pilot ride fare rules.`);
+  const preservedCustomRules = activeRules.length - legacyRules.length;
+  console.info(
+    `NAVIGO ride tariff: per-kilometre default is UGX ${RIDE_DISTANCE_TARIFF.farePerKmUgx}/km (minimum UGX ${RIDE_DISTANCE_TARIFF.minimumFareUgx}); retired ${legacyRules.length} old default rule(s) and preserved ${preservedCustomRules} custom active rule(s).`
+  );
 }
