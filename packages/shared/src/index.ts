@@ -69,6 +69,35 @@ export const RegisterRiderInputSchema = z.object({
   motorcycleDescription: z.string().trim().min(3).max(160)
 });
 
+
+export const RideLocationInputSchema = z.object({
+  latitude: z.number().min(-90).max(90),
+  longitude: z.number().min(-180).max(180),
+  description: z.string().trim().min(2).max(250),
+  landmarkId: z.string().uuid().optional()
+});
+
+export const RideFareQuoteInputSchema = z.object({
+  pickup: RideLocationInputSchema,
+  destination: RideLocationInputSchema
+}).refine(
+  (value) =>
+    value.pickup.latitude !== value.destination.latitude ||
+    value.pickup.longitude !== value.destination.longitude,
+  { message: "Pickup and destination must be different locations." }
+);
+
+export const CreateRideInputSchema = RideFareQuoteInputSchema.extend({
+  paymentMethod: PaymentMethodSchema.default("CASH")
+});
+
+export type CreateRideInput = z.infer<typeof CreateRideInputSchema>;
+export type RideFareQuoteInput = z.infer<typeof RideFareQuoteInputSchema>;
+
+export const RideStatusUpdateInputSchema = z.object({
+  status: z.enum(["ARRIVED_AT_PICKUP", "IN_PROGRESS", "COMPLETED"])
+});
+
 export const RefreshTokenInputSchema = z.object({
   refreshToken: z.string().min(40).max(200)
 });
