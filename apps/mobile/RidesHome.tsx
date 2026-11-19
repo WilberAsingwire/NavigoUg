@@ -83,6 +83,23 @@ function routeMapRegion(coordinates: RouteCoordinate[]) {
   };
 }
 
+type ParcelSize = "SMALL" | "MEDIUM" | "LARGE";
+type ParcelQuote = {
+  fareAmountUgx: number;
+  distanceKm: number;
+  durationSeconds: number;
+  routeCoordinates: RouteCoordinate[];
+  routingProvider: "GOOGLE_TWO_WHEELER" | "VALHALLA_MOTORCYCLE";
+};
+type ParcelRequest = {
+  id: string;
+  pickupCode: string;
+  deliveryCode: string;
+  fareAmountUgx: number;
+  estimatedDistanceKm: number;
+  status: string;
+};
+
 type Props = {
   session: Session;
   onSignOut: () => void;
@@ -576,7 +593,7 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
     }
   }, [onSignOut]);
 
-  const [tab, setTab] = useState<"book" | "history">("book");
+  const [tab, setTab] = useState<"book" | "history" | "parcel">("book");
   const [pickup, setPickup] = useState("");
   const [destination, setDestination] = useState("");
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("CASH");
@@ -588,6 +605,14 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
   const [selectedDestinationSearchQuery, setSelectedDestinationSearchQuery] = useState("");
   const [rides, setRides] = useState<Ride[]>([]);
   const [availableRides, setAvailableRides] = useState<Ride[]>([]);
+  const [parcelSize, setParcelSize] = useState<ParcelSize>("SMALL");
+  const [recipientName, setRecipientName] = useState("");
+  const [recipientPhone, setRecipientPhone] = useState("");
+  const [itemDescription, setItemDescription] = useState("");
+  const [parcelQuote, setParcelQuote] = useState<ParcelQuote | null>(null);
+  const [parcelLocations, setParcelLocations] = useState<{ pickup: RideLocation; destination: RideLocation } | null>(null);
+  const [createdParcel, setCreatedParcel] = useState<ParcelRequest | null>(null);
+
   const [loading, setLoading] = useState(true);
   const [working, setWorking] = useState(false);
   const [message, setMessage] = useState("");
@@ -731,6 +756,59 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
     }
   }
 
+  async function getParcelFareEstimate() {
+    setWorking(true);
+    setError("");
+    setMessage("");
+    setParcelQuote(null);
+    setParcelLocations(null);
+    setCreatedParcel(null);
+    try {
+      const [pickupLocation, destinationLocation] = await Promise.all([
+        selectedPickupLocation ?? geocodeAruaAddress(selectedPickupSearchQuery || pickup),
+        selectedDestinationLocation ?? geocodeAruaAddress(selectedDestinationSearchQuery || destination)
+      ]);
+      const result = await apiRequest<{ data: ParcelQuote }>("/api/v1/parcels/fare-quote", activeSession.accessToken, {
+        method: "POST",
+        body: JSON.stringify({ pickup: pickupLocation, destination: destinationLocation, sizeCategory: parcelSize })
+      }, refreshAccessToken);
+      setParcelLocations({ pickup: pickupLocation, destination: destinationLocation });
+      setParcelQuote(result.data);
+    } catch (quoteError) {
+      setError(quoteError instanceof Error ? quoteError.message : "Unable to calculate the item delivery fee.");
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function requestParcel() {
+    if (!parcelQuote || !parcelLocations) return;
+    setWorking(true);
+    setError("");
+    setMessage("");
+    try {
+      const result = await apiRequest<{ data: ParcelRequest }>("/api/v1/parcels", activeSession.accessToken, {
+        method: "POST",
+        body: JSON.stringify({
+          ...parcelLocations,
+          sizeCategory: parcelSize,
+          recipientName,
+          recipientPhone,
+          parcelDescription: itemDescription,
+          paymentMethod
+        })
+      }, refreshAccessToken);
+      setCreatedParcel(result.data);
+      setMessage("Your item delivery request has been sent. Share the recipient delivery code with the person receiving the item.");
+      setParcelQuote(null);
+      setParcelLocations(null);
+    } catch (requestError) {
+      setError(requestError instanceof Error ? requestError.message : "Unable to send this item.");
+    } finally {
+      setWorking(false);
+    }
+  }
+
   async function performRideAction(rideId: string, action: "accept" | "cancel" | "ARRIVED_AT_PICKUP" | "IN_PROGRESS" | "COMPLETED") {
     setWorking(true);
     setError("");
@@ -817,25 +895,92 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
               <Text style={styles.serviceHeadingSubtitle}>Choose a service</Text>
             </View>
             <View style={styles.serviceChoices}>
-              <View style={[styles.serviceTile, styles.serviceTileActive]}>
+              <TouchableOpacity style={[styles.serviceTile, tab !== "parcel" ? styles.serviceTileActive : null]} onPress={() => { setTab("book"); setError(""); setMessage(""); }}>
                 <Text style={styles.serviceEmoji}>🏍️</Text>
                 <Text style={styles.serviceTitle}>Ride</Text>
                 <Text style={styles.serviceDescription}>Travel around Arua</Text>
-              </View>
-              <View style={[styles.serviceTile, styles.serviceTileUpcoming]}>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.serviceTile, tab === "parcel" ? styles.serviceTileActive : null]} onPress={() => { setTab("parcel"); setError(""); setMessage(""); setCreatedParcel(null); }}>
                 <Text style={styles.serviceEmoji}>📦</Text>
                 <Text style={styles.serviceTitle}>Send an Item</Text>
                 <Text style={styles.serviceDescription}>Pickup and delivery</Text>
-                <Text style={styles.comingSoon}>COMING SOON</Text>
+              </TouchableOpacity>
+            </View>
+
+            {tab !== "parcel" ? (
+              <View style={styles.tabRow}>
+                <TabButton label="Book a ride" selected={tab === "book"} onPress={() => setTab("book")} />
+                <TabButton label="My rides" selected={tab === "history"} onPress={() => { setTab("history"); void loadDashboard(); }} />
               </View>
-            </View>
+            ) : null}
 
-            <View style={styles.tabRow}>
-              <TabButton label="Book a ride" selected={tab === "book"} onPress={() => setTab("book")} />
-              <TabButton label="My rides" selected={tab === "history"} onPress={() => { setTab("history"); void loadDashboard(); }} />
-            </View>
-
-            {tab === "book" ? (
+            {tab === "parcel" ? (
+              <View style={styles.card}>
+                <Text style={styles.cardTitle}>Send an item</Text>
+                <Text style={styles.bodyText}>We'll collect your item and deliver it to the person you choose.</Text>
+                {createdParcel ? (
+                  <View style={styles.codePanel}>
+                    <Text style={styles.quoteLabel}>REQUEST CREATED</Text>
+                    <Text style={styles.codeHeading}>Give these codes to the right people</Text>
+                    <Text style={styles.label}>Pickup code — share with the sender at collection</Text>
+                    <Text selectable style={styles.codeValue}>{createdParcel.pickupCode}</Text>
+                    <Text style={styles.label}>Delivery code — share privately with the recipient</Text>
+                    <Text selectable style={styles.codeValue}>{createdParcel.deliveryCode}</Text>
+                    <Text style={styles.bodyText}>Keep the delivery code private. The rider must enter it when the item reaches its destination.</Text>
+                  </View>
+                ) : (
+                  <>
+                    <Text style={styles.label}>Pickup location</Text>
+                    <TextInput style={styles.addressInput} value={pickup} onFocus={() => setActiveLocationField("pickup")} onChangeText={(value) => { setPickup(value); setSelectedPickupLocation(null); setSelectedPickupSearchQuery(""); setParcelQuote(null); setParcelLocations(null); }} placeholder="Where should we collect the item?" placeholderTextColor="#98A2B3" />
+                    <LocationSuggestions visible={activeLocationField === "pickup"} query={pickup} onSelect={(suggestion) => { setPickup(suggestion.label); setSelectedPickupLocation(suggestion.latitude !== undefined && suggestion.longitude !== undefined ? { latitude: suggestion.latitude, longitude: suggestion.longitude, description: suggestion.label } : null); setSelectedPickupSearchQuery(suggestion.searchQuery ?? ""); setActiveLocationField(null); setParcelQuote(null); setParcelLocations(null); }} />
+                    <Text style={styles.label}>Delivery location</Text>
+                    <TextInput style={styles.addressInput} value={destination} onFocus={() => setActiveLocationField("destination")} onChangeText={(value) => { setDestination(value); setSelectedDestinationLocation(null); setSelectedDestinationSearchQuery(""); setParcelQuote(null); setParcelLocations(null); }} placeholder="Where should we deliver it?" placeholderTextColor="#98A2B3" />
+                    <LocationSuggestions visible={activeLocationField === "destination"} query={destination} onSelect={(suggestion) => { setDestination(suggestion.label); setSelectedDestinationLocation(suggestion.latitude !== undefined && suggestion.longitude !== undefined ? { latitude: suggestion.latitude, longitude: suggestion.longitude, description: suggestion.label } : null); setSelectedDestinationSearchQuery(suggestion.searchQuery ?? ""); setActiveLocationField(null); setParcelQuote(null); setParcelLocations(null); }} />
+                    <Text style={styles.label}>What are you sending?</Text>
+                    <TextInput style={styles.addressInput} value={itemDescription} onChangeText={(value) => { setItemDescription(value); setParcelQuote(null); }} placeholder="e.g. Documents, clothes, phone" placeholderTextColor="#98A2B3" />
+                    <Text style={styles.label}>Item size</Text>
+                    <View style={styles.paymentRow}>
+                      <ChoiceButton label="Small" selected={parcelSize === "SMALL"} onPress={() => { setParcelSize("SMALL"); setParcelQuote(null); }} />
+                      <ChoiceButton label="Medium" selected={parcelSize === "MEDIUM"} onPress={() => { setParcelSize("MEDIUM"); setParcelQuote(null); }} />
+                      <ChoiceButton label="Large" selected={parcelSize === "LARGE"} onPress={() => { setParcelSize("LARGE"); setParcelQuote(null); }} />
+                    </View>
+                    <Text style={styles.label}>Recipient's name</Text>
+                    <TextInput style={styles.addressInput} value={recipientName} onChangeText={setRecipientName} placeholder="Person receiving the item" placeholderTextColor="#98A2B3" />
+                    <Text style={styles.label}>Recipient's phone number</Text>
+                    <TextInput style={styles.addressInput} value={recipientPhone} onChangeText={setRecipientPhone} keyboardType="phone-pad" placeholder="e.g. 07XXXXXXXX" placeholderTextColor="#98A2B3" />
+                    <Text style={styles.label}>Payment preference</Text>
+                    <View style={styles.paymentRow}>
+                      <ChoiceButton label="Cash" selected={paymentMethod === "CASH"} onPress={() => setPaymentMethod("CASH")} />
+                      <ChoiceButton label="Mobile Money" selected={paymentMethod === "MOBILE_MONEY"} onPress={() => setPaymentMethod("MOBILE_MONEY")} />
+                    </View>
+                    {parcelQuote && parcelLocations ? (
+                      <>
+                        <View style={styles.routeMapFrame}>
+                          <MapView style={styles.routeMap} initialRegion={routeMapRegion(parcelQuote.routeCoordinates)} scrollEnabled={false} zoomEnabled={false} rotateEnabled={false} pitchEnabled={false} toolbarEnabled={false} showsCompass={false} showsScale={false}>
+                            <Polyline coordinates={parcelQuote.routeCoordinates} strokeColor="#1F76A8" strokeWidth={5} />
+                            <Marker coordinate={parcelLocations.pickup} title="Pickup" pinColor="#21865B" />
+                            <Marker coordinate={parcelLocations.destination} title="Delivery" pinColor="#C54848" />
+                          </MapView>
+                        </View>
+                        <View style={styles.quoteCard}>
+                          <Text style={styles.quoteLabel}>ITEM DELIVERY FEE</Text>
+                          <Text style={styles.quoteAmount}>{money(parcelQuote.fareAmountUgx)}</Text>
+                          <Text style={styles.quoteNote}>{parcelQuote.distanceKm.toFixed(2)} km by motorcycle road route</Text>
+                          <Text style={styles.quoteNote}>About {Math.max(1, Math.ceil(parcelQuote.durationSeconds / 60))} minutes estimated travel time</Text>
+                        </View>
+                      </>
+                    ) : null}
+                  </>
+                )}
+                {error ? <Notice tone="error" text={error} /> : null}
+                {message ? <Notice tone="success" text={message} /> : null}
+                {!createdParcel ? (
+                  <PrimaryButton label={parcelQuote ? "Confirm item delivery" : "Calculate delivery fee"} loading={working} onPress={parcelQuote ? requestParcel : getParcelFareEstimate} disabled={working || !pickup.trim() || !destination.trim() || !itemDescription.trim() || !recipientName.trim() || !recipientPhone.trim()} />
+                ) : (
+                  <PrimaryButton label="Send another item" onPress={() => { setCreatedParcel(null); setPickup(""); setDestination(""); setItemDescription(""); setRecipientName(""); setRecipientPhone(""); setSelectedPickupLocation(null); setSelectedDestinationLocation(null); setParcelQuote(null); }} />
+                )}
+              </View>
+            ) : tab === "book" ? (
               <View style={styles.card}>
                 <Text style={styles.cardTitle}>Plan your trip</Text>
                 <Text style={styles.label}>Pickup location</Text>
@@ -1377,6 +1522,9 @@ const styles = StyleSheet.create({
   choiceTextSelected: { color: "#174A72" },
   routeMapFrame: { height: 190, borderRadius: 13, overflow: "hidden", marginTop: 10, borderWidth: 1, borderColor: "#DCE3EB" },
   routeMap: { width: "100%", height: "100%" },
+  codePanel: { backgroundColor: "#F0F7FC", borderRadius: 13, padding: 14, marginTop: 14, marginBottom: 10, borderWidth: 1, borderColor: "#D3E6F3" },
+  codeHeading: { color: "#174A72", fontSize: 14, fontWeight: "900", marginTop: 7, marginBottom: 5 },
+  codeValue: { color: "#142B3D", fontSize: 25, fontWeight: "900", letterSpacing: 5, backgroundColor: "#FFFFFF", padding: 12, borderRadius: 10, marginTop: 5, overflow: "hidden" },
   quoteCard: { backgroundColor: "#F0F7FC", borderWidth: 1, borderColor: "#D3E6F3", borderRadius: 13, padding: 14, marginTop: 6, marginBottom: 13 },
   quoteLabel: { color: "#497A9B", fontSize: 9, fontWeight: "800", letterSpacing: 1.1 },
   quoteAmount: { color: "#174A72", fontSize: 25, fontWeight: "900", marginTop: 4 },
