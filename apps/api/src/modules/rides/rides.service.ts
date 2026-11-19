@@ -1,6 +1,6 @@
 import type { CreateRideInput, RideFareQuoteInput } from "@navigo/shared";
 import { prisma } from "../../lib/prisma.js";
-import { DEFAULT_RIDE_FARE_RULES } from "./fare-rules.js";
+import { RIDE_DISTANCE_TARIFF } from "./fare-rules.js";
 
 const EARTH_RADIUS_KM = 6371.0088;
 
@@ -99,19 +99,24 @@ async function calculateFare(input: RideFareQuoteInput): Promise<FareQuote> {
     return roundedDistance >= minimum && (maximum === null || roundedDistance <= maximum);
   });
 
-  // Use the researched pilot schedule for any distance band not explicitly
-  // configured in the database. Active database rules always take priority.
-  const defaultRule = DEFAULT_RIDE_FARE_RULES.find((rule) =>
-    roundedDistance >= rule.minDistanceKm &&
-    roundedDistance <= rule.maxDistanceKm
-  );
-  const selectedFare = matchedRule?.fareUgx ?? defaultRule?.fareUgx;
+  // Administrator-configured distance rules take priority. Otherwise,
+  // calculate a proportional per-kilometre fare with a UGX 1,000 floor.
+  const fallbackFare = roundedDistance <= RIDE_DISTANCE_TARIFF.maximumDistanceKm
+    ? Math.max(
+        RIDE_DISTANCE_TARIFF.minimumFareUgx,
+        Math.ceil(
+          (roundedDistance * RIDE_DISTANCE_TARIFF.farePerKmUgx) /
+            RIDE_DISTANCE_TARIFF.roundingStepUgx
+        ) * RIDE_DISTANCE_TARIFF.roundingStepUgx
+      )
+    : undefined;
+  const selectedFare = matchedRule?.fareUgx ?? fallbackFare;
 
   if (selectedFare === undefined) {
     throw new RideError(
       422,
       "FARE_NOT_CONFIGURED",
-      "NAVIGO's current Arua pilot tariff covers journeys up to 30 km. Please choose a nearer destination."
+      `NAVIGO's current Arua pilot tariff covers journeys up to ${RIDE_DISTANCE_TARIFF.maximumDistanceKm} km. Please choose a nearer destination.`
     );
   }
 
