@@ -128,6 +128,34 @@ type ParcelTracking = {
   sharingEnabled: boolean;
 };
 
+type AdminRider = {
+  userId: string;
+  approvalStatus: "PENDING" | "APPROVED" | "REJECTED" | "SUSPENDED";
+  licenceNumber: string | null;
+  motorcyclePlate: string | null;
+  motorcycleDescription: string | null;
+  rejectionReason: string | null;
+  createdAt: string;
+  user: {
+    id: string;
+    fullName: string;
+    phone: string;
+    email: string | null;
+    isActive: boolean;
+    createdAt: string;
+  };
+};
+
+type AdminFareRule = {
+  id: string;
+  requestType: "RIDE" | "PARCEL";
+  parcelSize: ParcelSize | null;
+  minDistanceKm: number | string;
+  maxDistanceKm: number | string | null;
+  fareUgx: number;
+  isActive: boolean;
+};
+
 const ACTIVE_TRACKING_STATUSES = [
   "ACCEPTED",
   "ARRIVED_AT_PICKUP",
@@ -648,6 +676,18 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
   const [parcelCodeInputs, setParcelCodeInputs] = useState<Record<string, string>>({});
   const [parcelTrackings, setParcelTrackings] = useState<Record<string, ParcelTracking>>({});
   const [trackingParcelIds, setTrackingParcelIds] = useState<string[]>([]);
+  const [adminRiders, setAdminRiders] = useState<AdminRider[]>([]);
+  const [adminFareRules, setAdminFareRules] = useState<AdminFareRule[]>([]);
+  const [adminRiderFilter, setAdminRiderFilter] = useState<"ALL" | "PENDING" | "APPROVED" | "REJECTED" | "SUSPENDED">("PENDING");
+  const [adminTab, setAdminTab] = useState<"riders" | "fares">("riders");
+  const [adminReviewReason, setAdminReviewReason] = useState("");
+  const [fareRequestType, setFareRequestType] = useState<"RIDE" | "PARCEL">("PARCEL");
+  const [fareSize, setFareSize] = useState<ParcelSize>("SMALL");
+  const [fareMinDistance, setFareMinDistance] = useState("");
+  const [fareMaxDistance, setFareMaxDistance] = useState("");
+  const [fareAmount, setFareAmount] = useState("");
+  const [editingFareRuleId, setEditingFareRuleId] = useState<string | null>(null);
+  const [editingFareRuleActive, setEditingFareRuleActive] = useState(true);
   const [parcelSize, setParcelSize] = useState<ParcelSize>("SMALL");
   const [recipientName, setRecipientName] = useState("");
   const [recipientPhone, setRecipientPhone] = useState("");
@@ -672,14 +712,29 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
   });
 
   const loadDashboard = useCallback(async () => {
-    if (session.user.role === "ADMIN") {
-      setRides([]);
-      setAvailableRides([]);
-      setLoading(false);
-      return;
-    }
     setLoading(true);
     setError("");
+    if (session.user.role === "ADMIN") {
+      try {
+        const riderQuery = adminRiderFilter === "ALL" ? "" : `?status=${adminRiderFilter}`;
+        const [riderResult, fareResult] = await Promise.all([
+          apiRequest<{ data: AdminRider[] }>(`/api/v1/admin/riders${riderQuery}`, activeSession.accessToken, undefined, refreshAccessToken),
+          apiRequest<{ data: AdminFareRule[] }>("/api/v1/admin/fare-rules", activeSession.accessToken, undefined, refreshAccessToken)
+        ]);
+        setAdminRiders(riderResult.data ?? []);
+        setAdminFareRules(fareResult.data ?? []);
+        setRides([]);
+        setAvailableRides([]);
+        setAvailableParcels([]);
+        setAssignedParcels([]);
+        setSentParcels([]);
+      } catch (loadError) {
+        setError(loadError instanceof Error ? loadError.message : "Unable to load administrator data.");
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
     try {
       const mine = await apiRequest<{ data: Ride[] }>("/api/v1/rides/mine", activeSession.accessToken, undefined, refreshAccessToken);
       setRides(mine.data ?? []);
@@ -709,7 +764,7 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
     } finally {
       setLoading(false);
     }
-  }, [activeSession.accessToken, session.user.role, isApprovedRider, refreshAccessToken]);
+  }, [activeSession.accessToken, session.user.role, isApprovedRider, adminRiderFilter, refreshAccessToken]);
 
   useEffect(() => {
     void loadDashboard();
@@ -1082,6 +1137,126 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
       }, refreshAccessToken).catch(() => undefined);
     });
   }, [assignedParcels, trackingParcelIds, activeSession.accessToken, refreshAccessToken]);
+
+  async function reviewAdminRider(
+    riderId: string,
+    approvalStatus: "APPROVED" | "REJECTED" | "SUSPENDED"
+  ) {
+    setWorking(true);
+    setError("");
+    setMessage("");
+    try {
+      await apiRequest(`/api/v1/admin/riders/${riderId}/approval`, activeSession.accessToken, {
+        method: "PATCH",
+        body: JSON.stringify({
+          approvalStatus,
+          ...(adminReviewReason.trim() ? { rejectionReason: adminReviewReason.trim() } : {})
+        })
+      }, refreshAccessToken);
+      setAdminReviewReason("");
+      setMessage(approvalStatus === "APPROVED" ? "Rider approved. They can now receive NAVIGO requests." : `Rider status changed to ${approvalStatus.toLowerCase()}.`);
+      await loadDashboard();
+    } catch (reviewError) {
+      setError(reviewError instanceof Error ? reviewError.message : "Unable to update the rider application.");
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  function resetFareRuleEditor() {
+    setEditingFareRuleId(null);
+    setEditingFareRuleActive(true);
+    setFareRequestType("PARCEL");
+    setFareSize("SMALL");
+    setFareMinDistance("");
+    setFareMaxDistance("");
+    setFareAmount("");
+  }
+
+  function beginFareRuleEdit(rule: AdminFareRule) {
+    setEditingFareRuleId(rule.id);
+    setEditingFareRuleActive(rule.isActive);
+    setFareRequestType(rule.requestType);
+    setFareSize(rule.parcelSize ?? "SMALL");
+    setFareMinDistance(String(rule.minDistanceKm));
+    setFareMaxDistance(rule.maxDistanceKm === null ? "" : String(rule.maxDistanceKm));
+    setFareAmount(String(rule.fareUgx));
+    setAdminTab("fares");
+    setMessage("");
+    setError("");
+  }
+
+  async function saveAdminFareRule() {
+    const minDistanceKm = Number(fareMinDistance);
+    const maxDistanceKm = fareMaxDistance.trim() ? Number(fareMaxDistance) : null;
+    const fareUgx = Number(fareAmount);
+    if (!fareMinDistance.trim() || !Number.isFinite(minDistanceKm) || minDistanceKm < 0) {
+      setError("Enter a valid minimum distance in kilometres.");
+      return;
+    }
+    if (maxDistanceKm !== null && (!Number.isFinite(maxDistanceKm) || maxDistanceKm <= minDistanceKm)) {
+      setError("The maximum distance must be greater than the minimum distance, or left blank.");
+      return;
+    }
+    if (!Number.isInteger(fareUgx) || fareUgx < 500) {
+      setError("Enter a valid fare in whole Uganda shillings (at least UGX 500).");
+      return;
+    }
+
+    setWorking(true);
+    setError("");
+    setMessage("");
+    const payload = {
+      requestType: fareRequestType,
+      parcelSize: fareRequestType === "PARCEL" ? fareSize : null,
+      minDistanceKm,
+      maxDistanceKm,
+      fareUgx,
+      isActive: editingFareRuleId ? editingFareRuleActive : true
+    };
+    try {
+      await apiRequest(
+        editingFareRuleId
+          ? `/api/v1/admin/fare-rules/${editingFareRuleId}`
+          : "/api/v1/admin/fare-rules",
+        activeSession.accessToken,
+        { method: editingFareRuleId ? "PATCH" : "POST", body: JSON.stringify(payload) },
+        refreshAccessToken
+      );
+      setMessage(editingFareRuleId ? "Fare rule updated." : "Fare rule created.");
+      resetFareRuleEditor();
+      await loadDashboard();
+    } catch (fareError) {
+      setError(fareError instanceof Error ? fareError.message : "Unable to save this fare rule.");
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function toggleAdminFareRule(rule: AdminFareRule) {
+    setWorking(true);
+    setError("");
+    setMessage("");
+    try {
+      await apiRequest(`/api/v1/admin/fare-rules/${rule.id}`, activeSession.accessToken, {
+        method: "PATCH",
+        body: JSON.stringify({
+          requestType: rule.requestType,
+          parcelSize: rule.parcelSize,
+          minDistanceKm: Number(rule.minDistanceKm),
+          maxDistanceKm: rule.maxDistanceKm === null ? null : Number(rule.maxDistanceKm),
+          fareUgx: rule.fareUgx,
+          isActive: !rule.isActive
+        })
+      }, refreshAccessToken);
+      setMessage(rule.isActive ? "Fare rule deactivated." : "Fare rule activated.");
+      await loadDashboard();
+    } catch (fareError) {
+      setError(fareError instanceof Error ? fareError.message : "Unable to change fare rule status.");
+    } finally {
+      setWorking(false);
+    }
+  }
 
   async function performRideAction(rideId: string, action: "accept" | "cancel" | "ARRIVED_AT_PICKUP" | "IN_PROGRESS" | "COMPLETED") {
     setWorking(true);
@@ -1480,10 +1655,164 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
             {error ? <Notice tone="error" text={error} /> : null}
             {message ? <Notice tone="success" text={message} /> : null}
           </>
+        ) : session.user.role === "ADMIN" ? (
+          <>
+            <View style={styles.heroCard}>
+              <Text style={styles.heroEyebrow}>NAVIGO MANAGEMENT</Text>
+              <Text style={styles.heroTitle}>Administrator workspace</Text>
+              <Text style={styles.heroText}>Review rider applications and manage the distance-based prices used by the service.</Text>
+            </View>
+            <View style={styles.tabRow}>
+              <TouchableOpacity style={[styles.tabButton, adminTab === "riders" ? styles.tabButtonSelected : null]} onPress={() => { setAdminTab("riders"); setMessage(""); setError(""); }}>
+                <Text style={[styles.tabText, adminTab === "riders" ? styles.tabTextSelected : null]}>Rider applications</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.tabButton, adminTab === "fares" ? styles.tabButtonSelected : null]} onPress={() => { setAdminTab("fares"); setMessage(""); setError(""); }}>
+                <Text style={[styles.tabText, adminTab === "fares" ? styles.tabTextSelected : null]}>Fare rules</Text>
+              </TouchableOpacity>
+            </View>
+
+            {adminTab === "riders" ? (
+              <View style={styles.section}>
+                <View style={styles.sectionHeader}>
+                  <Text style={styles.sectionTitle}>Rider applications</Text>
+                  <TouchableOpacity onPress={loadDashboard} disabled={loading}>
+                    <Text style={styles.refreshText}>{loading ? "Loading..." : "Refresh"}</Text>
+                  </TouchableOpacity>
+                </View>
+                <View style={styles.adminFilterRow}>
+                  {(["PENDING", "APPROVED", "REJECTED", "SUSPENDED", "ALL"] as const).map((status) => (
+                    <TouchableOpacity
+                      key={status}
+                      style={[styles.adminFilterChip, adminRiderFilter === status ? styles.adminFilterChipSelected : null]}
+                      onPress={() => setAdminRiderFilter(status)}
+                    >
+                      <Text style={[styles.adminFilterText, adminRiderFilter === status ? styles.adminFilterTextSelected : null]}>{status === "ALL" ? "All" : status}</Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+                <Text style={styles.bodyText}>Check the rider's licence and motorcycle details before approving an application. Rejected or suspended riders cannot accept requests.</Text>
+                {adminRiderFilter === "PENDING" || adminRiderFilter === "REJECTED" || adminRiderFilter === "SUSPENDED" ? (
+                  <View style={styles.card}>
+                    <Text style={styles.label}>Review note (optional)</Text>
+                    <TextInput
+                      style={styles.addressInput}
+                      value={adminReviewReason}
+                      onChangeText={setAdminReviewReason}
+                      placeholder="Reason for rejection or suspension"
+                      placeholderTextColor="#98A2B3"
+                      multiline
+                    />
+                  </View>
+                ) : null}
+                {adminRiders.length ? adminRiders.map((rider) => (
+                  <View key={rider.userId} style={styles.rideCard}>
+                    <View style={styles.rideTopRow}>
+                      <Text style={styles.rideStatus}>{rider.user.fullName}</Text>
+                      <Text style={styles.adminStatusText}>{rider.approvalStatus}</Text>
+                    </View>
+                    <Text style={styles.rideMeta}>{rider.user.phone}{rider.user.email ? ` • ${rider.user.email}` : ""}</Text>
+                    <View style={styles.adminInfoPanel}>
+                      <Text style={styles.label}>DRIVING LICENCE</Text>
+                      <Text style={styles.routeAddress}>{rider.licenceNumber || "Not provided"}</Text>
+                      <Text style={styles.label}>MOTORCYCLE</Text>
+                      <Text style={styles.routeAddress}>{rider.motorcycleDescription || "Not provided"}</Text>
+                      <Text style={styles.label}>NUMBER PLATE</Text>
+                      <Text style={styles.routeAddress}>{rider.motorcyclePlate || "Not provided"}</Text>
+                    </View>
+                    {rider.rejectionReason ? <Text style={styles.rideMeta}>Previous review note: {rider.rejectionReason}</Text> : null}
+                    <View style={styles.adminActionRow}>
+                      {rider.approvalStatus !== "APPROVED" ? (
+                        <TouchableOpacity style={styles.adminApproveButton} onPress={() => void reviewAdminRider(rider.userId, "APPROVED")} disabled={working}>
+                          <Text style={styles.adminApproveText}>Approve</Text>
+                        </TouchableOpacity>
+                      ) : null}
+                      {rider.approvalStatus === "PENDING" || rider.approvalStatus === "APPROVED" ? (
+                        <TouchableOpacity style={styles.adminSecondaryButton} onPress={() => void reviewAdminRider(rider.userId, "REJECTED")} disabled={working}>
+                          <Text style={styles.adminSecondaryText}>Reject</Text>
+                        </TouchableOpacity>
+                      ) : null}
+                      {rider.approvalStatus === "APPROVED" ? (
+                        <TouchableOpacity style={styles.adminSecondaryButton} onPress={() => void reviewAdminRider(rider.userId, "SUSPENDED")} disabled={working}>
+                          <Text style={styles.adminSecondaryText}>Suspend</Text>
+                        </TouchableOpacity>
+                      ) : null}
+                    </View>
+                  </View>
+                )) : <EmptyState title="No rider applications here" text={adminRiderFilter === "PENDING" ? "New rider applications will appear here for review." : "There are no riders under this filter."} />}
+              </View>
+            ) : (
+              <View style={styles.section}>
+                <View style={styles.sectionHeader}>
+                  <Text style={styles.sectionTitle}>Fare configuration</Text>
+                  <TouchableOpacity onPress={loadDashboard} disabled={loading}>
+                    <Text style={styles.refreshText}>{loading ? "Loading..." : "Refresh"}</Text>
+                  </TouchableOpacity>
+                </View>
+                <Text style={styles.bodyText}>Set the price for a road-distance range. Item-delivery prices are separate for Small, Medium and Large items. Avoid overlapping active ranges for the same service and size.</Text>
+                <View style={styles.card}>
+                  <Text style={styles.cardTitle}>{editingFareRuleId ? "Edit fare rule" : "Create fare rule"}</Text>
+                  <Text style={styles.label}>Service</Text>
+                  <View style={styles.paymentRow}>
+                    <ChoiceButton label="Motorcycle ride" selected={fareRequestType === "RIDE"} onPress={() => setFareRequestType("RIDE")} />
+                    <ChoiceButton label="Item delivery" selected={fareRequestType === "PARCEL"} onPress={() => setFareRequestType("PARCEL")} />
+                  </View>
+                  {fareRequestType === "PARCEL" ? (
+                    <>
+                      <Text style={styles.label}>Item size</Text>
+                      <View style={styles.paymentRow}>
+                        {(["SMALL", "MEDIUM", "LARGE"] as const).map((size) => (
+                          <ChoiceButton key={size} label={size} selected={fareSize === size} onPress={() => setFareSize(size)} />
+                        ))}
+                      </View>
+                    </>
+                  ) : null}
+                  <Text style={styles.label}>Minimum road distance (km)</Text>
+                  <TextInput style={styles.addressInput} value={fareMinDistance} onChangeText={setFareMinDistance} keyboardType="decimal-pad" placeholder="e.g. 0" placeholderTextColor="#98A2B3" />
+                  <Text style={styles.label}>Maximum road distance (km)</Text>
+                  <TextInput style={styles.addressInput} value={fareMaxDistance} onChangeText={setFareMaxDistance} keyboardType="decimal-pad" placeholder="Leave blank for no upper limit" placeholderTextColor="#98A2B3" />
+                  <Text style={styles.label}>Fare amount (UGX)</Text>
+                  <TextInput style={styles.addressInput} value={fareAmount} onChangeText={setFareAmount} keyboardType="number-pad" placeholder="Enter the approved fare" placeholderTextColor="#98A2B3" />
+                  <Text style={styles.rideMeta}>The fare is saved on the server and applied to new quotes. Existing requests keep their original quoted fare.</Text>
+                  <PrimaryButton label={editingFareRuleId ? "Save fare rule" : "Create fare rule"} loading={working} onPress={saveAdminFareRule} disabled={working} />
+                  {editingFareRuleId ? (
+                    <TouchableOpacity style={styles.cancelButton} onPress={resetFareRuleEditor} disabled={working}>
+                      <Text style={styles.cancelText}>Cancel editing</Text>
+                    </TouchableOpacity>
+                  ) : null}
+                </View>
+                <Text style={styles.sectionTitle}>Existing fare rules</Text>
+                {adminFareRules.length ? adminFareRules.map((rule) => {
+                  const minimum = Number(rule.minDistanceKm);
+                  const maximum = rule.maxDistanceKm === null ? null : Number(rule.maxDistanceKm);
+                  const range = `${minimum}–${maximum === null ? "no limit" : maximum} km`;
+                  const service = rule.requestType === "RIDE" ? "Motorcycle ride" : `Item delivery · ${rule.parcelSize}`;
+                  return (
+                    <View key={rule.id} style={styles.rideCard}>
+                      <View style={styles.rideTopRow}>
+                        <Text style={styles.rideStatus}>{service}</Text>
+                        <Text style={styles.adminStatusText}>{rule.isActive ? "ACTIVE" : "INACTIVE"}</Text>
+                      </View>
+                      <Text style={styles.rideMeta}>{range} • {money(rule.fareUgx)}</Text>
+                      <View style={styles.adminActionRow}>
+                        <TouchableOpacity style={styles.adminSecondaryButton} onPress={() => beginFareRuleEdit(rule)} disabled={working}>
+                          <Text style={styles.adminSecondaryText}>Edit</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity style={styles.adminSecondaryButton} onPress={() => void toggleAdminFareRule(rule)} disabled={working}>
+                          <Text style={styles.adminSecondaryText}>{rule.isActive ? "Deactivate" : "Activate"}</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  );
+                }) : <EmptyState title="No fare rules configured" text="Create a fare rule above. Item delivery quotes will remain unavailable for sizes and distances without an active rule." />}
+              </View>
+            )}
+            {error ? <Notice tone="error" text={error} /> : null}
+            {message ? <Notice tone="success" text={message} /> : null}
+          </>
         ) : (
           <View style={styles.card}>
-            <Text style={styles.cardTitle}>Administrator account</Text>
-            <Text style={styles.bodyText}>Administrator controls will be available in the NAVIGO management workspace.</Text>
+            <Text style={styles.cardTitle}>Account workspace</Text>
+            <Text style={styles.bodyText}>This account role does not have a workspace available.</Text>
           </View>
         )}
 
@@ -2044,6 +2373,18 @@ const styles = StyleSheet.create({
   choiceText: { color: "#667085", fontSize: 12, fontWeight: "700" },
   choiceTextSelected: { color: "#174A72" },
   routeMapFrame: { height: 190, borderRadius: 13, overflow: "hidden", marginTop: 10, borderWidth: 1, borderColor: "#DCE3EB" },
+  adminFilterRow: { flexDirection: "row", flexWrap: "wrap", gap: 7, marginTop: 10, marginBottom: 12 },
+  adminFilterChip: { borderWidth: 1, borderColor: "#DCE3EB", borderRadius: 20, paddingHorizontal: 10, paddingVertical: 8, backgroundColor: "#FFFFFF" },
+  adminFilterChipSelected: { backgroundColor: "#174A72", borderColor: "#174A72" },
+  adminFilterText: { color: "#667085", fontSize: 9, fontWeight: "800" },
+  adminFilterTextSelected: { color: "#FFFFFF" },
+  adminStatusText: { color: "#236B9A", fontSize: 9, fontWeight: "900", letterSpacing: 0.5 },
+  adminInfoPanel: { backgroundColor: "#F7F9FB", borderRadius: 10, padding: 10, marginTop: 10 },
+  adminActionRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 12 },
+  adminApproveButton: { flex: 1, minWidth: 90, minHeight: 40, borderRadius: 10, backgroundColor: "#EAF7F0", borderWidth: 1, borderColor: "#B9E4CB", alignItems: "center", justifyContent: "center", paddingHorizontal: 10 },
+  adminApproveText: { color: "#067647", fontSize: 11, fontWeight: "800" },
+  adminSecondaryButton: { flex: 1, minWidth: 85, minHeight: 40, borderRadius: 10, backgroundColor: "#F5F7FA", borderWidth: 1, borderColor: "#DCE3EB", alignItems: "center", justifyContent: "center", paddingHorizontal: 10 },
+  adminSecondaryText: { color: "#344054", fontSize: 11, fontWeight: "800" },
   trackingMapFrame: { height: 220, borderRadius: 13, overflow: "hidden", marginTop: 8, borderWidth: 1, borderColor: "#DCE3EB" },
   trackingPanel: { backgroundColor: "#F7FAFC", borderRadius: 13, padding: 12, marginTop: 12, borderWidth: 1, borderColor: "#E0E8EF" },
   trackingControlPanel: { backgroundColor: "#F7FAFC", borderRadius: 12, padding: 11, marginTop: 12, borderWidth: 1, borderColor: "#E0E8EF" },
