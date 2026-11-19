@@ -867,7 +867,6 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
     latitudeDelta: 0.035,
     longitudeDelta: 0.035
   });
-  const [mapSelectionField, setMapSelectionField] = useState<"pickup" | "destination" | null>(null);
   const mapSheetCollapsedHeight = 168;
   const mapSheetExpandedHeight = Math.min(Dimensions.get("window").height * 0.72, 590);
   const [mapSheetExpanded, setMapSheetExpanded] = useState(false);
@@ -1037,49 +1036,6 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
     setParcelTrackings({});
     return () => { disposed = true; };
   }, [isCustomer, sentParcels, activeSession.accessToken, refreshAccessToken]);
-
-  async function selectCustomerMapPoint(coordinate: { latitude: number; longitude: number }) {
-    const target = mapSelectionField;
-    if (!target) return;
-
-    let description = `${coordinate.latitude.toFixed(5)}, ${coordinate.longitude.toFixed(5)}`;
-    try {
-      const reverse = await Location.reverseGeocodeAsync(coordinate);
-      const place = reverse[0];
-      const resolved = [
-        place?.name,
-        place?.street,
-        place?.district,
-        place?.city,
-        place?.region
-      ].filter(Boolean).filter((value, index, all) => all.indexOf(value) === index).join(", ");
-      if (resolved) description = resolved;
-    } catch {
-      // Coordinates remain valid even when reverse geocoding is unavailable.
-    }
-
-    const selected: RideLocation = { ...coordinate, description };
-    if (target === "pickup") {
-      setPickup(description);
-      setSelectedPickupLocation(selected);
-      setSelectedPickupSearchQuery("");
-      setQuote(null);
-      setLocations(null);
-      setParcelQuote(null);
-      setParcelLocations(null);
-    } else {
-      setDestination(description);
-      setSelectedDestinationLocation(selected);
-      setSelectedDestinationSearchQuery("");
-      setQuote(null);
-      setLocations(null);
-      setParcelQuote(null);
-      setParcelLocations(null);
-    }
-    setActiveLocationField(null);
-    setMapSelectionField(null);
-    setMessage(`${target === "pickup" ? "Pickup" : "Destination"} selected on the map.`);
-  }
 
   const detectPickupLocation = useCallback(async (allowReplace = false) => {
     setLocationStatus("locating");
@@ -1716,9 +1672,6 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                 initialRegion={mapRegion}
                 onMapReady={() => setCustomerMapReady(true)}
                 loadingEnabled
-                onPress={(event) => {
-                  if (mapSelectionField) void selectCustomerMapPoint(event.nativeEvent.coordinate);
-                }}
                 customMapStyle={LIGHT_MAP_STYLE}
                 showsCompass={false}
                 showsScale={false}
@@ -1766,12 +1719,6 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
               }}>
                 <Text style={styles.mapRecenterText}>◎</Text>
               </TouchableOpacity>
-              {mapSelectionField ? (
-                <View style={[styles.mapSelectionHint, styles.mapSelectionHintAboveSheet]}>
-                  <Text style={styles.mapSelectionHintText}>Tap the map to choose your {mapSelectionField} point</Text>
-                  <TouchableOpacity onPress={() => setMapSelectionField(null)}><Text style={styles.mapSelectionCancel}>Cancel</Text></TouchableOpacity>
-                </View>
-              ) : null}
               {locationStatus !== "ready" ? (
                 <TouchableOpacity style={[styles.locationRetryPill, styles.mapLocationRetryPill]} onPress={() => void detectPickupLocation(true)}>
                   <Text style={styles.locationRetryText}>{locationStatus === "locating" ? "Locating..." : "Use my location"}</Text>
