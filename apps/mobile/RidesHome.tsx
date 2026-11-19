@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ComponentRef } from "react";
 import * as SecureStore from "expo-secure-store";
 import * as Location from "expo-location";
 import {
@@ -794,8 +794,8 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
   const [riderJobTab, setRiderJobTab] = useState<"rides" | "parcels">("rides");
   const [pickup, setPickup] = useState("");
   const [destination, setDestination] = useState("");
-  const pickupInputRef = useRef<TextInput | null>(null);
-  const destinationInputRef = useRef<TextInput | null>(null);
+  const pickupInputRef = useRef<ComponentRef<typeof TextInput> | null>(null);
+  const destinationInputRef = useRef<ComponentRef<typeof TextInput> | null>(null);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("CASH");
   const [quote, setQuote] = useState<Quote | null>(null);
   const [locations, setLocations] = useState<{ pickup: RideLocation; destination: RideLocation } | null>(null);
