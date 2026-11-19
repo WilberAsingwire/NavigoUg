@@ -6,6 +6,7 @@ on:
       - cloud-preview-setup
     paths:
       - apps/mobile/BUILD_PREVIEW
+      - apps/mobile/eas.json
 
 jobs:
   build_android:
