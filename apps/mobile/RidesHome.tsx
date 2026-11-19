@@ -828,6 +828,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
     latitudeDelta: 0.035,
     longitudeDelta: 0.035
   });
+  const [mapSelectionField, setMapSelectionField] = useState<"pickup" | "destination" | null>(null);
 
   const loadDashboard = useCallback(async () => {
     setLoading(true);
@@ -964,6 +965,49 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
     setParcelTrackings({});
     return () => { disposed = true; };
   }, [isCustomer, sentParcels, activeSession.accessToken, refreshAccessToken]);
+
+  async function selectCustomerMapPoint(coordinate: { latitude: number; longitude: number }) {
+    const target = mapSelectionField;
+    if (!target) return;
+
+    let description = `${coordinate.latitude.toFixed(5)}, ${coordinate.longitude.toFixed(5)}`;
+    try {
+      const reverse = await Location.reverseGeocodeAsync(coordinate);
+      const place = reverse[0];
+      const resolved = [
+        place?.name,
+        place?.street,
+        place?.district,
+        place?.city,
+        place?.region
+      ].filter(Boolean).filter((value, index, all) => all.indexOf(value) === index).join(", ");
+      if (resolved) description = resolved;
+    } catch {
+      // Coordinates remain valid even when reverse geocoding is unavailable.
+    }
+
+    const selected: RideLocation = { ...coordinate, description };
+    if (target === "pickup") {
+      setPickup(description);
+      setSelectedPickupLocation(selected);
+      setSelectedPickupSearchQuery("");
+      setQuote(null);
+      setLocations(null);
+      setParcelQuote(null);
+      setParcelLocations(null);
+    } else {
+      setDestination(description);
+      setSelectedDestinationLocation(selected);
+      setSelectedDestinationSearchQuery("");
+      setQuote(null);
+      setLocations(null);
+      setParcelQuote(null);
+      setParcelLocations(null);
+    }
+    setActiveLocationField(null);
+    setMapSelectionField(null);
+    setMessage(`${target === "pickup" ? "Pickup" : "Destination"} selected on the map.`);
+  }
 
   const detectPickupLocation = useCallback(async (allowReplace = false) => {
     setLocationStatus("locating");
@@ -1562,6 +1606,9 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                 style={styles.customerMap}
                 region={mapRegion}
                 onRegionChangeComplete={setMapRegion}
+                onPress={(event) => {
+                  if (mapSelectionField) void selectCustomerMapPoint(event.nativeEvent.coordinate);
+                }}
                 customMapStyle={LIGHT_MAP_STYLE}
                 showsCompass={false}
                 showsScale={false}
@@ -1569,13 +1616,41 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                 showsMyLocationButton={false}
                 toolbarEnabled={false}
               >
-                {deviceLocation ? (
-                  <Marker coordinate={deviceLocation} title="Your current location" description={deviceLocation.description} pinColor="#21865B" />
+                {(selectedPickupLocation ?? deviceLocation) ? (
+                  <Marker
+                    coordinate={selectedPickupLocation ?? deviceLocation!}
+                    title={selectedPickupLocation ? "Pickup point" : "Your current location"}
+                    description={(selectedPickupLocation ?? deviceLocation)?.description}
+                    pinColor="#21865B"
+                  />
+                ) : null}
+                {selectedDestinationLocation ? (
+                  <Marker coordinate={selectedDestinationLocation} title="Destination point" description={selectedDestinationLocation.description} pinColor="#C54848" />
                 ) : null}
               </MapView>
               <View style={styles.mapBrandPill}>
                 <Text style={styles.mapBrandText}>NAVIGO  •  ARUA</Text>
               </View>
+              <View style={styles.mapSelectionControls}>
+                <TouchableOpacity
+                  style={[styles.mapSelectionButton, mapSelectionField === "pickup" ? styles.mapSelectionButtonActive : null]}
+                  onPress={() => setMapSelectionField(mapSelectionField === "pickup" ? null : "pickup")}
+                >
+                  <Text style={[styles.mapSelectionButtonText, mapSelectionField === "pickup" ? styles.mapSelectionButtonTextActive : null]}>Set pickup</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.mapSelectionButton, mapSelectionField === "destination" ? styles.mapSelectionButtonActive : null]}
+                  onPress={() => setMapSelectionField(mapSelectionField === "destination" ? null : "destination")}
+                >
+                  <Text style={[styles.mapSelectionButtonText, mapSelectionField === "destination" ? styles.mapSelectionButtonTextActive : null]}>Set destination</Text>
+                </TouchableOpacity>
+              </View>
+              {mapSelectionField ? (
+                <View style={styles.mapSelectionHint}>
+                  <Text style={styles.mapSelectionHintText}>Tap the map to choose your {mapSelectionField} point</Text>
+                  <TouchableOpacity onPress={() => setMapSelectionField(null)}><Text style={styles.mapSelectionCancel}>Cancel</Text></TouchableOpacity>
+                </View>
+              ) : null}
               <View style={styles.pickupLocationPill}>
                 <View style={styles.pickupLocationCopy}>
                   <Text style={styles.pickupLocationLabel}>YOUR PICKUP LOCATION</Text>
@@ -3335,6 +3410,14 @@ const baseStyles = StyleSheet.create({
   riderOnlineDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: "#98A2B3" },
   riderOnlineDotActive: { backgroundColor: "#12B76A" },
   riderMapStatusText: { color: "#344054", fontSize: 10, fontWeight: "800" },
+  mapSelectionControls: { position: "absolute", top: 13, right: 12, gap: 7, alignItems: "flex-end" },
+  mapSelectionButton: { backgroundColor: "#FFFFFF", borderRadius: 18, paddingHorizontal: 12, paddingVertical: 9, elevation: 3 },
+  mapSelectionButtonActive: { backgroundColor: "#174A72" },
+  mapSelectionButtonText: { color: "#344054", fontSize: 10, fontWeight: "800" },
+  mapSelectionButtonTextActive: { color: "#FFFFFF" },
+  mapSelectionHint: { position: "absolute", bottom: 78, left: 12, right: 12, backgroundColor: "rgba(23,74,114,0.96)", borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
+  mapSelectionHintText: { color: "#FFFFFF", fontSize: 10, fontWeight: "700", flex: 1 },
+  mapSelectionCancel: { color: "#FFFFFF", fontSize: 10, fontWeight: "900" },
   pickupLocationPill: { position: "absolute", left: 12, right: 12, bottom: 12, backgroundColor: "#FFFFFF", borderRadius: 15, padding: 11, flexDirection: "row", alignItems: "center", shadowColor: "#102A43", shadowOpacity: 0.15, shadowRadius: 10, elevation: 4 },
   pickupLocationCopy: { flex: 1, paddingRight: 8 },
   pickupLocationLabel: { color: "#8793A2", fontSize: 8, fontWeight: "900", letterSpacing: 1 },
