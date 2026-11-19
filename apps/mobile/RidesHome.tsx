@@ -1684,7 +1684,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
           <>
             {mainTab === "home" ? (
               <>
-            <View style={[styles.customerMapFrame, { height: activeLocationField !== null ? 0 : pickup.trim() && destination.trim() ? Math.min(Dimensions.get("window").height * 0.46, 390) : 230 }]}>
+            <View pointerEvents={activeLocationField === null ? "auto" : "none"} style={[styles.customerMapFrame, activeLocationField !== null ? styles.customerMapSearchMapHidden : null, { height: pickup.trim() && destination.trim() ? Math.min(Dimensions.get("window").height * 0.46, 390) : 230 }]}>
               <MapView
                 ref={customerMapRef}
                 style={[styles.customerMap, { opacity: customerMapLoaded ? 1 : 0 }]}
@@ -1790,7 +1790,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
             {tab === "parcel" ? (
               <View style={styles.card}>
                 {activeLocationField === null ? <Text style={styles.cardTitle}>Send an item</Text> : null}
-                <Text style={styles.bodyText}>We'll collect your item and deliver it to the person you choose.</Text>
+                {activeLocationField === null ? <Text style={styles.bodyText}>We'll collect your item and deliver it to the person you choose.</Text> : null}
                 {createdParcel ? (
                   <View style={styles.codePanel}>
                     <Text style={styles.quoteLabel}>REQUEST CREATED</Text>
@@ -3528,6 +3528,7 @@ const baseStyles = StyleSheet.create({
   mapHomePage: { flexGrow: 1, paddingHorizontal: 0, paddingTop: 0, paddingBottom: 0 },
   customerMapFrame: { height: Dimensions.get("window").height - 88, borderRadius: 0, overflow: "hidden", marginBottom: 0, marginHorizontal: 0, marginTop: 0, borderWidth: 0, backgroundColor: "#E9F0F5", position: "relative" },
   customerMapSheet: { position: "relative", backgroundColor: "#FFFFFF", borderRadius: 18, overflow: "hidden", elevation: 3, shadowColor: "#102A43", shadowOpacity: 0.08, shadowRadius: 8, marginTop: 12, marginHorizontal: 12, marginBottom: 16 },
+  customerMapSearchMapHidden: { position: "absolute", top: 0, left: 0, right: 0, opacity: 0 },
   customerMapSearchSheet: { marginTop: 0, marginHorizontal: 0, marginBottom: 0, borderRadius: 0, elevation: 0, shadowOpacity: 0 },
   locationSearchHeader: { minHeight: 58, flexDirection: "row", alignItems: "center", justifyContent: "center", paddingHorizontal: 16, borderBottomWidth: 1, borderBottomColor: "#E5EAF0", backgroundColor: "#FFFFFF" },
   locationSearchBackButton: { position: "absolute", left: 14, top: 4, width: 42, height: 50, justifyContent: "center" },
