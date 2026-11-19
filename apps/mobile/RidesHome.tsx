@@ -1858,7 +1858,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                 <View style={styles.riderMapFrame}>
                   <MapView
                     style={styles.customerMap}
-                    region={riderDeviceLocation ? { latitude: riderDeviceLocation.latitude, longitude: riderDeviceLocation.longitude, latitudeDelta: 0.055, longitudeDelta: 0.055 } : mapRegion}
+                    region={mapRegion}
                     onRegionChangeComplete={setMapRegion}
                     customMapStyle={LIGHT_MAP_STYLE}
                     showsCompass={false}
