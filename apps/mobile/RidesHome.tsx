@@ -5,6 +5,7 @@ import {
   AppState,
   ActivityIndicator,
   Dimensions,
+  Linking,
   SafeAreaView,
   ScrollView,
   StyleSheet,
@@ -1098,6 +1099,33 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
       void detectPickupLocation(false);
     }
   }, [isCustomer]);
+
+  async function centerRiderMap() {
+    try {
+      const permission = await Location.requestForegroundPermissionsAsync();
+      if (permission.status !== "granted") throw new Error("Allow location access while using NAVIGO to center the rider map.");
+      const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High, mayShowUserSettingsDialog: true });
+      const point: RideLocation = { latitude: position.coords.latitude, longitude: position.coords.longitude, description: "Your current location" };
+      setRiderDeviceLocation(point);
+      setMapRegion({ latitude: point.latitude, longitude: point.longitude, latitudeDelta: 0.045, longitudeDelta: 0.045 });
+    } catch (locationError) {
+      setError(locationError instanceof Error ? locationError.message : "Unable to find your current location.");
+    }
+  }
+
+  async function openRiderMapDirections() {
+    if (!riderMapNavigationTarget) {
+      setError("Your accepted job's location coordinates are not available yet.");
+      return;
+    }
+    const { latitude, longitude } = riderMapNavigationTarget;
+    const url = `https://www.google.com/maps/dir/?api=1&destination=${latitude},${longitude}&travelmode=driving`;
+    try {
+      await Linking.openURL(url);
+    } catch {
+      setError("Unable to open directions on this device.");
+    }
+  }
 
   async function toggleRiderAvailability() {
     setWorking(true);
