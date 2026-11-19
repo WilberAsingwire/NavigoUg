@@ -993,8 +993,8 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
       setMapRegion({
         latitude,
         longitude,
-        latitudeDelta: 0.012,
-        longitudeDelta: 0.012
+        latitudeDelta: 0.045,
+        longitudeDelta: 0.045
       });
       if (allowReplace || !pickup.trim()) {
         setPickup(description);
@@ -3324,7 +3324,7 @@ const baseStyles = StyleSheet.create({
   quickAccessCard: { flex: 1, minHeight: 92, backgroundColor: "#FFFFFF", borderRadius: 14, borderWidth: 1, borderColor: "#E5EAF0", padding: 13, justifyContent: "center" },
   quickAccessTitle: { color: "#174A72", fontSize: 13, fontWeight: "900" },
   quickAccessText: { color: "#667085", fontSize: 10, lineHeight: 15, marginTop: 5 },
-  customerMapFrame: { height: Dimensions.get("window").height * 0.68, borderRadius: 0, overflow: "hidden", marginBottom: 18, marginHorizontal: -19, marginTop: -20, borderWidth: 0, backgroundColor: "#E9F0F5", position: "relative" },
+  customerMapFrame: { height: Dimensions.get("window").height * 0.72, borderRadius: 0, overflow: "hidden", marginBottom: 18, marginHorizontal: -19, marginTop: -20, borderWidth: 0, backgroundColor: "#E9F0F5", position: "relative" },
   riderMapFrame: { height: Dimensions.get("window").height * 0.48, borderRadius: 18, overflow: "hidden", marginTop: 12, marginBottom: 12, backgroundColor: "#E9F0F5", position: "relative" },
   riderMapStatus: { position: "absolute", left: 13, bottom: 13, backgroundColor: "#FFFFFF", borderRadius: 20, paddingHorizontal: 12, paddingVertical: 9, flexDirection: "row", alignItems: "center", gap: 7, elevation: 3 },
   riderOnlineDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: "#98A2B3" },
