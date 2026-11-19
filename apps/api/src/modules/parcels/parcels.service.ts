@@ -630,6 +630,73 @@ export async function getParcelTracking(senderId: string, parcelId: string) {
   };
 }
 
+export async function recordParcelPayment(
+  riderId: string,
+  parcelId: string,
+  transactionReference?: string
+) {
+  return prisma.$transaction(async (tx) => {
+    const parcel = await tx.parcelRequest.findUnique({
+      where: { id: parcelId },
+      include: { payment: true }
+    });
+
+    if (!parcel || parcel.riderId !== riderId) {
+      throw new ParcelError(404, "PARCEL_NOT_FOUND", "The assigned item delivery could not be found.");
+    }
+    if (parcel.status !== "DELIVERED") {
+      throw new ParcelError(409, "PAYMENT_NOT_ELIGIBLE", "An item-delivery payment can only be recorded after delivery is confirmed.");
+    }
+    if (!parcel.payment) {
+      throw new ParcelError(409, "PAYMENT_RECORD_NOT_FOUND", "The payment record for this item delivery could not be found.");
+    }
+    if (parcel.payment.status !== "UNPAID") {
+      throw new ParcelError(409, "PAYMENT_ALREADY_RECORDED", "This item-delivery payment has already been recorded.");
+    }
+    if (parcel.payment.method === "CASH" && transactionReference) {
+      throw new ParcelError(400, "INVALID_PAYMENT_REFERENCE", "A transaction reference can only be supplied for Mobile Money payments.");
+    }
+
+    const recordedAt = new Date();
+    const changed = await tx.parcelPayment.updateMany({
+      where: { parcelRequestId: parcelId, status: "UNPAID" },
+      data: {
+        status: "PAID",
+        recordedById: riderId,
+        recordedAt,
+        transactionReference: transactionReference ?? null
+      }
+    });
+
+    if (changed.count !== 1) {
+      throw new ParcelError(409, "PAYMENT_ALREADY_RECORDED", "This item-delivery payment was already recorded. Refresh to see its latest status.");
+    }
+
+    await tx.auditLog.create({
+      data: {
+        actorId: riderId,
+        action: "PARCEL_PAYMENT_RECORDED",
+        targetType: "PARCEL_PAYMENT",
+        targetId: parcelId,
+        metadata: {
+          method: parcel.payment.method,
+          amountUgx: parcel.payment.amountUgx,
+          hasTransactionReference: Boolean(transactionReference)
+        }
+      }
+    });
+
+    const updated = await tx.parcelRequest.findUnique({
+      where: { id: parcelId },
+      include: parcelInclude()
+    });
+    if (!updated) {
+      throw new ParcelError(404, "PARCEL_NOT_FOUND", "The item delivery could not be found.");
+    }
+    return withoutVerificationSecrets(updated);
+  });
+}
+
 export async function cancelSenderParcel(senderId: string, parcelId: string) {
   const parcel = await prisma.parcelRequest.findUnique({ where: { id: parcelId } });
   if (!parcel || parcel.senderId !== senderId) {
