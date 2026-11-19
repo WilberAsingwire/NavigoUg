@@ -1,4 +1,4 @@
-name: NAVIGO Android Preview
+name: NAVIGO Standalone Android APK
 
 on:
   push:
@@ -7,7 +7,7 @@ on:
 
 jobs:
   build_android:
-    name: Build standalone Android preview
+    name: Build standalone Android APK
     type: build
     params:
       platform: android
