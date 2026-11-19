@@ -1283,6 +1283,11 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
         const watcher = await Location.watchPositionAsync({ accuracy: Location.Accuracy.Highest, timeInterval: 10_000, distanceInterval: 12 }, (position) => {
           const accuracyMeters = position.coords.accuracy;
           if (accuracyMeters === null || accuracyMeters > 500) return;
+          setRiderDeviceLocation({
+            latitude: position.coords.latitude,
+            longitude: position.coords.longitude,
+            description: "Your latest GPS location"
+          });
           void apiRequest("/api/v1/rides/availability/location", activeSession.accessToken, {
             method: "POST",
             body: JSON.stringify({ latitude: position.coords.latitude, longitude: position.coords.longitude, accuracyMeters })
