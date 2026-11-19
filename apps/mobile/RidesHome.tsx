@@ -183,6 +183,9 @@ type Props = {
   onSignOut: () => void;
   onSessionChange: (session: Session) => void;
   signingOut: boolean;
+  onEnablePushNotifications: () => Promise<boolean>;
+  pushNotificationsEnabled: boolean;
+  pushNotificationsBusy: boolean;
 };
 
 const API_BASE_URL = "https://navigou-api-2978.onrender.com";
@@ -630,7 +633,15 @@ async function geocodeAruaAddress(value: string): Promise<RideLocation> {
   };
 }
 
-export default function RidesHome({ session, onSignOut, onSessionChange, signingOut }: Props) {
+export default function RidesHome({
+  session,
+  onSignOut,
+  onSessionChange,
+  signingOut,
+  onEnablePushNotifications,
+  pushNotificationsEnabled,
+  pushNotificationsBusy
+}: Props) {
   const [activeSession, setActiveSession] = useState(session);
 
   useEffect(() => {
@@ -1829,13 +1840,13 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                 {message ? <Notice tone="success" text={message} /> : null}
               </View>
             ) : (
-              <ProfilePanel session={activeSession} onSignOut={onSignOut} signingOut={signingOut} onSaveProfile={saveOwnProfile} onChangePassword={changeOwnPassword} onSwitchWorkspace={switchWorkspace} onApplyRider={applyForRider} refreshAccessToken={refreshAccessToken} appearance={appearance} textSize={textSize} onUpdateUiPreferences={updateUiPreferences} />
+              <ProfilePanel session={activeSession} onSignOut={onSignOut} signingOut={signingOut} onSaveProfile={saveOwnProfile} onChangePassword={changeOwnPassword} onSwitchWorkspace={switchWorkspace} onApplyRider={applyForRider} refreshAccessToken={refreshAccessToken} appearance={appearance} textSize={textSize} onUpdateUiPreferences={updateUiPreferences} onEnablePushNotifications={onEnablePushNotifications} pushNotificationsEnabled={pushNotificationsEnabled} pushNotificationsBusy={pushNotificationsBusy} />
             )}
           </>
         ) : activeSession.user.role === "RIDER" ? (
           <>
             {mainTab === "profile" ? (
-              <ProfilePanel session={activeSession} onSignOut={onSignOut} signingOut={signingOut} onSaveProfile={saveOwnProfile} onChangePassword={changeOwnPassword} onSwitchWorkspace={switchWorkspace} onApplyRider={applyForRider} refreshAccessToken={refreshAccessToken} appearance={appearance} textSize={textSize} onUpdateUiPreferences={updateUiPreferences} />
+              <ProfilePanel session={activeSession} onSignOut={onSignOut} signingOut={signingOut} onSaveProfile={saveOwnProfile} onChangePassword={changeOwnPassword} onSwitchWorkspace={switchWorkspace} onApplyRider={applyForRider} refreshAccessToken={refreshAccessToken} appearance={appearance} textSize={textSize} onUpdateUiPreferences={updateUiPreferences} onEnablePushNotifications={onEnablePushNotifications} pushNotificationsEnabled={pushNotificationsEnabled} pushNotificationsBusy={pushNotificationsBusy} />
             ) : activeSession.user.riderApprovalStatus !== "APPROVED" ? (
               <View style={styles.card}>
                 <Text style={styles.cardTitle}>Rider application status</Text>
@@ -1962,7 +1973,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                 )}
               </View>
             ) : (
-              <ProfilePanel session={activeSession} onSignOut={onSignOut} signingOut={signingOut} onSaveProfile={saveOwnProfile} onChangePassword={changeOwnPassword} onSwitchWorkspace={switchWorkspace} onApplyRider={applyForRider} refreshAccessToken={refreshAccessToken} appearance={appearance} textSize={textSize} onUpdateUiPreferences={updateUiPreferences} />
+              <ProfilePanel session={activeSession} onSignOut={onSignOut} signingOut={signingOut} onSaveProfile={saveOwnProfile} onChangePassword={changeOwnPassword} onSwitchWorkspace={switchWorkspace} onApplyRider={applyForRider} refreshAccessToken={refreshAccessToken} appearance={appearance} textSize={textSize} onUpdateUiPreferences={updateUiPreferences} onEnablePushNotifications={onEnablePushNotifications} pushNotificationsEnabled={pushNotificationsEnabled} pushNotificationsBusy={pushNotificationsBusy} />
             )}
             {error ? <Notice tone="error" text={error} /> : null}
             {message ? <Notice tone="success" text={message} /> : null}
@@ -2169,7 +2180,10 @@ function ProfilePanel({
   refreshAccessToken,
   appearance,
   textSize,
-  onUpdateUiPreferences
+  onUpdateUiPreferences,
+  onEnablePushNotifications,
+  pushNotificationsEnabled,
+  pushNotificationsBusy
 }: {
   session: Session;
   onSignOut: () => void;
@@ -2182,6 +2196,9 @@ function ProfilePanel({
   appearance: UiAppearance;
   textSize: UiTextSize;
   onUpdateUiPreferences: (changes: Partial<UiPreferences>) => Promise<void>;
+  onEnablePushNotifications: () => Promise<boolean>;
+  pushNotificationsEnabled: boolean;
+  pushNotificationsBusy: boolean;
 }) {
   const roleLabel = session.user.role === "CUSTOMER" ? "Customer" : session.user.role === "RIDER" ? "Rider" : "Administrator";
   const riderStatus = session.user.riderApprovalStatus ?? "NOT SET";
@@ -2575,8 +2592,24 @@ function ProfilePanel({
               <View style={styles.card}>
                 <Text style={styles.cardTitle}>Notifications</Text>
                 <Detail label="In-app notifications" value="Enabled" />
-                <Detail label="Push notifications" value="Not configured on this build" />
-                <Text style={styles.profileHint}>You can review ride and item-delivery updates in the Notifications section. Push alerts will require device registration and notification-service configuration.</Text>
+                <Detail label="Push alerts" value={pushNotificationsEnabled ? "Enabled on this device" : "Not enabled"} />
+                {pushNotificationsEnabled ? (
+                  <Text style={styles.profileHint}>Booking alerts are enabled on this Android device. You can manage notification permission in your phone settings.</Text>
+                ) : (
+                  <>
+                    <Text style={styles.profileHint}>Enable Android alerts to receive ride and item-delivery updates even when NAVIGO is not open. The in-app inbox remains available.</Text>
+                    <TouchableOpacity
+                      accessibilityRole="button"
+                      style={[styles.profileChoiceButton, styles.profileChoiceButtonSelected, { marginTop: 10, minHeight: 46 }]}
+                      onPress={() => void onEnablePushNotifications()}
+                      disabled={pushNotificationsBusy}
+                    >
+                      {pushNotificationsBusy
+                        ? <ActivityIndicator color="#174A72" />
+                        : <Text style={styles.profileChoiceTextSelected}>Enable push alerts</Text>}
+                    </TouchableOpacity>
+                  </>
+                )}
               </View>
             </>
           ) : null}
