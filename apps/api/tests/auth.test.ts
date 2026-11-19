@@ -188,6 +188,35 @@ describe("Authentication API", () => {
     expect(mocks.refreshCreate).toHaveBeenCalledTimes(1);
   });
 
+  it("downgrades legacy pending rider refresh sessions to customer workspace", async () => {
+    const existingToken = "legacy-pending-rider-refresh-token-123456789";
+    mocks.refreshFindUnique.mockResolvedValue({
+      id: "4ccfa809-038a-46e9-a8e7-f02c8d7dd03c",
+      userId: sampleUser.id,
+      activeRole: "RIDER",
+      revokedAt: null,
+      expiresAt: new Date(Date.now() + 60_000),
+      user: {
+        ...sampleUser,
+        role: "RIDER",
+        riderProfile: { approvalStatus: "PENDING" }
+      }
+    });
+    mocks.refreshUpdateMany.mockResolvedValue({ count: 1 });
+    mocks.refreshCreate.mockResolvedValue({});
+
+    const response = await request(app)
+      .post("/api/v1/auth/refresh")
+      .send({ refreshToken: existingToken });
+
+    expect(response.status).toBe(200);
+    expect(response.body.data.user.role).toBe("CUSTOMER");
+    expect(response.body.data.user.availableRoles).toEqual(["CUSTOMER"]);
+    expect(mocks.refreshCreate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ activeRole: "CUSTOMER" })
+    }));
+  });
+
   it("rejects a refresh token that has already been used", async () => {
     const existingToken = "refresh-token-for-test-12345678901234567890";
     mocks.refreshFindUnique.mockResolvedValue({
