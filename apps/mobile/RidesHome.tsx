@@ -82,9 +82,9 @@ const NEXT_RIDER_STATUS: Record<string, "ARRIVED_AT_PICKUP" | "IN_PROGRESS" | "C
 };
 
 const ARUA_LOCATION_SUGGESTIONS: LocationSuggestion[] = [
-  { label: "Muni Site", category: "Local place" },
-  { label: "Muni University", category: "University" },
-  { label: "Muni Girls", category: "School" },
+  { label: "Muni Site", category: "Local area", searchTerms: ["Muni", "Muni Hill", "Muni Cell"] },
+  { label: "Muni University", category: "University", searchTerms: ["Muni", "main campus"] },
+  { label: "Muni Girls Secondary School", category: "School", searchTerms: ["Muni Girls", "Muni", "Nyio Ward"] },
   { label: "Arua Central Market", category: "Market" },
   { label: "Old Bus Park, Arua", category: "Transport station" },
   { label: "Arua Regional Referral Hospital", category: "Hospital" },
@@ -98,7 +98,167 @@ const ARUA_LOCATION_SUGGESTIONS: LocationSuggestion[] = [
   { label: "Oli, Arua", category: "Neighbourhood" },
   { label: "Manibe, Arua", category: "Neighbourhood" },
   { label: "Anyafio, Arua", category: "Neighbourhood" },
-  { label: "Arua Airport", category: "Airport" }
+  { label: "Arua Airport", category: "Airport" },
+
+  // Hostels marked Recommended in Muni University's 2026 inspected-hostel list.
+  {
+    label: "Las Vegas Hostel",
+    category: "Student hostel · inspected 2026",
+    searchTerms: ["hostel", "accommodation", "student residence", "Onzivu", "Muni"],
+    searchQuery: "Las Vegas Hostel, Onzivu, Arua, Uganda"
+  },
+  {
+    label: "Elite Upper Hostel",
+    category: "Student hostel · inspected 2026",
+    searchTerms: ["hostel", "accommodation", "student residence", "Ocholini", "Muni"],
+    searchQuery: "Elite Upper Hostel, Ocholini, Arua, Uganda"
+  },
+  {
+    label: "Elite Lower Hostel",
+    category: "Student hostel · inspected 2026",
+    searchTerms: ["hostel", "accommodation", "student residence", "Ocholini", "Muni"],
+    searchQuery: "Elite Lower Hostel, Ocholini, Arua, Uganda"
+  },
+  {
+    label: "Green Garden Hostel",
+    category: "Student hostel · inspected 2026",
+    searchTerms: ["hostel", "accommodation", "student residence", "Ocholini", "Muni"],
+    searchQuery: "Green Garden Hostel, Ocholini, Arua, Uganda"
+  },
+  {
+    label: "Florida Hostel",
+    category: "Student hostel · inspected 2026",
+    searchTerms: ["hostel", "accommodation", "student residence", "Ocholini", "Muni"],
+    searchQuery: "Florida Hostel, Ocholini, Arua, Uganda"
+  },
+  {
+    label: "Blessing's Hostel",
+    category: "Student hostel · inspected 2026",
+    searchTerms: ["hostel", "accommodation", "student residence", "Ocholini", "Muni"],
+    searchQuery: "Blessing's Hostel, Ocholini, Arua, Uganda"
+  },
+  {
+    label: "Faith Harvest Hostel",
+    category: "Student hostel · inspected 2026",
+    searchTerms: ["hostel", "accommodation", "student residence", "Onzivu", "Muni"],
+    searchQuery: "Faith Harvest Hostel, Onzivu, Arua, Uganda"
+  },
+  {
+    label: "St Teresa Hostel",
+    category: "Student hostel · inspected 2026",
+    searchTerms: ["hostel", "accommodation", "student residence", "Onzivu", "Muni"],
+    searchQuery: "St Teresa Hostel, Onzivu, Arua, Uganda"
+  },
+  {
+    label: "Winner's Hostel",
+    category: "Student hostel · inspected 2026",
+    searchTerms: ["hostel", "accommodation", "student residence", "Onzivu", "Muni"],
+    searchQuery: "Winner's Hostel, Onzivu, Arua, Uganda"
+  },
+  {
+    label: "Divine Mercy Hostel",
+    category: "Student hostel · inspected 2026",
+    searchTerms: ["hostel", "accommodation", "student residence", "Muni"],
+    searchQuery: "Divine Mercy Hostel, Muni Hill, Arua, Uganda"
+  },
+  {
+    label: "Schorla Hostel",
+    category: "Student hostel · inspected 2026",
+    searchTerms: ["hostel", "accommodation", "student residence", "Onzivu", "Tarsila", "Muni"],
+    searchQuery: "Schorla Hostel, Onzivu, Arua, Uganda"
+  },
+  {
+    label: "Liana Partell Hostel",
+    category: "Student hostel · inspected 2026",
+    searchTerms: ["hostel", "accommodation", "student residence", "Muni Site", "Adrole Gloria", "Muni"],
+    searchQuery: "Liana Partell Hostel, Muni Site, Arua, Uganda"
+  },
+  {
+    label: "Jesse Hostel",
+    category: "Student hostel · inspected 2026",
+    searchTerms: ["hostel", "accommodation", "student residence", "Muni", "Muni Girls"],
+    searchQuery: "Jesse Hostel, Muni Site, Arua, Uganda"
+  },
+  {
+    label: "Ellianze Hostel",
+    category: "Student hostel · inspected 2026",
+    searchTerms: ["hostel", "accommodation", "student residence", "UNITE-Muni", "Muni"],
+    searchQuery: "Ellianze Hostel, near UNITE-Muni, Arua, Uganda"
+  },
+  {
+    label: "Scholars' Residence",
+    category: "Student residence · inspected 2026",
+    searchTerms: ["hostel", "accommodation", "student hostel", "Muni"],
+    searchQuery: "Scholars' Residence, Muni, Arua, Uganda"
+  },
+  {
+    label: "Jimex Hostel",
+    category: "Student hostel · inspected 2026",
+    searchTerms: ["hostel", "accommodation", "student residence", "Muni Site", "Muni"],
+    searchQuery: "Jimex Hostel, Muni Site, Arua, Uganda"
+  },
+  {
+    label: "Jehovah Jireh Hostel",
+    category: "Student hostel · inspected 2026",
+    searchTerms: ["hostel", "accommodation", "student residence", "Muni"],
+    searchQuery: "Jehovah Jireh Hostel, Muni, Arua, Uganda"
+  },
+  {
+    label: "Apex Hostel",
+    category: "Student hostel · inspected 2026",
+    searchTerms: ["hostel", "accommodation", "student residence", "Muni Site", "Muni"],
+    searchQuery: "Apex Hostel, Muni Site, Arua, Uganda"
+  },
+  {
+    label: "Bervlen Hostel",
+    category: "Student hostel · inspected 2026",
+    searchTerms: ["hostel", "accommodation", "student residence", "Muni Site", "Muni"],
+    searchQuery: "Bervlen Hostel, Muni Site, Arua, Uganda"
+  },
+  {
+    label: "New York Hostel",
+    category: "Student hostel · inspected 2026",
+    searchTerms: ["hostel", "accommodation", "student residence", "Muni"],
+    searchQuery: "New York Hostel, Muni Site, Arua, Uganda"
+  },
+  {
+    label: "Muni Residences",
+    category: "Student residence · inspected 2026",
+    searchTerms: ["hostel", "accommodation", "student hostel", "Muni Site", "Muni"],
+    searchQuery: "Muni Residences, Muni Site, Arua, Uganda"
+  },
+
+  // These five appear in the same university document as new hostels awaiting approval.
+  {
+    label: "Loril Paris Hostel",
+    category: "Student hostel · approval pending",
+    searchTerms: ["hostel", "accommodation", "Onzivu", "Muni"],
+    searchQuery: "Loril Paris Hostel, Onzivu, Arua, Uganda"
+  },
+  {
+    label: "Prime Hostel",
+    category: "Student hostel · approval pending",
+    searchTerms: ["hostel", "accommodation", "Ocholini", "Muni"],
+    searchQuery: "Prime Hostel, Ocholini, Arua, Uganda"
+  },
+  {
+    label: "Elite Executive Hostel",
+    category: "Student hostel · approval pending",
+    searchTerms: ["hostel", "accommodation", "Ocholini", "Muni"],
+    searchQuery: "Elite Executive Hostel, Ocholini, Arua, Uganda"
+  },
+  {
+    label: "Valentina Hostel",
+    category: "Student hostel · approval pending",
+    searchTerms: ["hostel", "accommodation", "Ocholini", "Muni"],
+    searchQuery: "Valentina Hostel, Ocholini, Arua, Uganda"
+  },
+  {
+    label: "Muni University CBC/FMS Hostel",
+    category: "Student hostel · approval pending",
+    searchTerms: ["hostel", "accommodation", "CBC", "FMS", "Muni University", "Muni"],
+    searchQuery: "Muni University CBC FMS Hostel, Arua, Uganda"
+  }
 ];
 
 type LocationSuggestion = {
@@ -106,6 +266,8 @@ type LocationSuggestion = {
   category: string;
   latitude?: number;
   longitude?: number;
+  searchTerms?: string[];
+  searchQuery?: string;
 };
 
 type PhotonFeature = {
@@ -259,7 +421,22 @@ function describeMapFeature(
   if (normalizedKey === "amenity") return tag ? tag.replace(/_/g, " ") : "Public facility";
   if (normalizedKey === "shop") return tag ? `${tag.replace(/_/g, " ")} shop` : "Shop";
   if (normalizedKey === "office") return tag ? `${tag.replace(/_/g, " ")} office` : "Office";
-  if (normalizedKey === "tourism") return tag ? tag.replace(/_/g, " ") : "Place to visit";
+  if (normalizedKey === "tourism") {
+    const labels: Record<string, string> = {
+      hostel: "Student hostel",
+      guest_house: "Guest house",
+      hotel: "Hotel",
+      motel: "Motel",
+      apartment: "Serviced accommodation",
+      chalet: "Chalet",
+      camp_site: "Camp site",
+      caravan_site: "Caravan site"
+    };
+    return labels[tag] ?? (tag ? tag.replace(/_/g, " ") : "Place to visit");
+  }
+  if (normalizedKey === "amenity" && (tag === "dormitory" || tag === "student_accommodation")) {
+    return "Student accommodation";
+  }
   if (normalizedKey === "leisure") return tag ? tag.replace(/_/g, " ") : "Recreation";
   if (normalizedKey === "building") return "Building";
   if (normalizedKey === "landuse") return "Land use";
@@ -334,6 +511,8 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
   const [locations, setLocations] = useState<{ pickup: RideLocation; destination: RideLocation } | null>(null);
   const [selectedPickupLocation, setSelectedPickupLocation] = useState<RideLocation | null>(null);
   const [selectedDestinationLocation, setSelectedDestinationLocation] = useState<RideLocation | null>(null);
+  const [selectedPickupSearchQuery, setSelectedPickupSearchQuery] = useState("");
+  const [selectedDestinationSearchQuery, setSelectedDestinationSearchQuery] = useState("");
   const [rides, setRides] = useState<Ride[]>([]);
   const [availableRides, setAvailableRides] = useState<Ride[]>([]);
   const [loading, setLoading] = useState(true);
@@ -379,8 +558,8 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
     setLocations(null);
     try {
       const [pickupLocation, destinationLocation] = await Promise.all([
-        selectedPickupLocation ?? geocodeAruaAddress(pickup),
-        selectedDestinationLocation ?? geocodeAruaAddress(destination)
+        selectedPickupLocation ?? geocodeAruaAddress(selectedPickupSearchQuery || pickup),
+        selectedDestinationLocation ?? geocodeAruaAddress(selectedDestinationSearchQuery || destination)
       ]);
       const result = await apiRequest<{ data: Quote }>("/api/v1/rides/fare-quote", activeSession.accessToken, {
         method: "POST",
@@ -479,7 +658,13 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
                   style={styles.addressInput}
                   value={pickup}
                   onFocus={() => setActiveLocationField("pickup")}
-                  onChangeText={(value) => { setPickup(value); setSelectedPickupLocation(null); setQuote(null); setLocations(null); }}
+                  onChangeText={(value) => {
+                    setPickup(value);
+                    setSelectedPickupLocation(null);
+                    setSelectedPickupSearchQuery("");
+                    setQuote(null);
+                    setLocations(null);
+                  }}
                   placeholder="e.g. Muni University or Arua Main Market"
                   placeholderTextColor="#98A2B3"
                 />
@@ -493,6 +678,7 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
                         ? { latitude: suggestion.latitude, longitude: suggestion.longitude, description: suggestion.label }
                         : null
                     );
+                    setSelectedPickupSearchQuery(suggestion.searchQuery ?? "");
                     setActiveLocationField(null);
                     setQuote(null);
                     setLocations(null);
@@ -503,7 +689,13 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
                   style={styles.addressInput}
                   value={destination}
                   onFocus={() => setActiveLocationField("destination")}
-                  onChangeText={(value) => { setDestination(value); setSelectedDestinationLocation(null); setQuote(null); setLocations(null); }}
+                  onChangeText={(value) => {
+                    setDestination(value);
+                    setSelectedDestinationLocation(null);
+                    setSelectedDestinationSearchQuery("");
+                    setQuote(null);
+                    setLocations(null);
+                  }}
                   placeholder="e.g. Muni Site or Arua Hill"
                   placeholderTextColor="#98A2B3"
                 />
@@ -517,6 +709,7 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
                         ? { latitude: suggestion.latitude, longitude: suggestion.longitude, description: suggestion.label }
                         : null
                     );
+                    setSelectedDestinationSearchQuery(suggestion.searchQuery ?? "");
                     setActiveLocationField(null);
                     setQuote(null);
                     setLocations(null);
@@ -733,11 +926,20 @@ function LocationSuggestions({
 
   const normalized = query.trim().toLowerCase();
   const localMatches = ARUA_LOCATION_SUGGESTIONS
-    .filter((location) => location.label.toLowerCase().includes(normalized));
+    .filter((location) => [
+      location.label,
+      location.category,
+      ...(location.searchTerms ?? [])
+    ].some((field) => field.toLowerCase().includes(normalized)))
+    .sort((a, b) => {
+      const aStarts = a.label.toLowerCase().startsWith(normalized) ? 0 : 1;
+      const bStarts = b.label.toLowerCase().startsWith(normalized) ? 0 : 1;
+      return aStarts - bStarts || a.label.localeCompare(b.label);
+    });
   const combined = [...localMatches, ...remoteMatches];
   const uniqueMatches = combined.filter((item, index, all) =>
     all.findIndex((candidate) => candidate.label.toLowerCase() === item.label.toLowerCase()) === index
-  ).slice(0, 8);
+  );
 
   return (
     <View style={styles.suggestionList}>
