@@ -24,7 +24,9 @@ type Session = {
     id: string;
     fullName: string;
     phone: string;
+    email?: string | null;
     role: "CUSTOMER" | "RIDER" | "ADMIN";
+    riderProfile?: { licenceNumber: string | null; motorcyclePlate: string | null; motorcycleDescription: string | null } | null;
     riderApprovalStatus: "PENDING" | "APPROVED" | "REJECTED" | "SUSPENDED" | null;
   };
 };
@@ -167,6 +169,8 @@ const ACTIVE_TRACKING_STATUSES = [
   "ARRIVED_AT_DESTINATION"
 ];
 
+
+type WorkspaceTab = "home" | "activity" | "requests" | "jobs" | "profile";
 
 type Props = {
   session: Session;
@@ -661,7 +665,11 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
     }
   }, [onSignOut]);
 
-  const [tab, setTab] = useState<"book" | "history" | "parcel">("book");
+  const [tab, setTab] = useState<"book" | "parcel">("book");
+  const [mainTab, setMainTab] = useState<WorkspaceTab>("home");
+  const [customerActivityTab, setCustomerActivityTab] = useState<"rides" | "parcels">("rides");
+  const [riderRequestTab, setRiderRequestTab] = useState<"rides" | "parcels">("rides");
+  const [riderJobTab, setRiderJobTab] = useState<"rides" | "parcels">("rides");
   const [pickup, setPickup] = useState("");
   const [destination, setDestination] = useState("");
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("CASH");
@@ -974,7 +982,7 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
       setLocations(null);
       setPickup("");
       setDestination("");
-      setTab("history");
+      setMainTab("activity");
       await loadDashboard();
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Unable to create the ride request.");
@@ -1419,20 +1427,24 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
   return (
     <SafeAreaView style={styles.safeArea}>
       <StatusBar style="dark" />
-      <ScrollView contentContainerStyle={styles.page} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+      <ScrollView style={styles.mainScroll} contentContainerStyle={styles.page} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
         <View style={styles.topBar}>
           <View>
             <Text style={styles.brandSmall}>NAVIGO</Text>
             <Text style={styles.greeting}>Hello, {session.user.fullName.split(" ")[0]}</Text>
             <Text style={styles.muted}>{isCustomer ? "Your ride starts here" : "Your rider workspace"}</Text>
           </View>
-          <TouchableOpacity style={styles.signOut} onPress={onSignOut} disabled={signingOut}>
-            {signingOut ? <ActivityIndicator color="#174A72" /> : <Text style={styles.signOutText}>Sign out</Text>}
-          </TouchableOpacity>
+{session.user.role === "ADMIN" ? (
+            <TouchableOpacity style={styles.signOut} onPress={onSignOut} disabled={signingOut}>
+              {signingOut ? <ActivityIndicator color="#174A72" /> : <Text style={styles.signOutText}>Sign out</Text>}
+            </TouchableOpacity>
+          ) : null}
         </View>
 
         {isCustomer ? (
           <>
+            {mainTab === "home" ? (
+              <>
             <View style={styles.customerMapFrame}>
               <MapView
                 style={styles.customerMap}
@@ -1460,8 +1472,9 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
                   </Text>
                 </View>
                 <TouchableOpacity style={styles.locationChangeButton} onPress={() => {
-                  setActiveLocationField("pickup");
+                  setMainTab("home");
                   setTab("book");
+                  setActiveLocationField("pickup");
                 }}>
                   <Text style={styles.locationChangeText}>Change</Text>
                 </TouchableOpacity>
@@ -1478,24 +1491,18 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
               <Text style={styles.serviceHeadingSubtitle}>Choose a service</Text>
             </View>
             <View style={styles.serviceChoices}>
-              <TouchableOpacity style={[styles.serviceTile, tab !== "parcel" ? styles.serviceTileActive : null]} onPress={() => { setTab("book"); setError(""); setMessage(""); }}>
+              <TouchableOpacity style={[styles.serviceTile, tab !== "parcel" ? styles.serviceTileActive : null]} onPress={() => { setMainTab("home"); setTab("book"); setError(""); setMessage(""); }}>
                 <Text style={styles.serviceEmoji}>🏍️</Text>
                 <Text style={styles.serviceTitle}>Ride</Text>
                 <Text style={styles.serviceDescription}>Travel around Arua</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={[styles.serviceTile, tab === "parcel" ? styles.serviceTileActive : null]} onPress={() => { setTab("parcel"); setError(""); setMessage(""); setCreatedParcel(null); }}>
+              <TouchableOpacity style={[styles.serviceTile, tab === "parcel" ? styles.serviceTileActive : null]} onPress={() => { setMainTab("home"); setTab("parcel"); setError(""); setMessage(""); setCreatedParcel(null); }}>
                 <Text style={styles.serviceEmoji}>📦</Text>
                 <Text style={styles.serviceTitle}>Send an Item</Text>
                 <Text style={styles.serviceDescription}>Pickup and delivery</Text>
               </TouchableOpacity>
             </View>
 
-            {tab !== "parcel" ? (
-              <View style={styles.tabRow}>
-                <TabButton label="Book a ride" selected={tab === "book"} onPress={() => setTab("book")} />
-                <TabButton label="My rides" selected={tab === "history"} onPress={() => { setTab("history"); void loadDashboard(); }} />
-              </View>
-            ) : null}
 
             {tab === "parcel" ? (
               <View style={styles.card}>
@@ -1677,25 +1684,23 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
 
                 {!quote ? (
                   <PrimaryButton label="Calculate fare" loading={working} onPress={getFareEstimate} disabled={working || !pickup.trim() || !destination.trim()} />
-                ) : (
+                ) : null}
                   <PrimaryButton label="Confirm ride request" loading={working} onPress={requestRide} disabled={working} />
                 )}
               </View>
-            ) : (
+
+              </>
+            ) : mainTab === "activity" ? (
               <View style={styles.section}>
-                <SectionHeader title="Your ride requests" onRefresh={loadDashboard} loading={loading} />
-                <SectionHeader title="Your item deliveries" onRefresh={loadDashboard} loading={loading} />
-                {sentParcels.length ? sentParcels.map((parcel) => (
-                  <CustomerParcelCard
-                    key={parcel.id}
-                    parcel={parcel}
-                    tracking={parcelTrackings[parcel.id] ?? null}
-                    busy={working}
-                    onCancel={["PENDING", "ACCEPTED", "ARRIVED_AT_PICKUP"].includes(parcel.status) ? () => performParcelAction(parcel.id, "cancel") : undefined}
-                  />
-                )) : <EmptyState title="No item deliveries yet" text="Items you send will appear here with their delivery progress." />}
-                <SectionHeader title="Your ride requests" onRefresh={loadDashboard} loading={loading} />
-                {rides.length ? rides.map((ride) => (
+                <SectionHeader title="Your activity" onRefresh={loadDashboard} loading={loading} />
+                <View style={styles.tabRow}>
+                  <TabButton label="Rides" selected={customerActivityTab === "rides"} onPress={() => setCustomerActivityTab("rides")} />
+                  <TabButton label="Item deliveries" selected={customerActivityTab === "parcels"} onPress={() => setCustomerActivityTab("parcels")} />
+                </View>
+                {customerActivityTab === "parcels" ? (
+                  
+                ) : (
+                  {rides.length ? rides.map((ride) => (
                   <RideCard
                     key={ride.id}
                     ride={ride}
@@ -1704,14 +1709,19 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
                     onCancel={() => performRideAction(ride.id, "cancel")}
                   />
                 )) : <EmptyState title="No rides yet" text="Your ride requests and trip history will appear here." />}
+                )}
                 {error ? <Notice tone="error" text={error} /> : null}
                 {message ? <Notice tone="success" text={message} /> : null}
               </View>
+            ) : (
+              <ProfilePanel session={activeSession} onSignOut={onSignOut} signingOut={signingOut} />
             )}
           </>
         ) : session.user.role === "RIDER" ? (
           <>
-            {session.user.riderApprovalStatus !== "APPROVED" ? (
+            {mainTab === "profile" ? (
+              <ProfilePanel session={activeSession} onSignOut={onSignOut} signingOut={signingOut} />
+            ) : session.user.riderApprovalStatus !== "APPROVED" ? (
               <View style={styles.card}>
                 <Text style={styles.cardTitle}>Rider application status</Text>
                 <View style={styles.statusPill}>
@@ -1723,7 +1733,7 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
                     : "Your rider account is not approved for accepting bookings. Please contact NAVIGO support for guidance."}
                 </Text>
               </View>
-            ) : (
+            ) : mainTab === "home" ? (
               <>
                 <View style={styles.trackingControlPanel}>
                   <Text style={styles.sectionTitle}>Rider availability</Text>
@@ -1739,8 +1749,27 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
                   <Text style={styles.heroTitle}>{riderOnline ? "Nearby rides." : "Ready for your next ride?"}</Text>
                   <Text style={styles.heroText}>{riderOnline ? "Ride requests are matched to your fresh location and shown nearest first." : "Go online to receive ride requests close to you."}</Text>
                 </View>
-                <SectionHeader title="Nearby rides" onRefresh={loadDashboard} loading={loading} />
-                {availableRides.length ? availableRides.map((ride) => (
+                <View style={styles.quickAccessRow}>
+                  <TouchableOpacity style={styles.quickAccessCard} onPress={() => setMainTab("requests")}>
+                    <Text style={styles.quickAccessTitle}>Find requests</Text>
+                    <Text style={styles.quickAccessText}>View nearby rides and item deliveries</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.quickAccessCard} onPress={() => setMainTab("jobs")}>
+                    <Text style={styles.quickAccessTitle}>My jobs</Text>
+                    <Text style={styles.quickAccessText}>Manage work you have accepted</Text>
+                  </TouchableOpacity>
+                </View>
+              </>
+            ) : mainTab === "requests" ? (
+              <View style={styles.section}>
+                <SectionHeader title="Nearby requests" onRefresh={loadDashboard} loading={loading} />
+                <View style={styles.tabRow}>
+                  <TabButton label="Ride requests" selected={riderRequestTab === "rides"} onPress={() => setRiderRequestTab("rides")} />
+                  <TabButton label="Item deliveries" selected={riderRequestTab === "parcels"} onPress={() => setRiderRequestTab("parcels")} />
+                </View>
+                {riderRequestTab === "rides" ? (
+                  <>
+                    {availableRides.length ? availableRides.map((ride) => (
                   <RideCard
                     key={ride.id}
                     ride={ride}
@@ -1752,14 +1781,43 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
                   title={riderOnline ? "No nearby rides yet" : "You are offline"}
                   text={riderOnline ? "There are no ride requests within your current matching area. NAVIGO will keep checking for nearby requests." : "Go online to see ride requests near your current location."}
                 />}
-
-                <SectionHeader title="Available item deliveries" onRefresh={loadDashboard} loading={loading} />
-                {availableParcels.length ? availableParcels.map((parcel) => (
+                  </>
+                ) : (
+                  <>
+                    {availableParcels.length ? availableParcels.map((parcel) => (
                   <ParcelRiderCard key={parcel.id} parcel={parcel} busy={working} onAccept={() => performParcelAction(parcel.id, "accept")} />
                 )) : <EmptyState title="No available item deliveries" text="New customer item requests will appear here." />}
-
-                <SectionHeader title="My assigned item deliveries" onRefresh={loadDashboard} loading={loading} />
-                {assignedParcels.length ? assignedParcels.map((parcel) => (
+                  </>
+                )}
+              </View>
+            ) : mainTab === "jobs" ? (
+              <View style={styles.section}>
+                <SectionHeader title="My jobs" onRefresh={loadDashboard} loading={loading} />
+                <View style={styles.tabRow}>
+                  <TabButton label="Ride jobs" selected={riderJobTab === "rides"} onPress={() => setRiderJobTab("rides")} />
+                  <TabButton label="Item deliveries" selected={riderJobTab === "parcels"} onPress={() => setRiderJobTab("parcels")} />
+                </View>
+                {riderJobTab === "rides" ? (
+                  <>
+                    {rides.length ? rides.map((ride) => {
+                  const nextStatus = NEXT_RIDER_STATUS[ride.status];
+                  return (
+                    <RideCard
+                      key={ride.id}
+                      ride={ride}
+                      busy={working}
+                      riderView
+                      onAdvance={nextStatus ? () => performRideAction(ride.id, nextStatus) : undefined}
+                      paymentReference={ridePaymentReferences[ride.id] ?? ""}
+                      onPaymentReferenceChange={(value) => setRidePaymentReferences((current) => ({ ...current, [ride.id]: value }))}
+                      onRecordPayment={ride.status === "COMPLETED" && ride.payment?.status === "UNPAID" ? () => recordManualPayment("ride", ride.id) : undefined}
+                    />
+                  );
+                }) : <EmptyState title="No assigned rides" text="Rides you accept will appear here." />}
+                  </>
+                ) : (
+                  <>
+                    {assignedParcels.length ? assignedParcels.map((parcel) => (
                   <ParcelRiderCard
                     key={parcel.id}
                     parcel={parcel}
@@ -1785,24 +1843,11 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
                       : undefined}
                   />
                 )) : <EmptyState title="No assigned item deliveries" text="Item deliveries you accept will appear here." />}
-
-                <SectionHeader title="My assigned rides" onRefresh={loadDashboard} loading={loading} />
-                {rides.length ? rides.map((ride) => {
-                  const nextStatus = NEXT_RIDER_STATUS[ride.status];
-                  return (
-                    <RideCard
-                      key={ride.id}
-                      ride={ride}
-                      busy={working}
-                      riderView
-                      onAdvance={nextStatus ? () => performRideAction(ride.id, nextStatus) : undefined}
-                      paymentReference={ridePaymentReferences[ride.id] ?? ""}
-                      onPaymentReferenceChange={(value) => setRidePaymentReferences((current) => ({ ...current, [ride.id]: value }))}
-                      onRecordPayment={ride.status === "COMPLETED" && ride.payment?.status === "UNPAID" ? () => recordManualPayment("ride", ride.id) : undefined}
-                    />
-                  );
-                }) : <EmptyState title="No assigned rides" text="Rides you accept will appear here." />}
-              </>
+                  </>
+                )}
+              </View>
+            ) : (
+              <ProfilePanel session={activeSession} onSignOut={onSignOut} signingOut={signingOut} />
             )}
             {error ? <Notice tone="error" text={error} /> : null}
             {message ? <Notice tone="success" text={message} /> : null}
@@ -1976,7 +2021,86 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
         )}
         <Text style={styles.footer}>NAVIGO • Arua, Uganda</Text>
       </ScrollView>
+      {session.user.role === "CUSTOMER" || session.user.role === "RIDER" ? (
+        <BottomNavigation role={session.user.role} activeTab={mainTab} onChange={(nextTab) => {
+          setMainTab(nextTab);
+          if (nextTab === "home" && session.user.role === "CUSTOMER") setTab("book");
+        }} />
+      ) : null}
     </SafeAreaView>
+  );
+}
+
+function ProfilePanel({ session, onSignOut, signingOut }: { session: Session; onSignOut: () => void; signingOut: boolean }) {
+  const roleLabel = session.user.role === "CUSTOMER" ? "Customer" : session.user.role === "RIDER" ? "Rider" : "Administrator";
+  const riderStatus = session.user.riderApprovalStatus ?? "NOT SET";
+  return (
+    <View style={styles.profilePage}>
+      <View style={styles.profileHero}>
+        <View style={styles.profileAvatar}>
+          <Text style={styles.profileAvatarText}>{session.user.fullName.trim().charAt(0).toUpperCase() || "N"}</Text>
+        </View>
+        <Text style={styles.profileName}>{session.user.fullName}</Text>
+        <Text style={styles.profileRole}>{roleLabel} account</Text>
+      </View>
+      <View style={styles.card}>
+        <Text style={styles.cardTitle}>Personal information</Text>
+        <Detail label="Full name" value={session.user.fullName} />
+        <Detail label="Phone number" value={session.user.phone} />
+        <Detail label="Email address" value={session.user.email || "Not added"} />
+        <Detail label="Account type" value={roleLabel} />
+      </View>
+      {session.user.role === "RIDER" ? (
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Rider account</Text>
+          <Detail label="Application status" value={riderStatus.replace(/_/g, " ")} />
+          <Detail label="Driving licence" value={session.user.riderProfile?.licenceNumber || "Not available"} />
+          <Detail label="Motorcycle" value={session.user.riderProfile?.motorcycleDescription || "Not available"} />
+          <Detail label="Number plate" value={session.user.riderProfile?.motorcyclePlate || "Not available"} />
+        </View>
+      ) : null}
+      <View style={styles.profileInfoCard}>
+        <Text style={styles.profileInfoTitle}>Your account, your control</Text>
+        <Text style={styles.profileInfoText}>
+          This area is for information and settings belonging to your own NAVIGO account. Protected changes such as phone-number and password updates will require secure verification.
+        </Text>
+      </View>
+      <TouchableOpacity style={styles.profileSignOut} onPress={onSignOut} disabled={signingOut}>
+        {signingOut ? <ActivityIndicator color="#B42318" /> : <Text style={styles.profileSignOutText}>Sign out of NAVIGO</Text>}
+      </TouchableOpacity>
+    </View>
+  );
+}
+
+function BottomNavigation({ role, activeTab, onChange }: {
+  role: "CUSTOMER" | "RIDER";
+  activeTab: WorkspaceTab;
+  onChange: (tab: WorkspaceTab) => void;
+}) {
+  const items: { key: WorkspaceTab; label: string; icon: string }[] = role === "CUSTOMER"
+    ? [
+        { key: "home", label: "Home", icon: "⌂" },
+        { key: "activity", label: "Activity", icon: "▤" },
+        { key: "profile", label: "Profile", icon: "◉" }
+      ]
+    : [
+        { key: "home", label: "Home", icon: "⌂" },
+        { key: "requests", label: "Requests", icon: "⌖" },
+        { key: "jobs", label: "My jobs", icon: "▣" },
+        { key: "profile", label: "Profile", icon: "◉" }
+      ];
+  return (
+    <View style={styles.bottomNav}>
+      {items.map((item) => {
+        const selected = activeTab === item.key;
+        return (
+          <TouchableOpacity key={item.key} accessibilityRole="button" accessibilityLabel={item.label} accessibilityState={{ selected }} style={styles.bottomNavItem} onPress={() => onChange(item.key)}>
+            <Text style={[styles.bottomNavIcon, selected && styles.bottomNavIconSelected]}>{item.icon}</Text>
+            <Text style={[styles.bottomNavLabel, selected && styles.bottomNavLabelSelected]}>{item.label}</Text>
+          </TouchableOpacity>
+        );
+      })}
+    </View>
   );
 }
 
@@ -2516,6 +2640,7 @@ const LIGHT_MAP_STYLE = [
 
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: "#F3F6FA" },
+  mainScroll: { flex: 1 },
   page: { flexGrow: 1, paddingHorizontal: 19, paddingTop: 20, paddingBottom: 30 },
   topBar: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 20 },
   brandSmall: { color: "#174A72", fontSize: 12, fontWeight: "900", letterSpacing: 2 },
@@ -2523,6 +2648,27 @@ const styles = StyleSheet.create({
   muted: { color: "#8793A2", fontSize: 12, marginTop: 4 },
   signOut: { borderWidth: 1, borderColor: "#D5DFE8", paddingHorizontal: 13, paddingVertical: 9, borderRadius: 10, backgroundColor: "#FFFFFF" },
   signOutText: { color: "#174A72", fontWeight: "700", fontSize: 12 },
+  bottomNav: { flexDirection: "row", alignItems: "center", justifyContent: "space-around", backgroundColor: "#FFFFFF", borderTopWidth: 1, borderTopColor: "#E5EAF0", paddingTop: 7, paddingBottom: 8, paddingHorizontal: 8 },
+  bottomNavItem: { flex: 1, minHeight: 49, alignItems: "center", justifyContent: "center", gap: 3 },
+  bottomNavIcon: { color: "#98A2B3", fontSize: 20, lineHeight: 22, fontWeight: "700" },
+  bottomNavIconSelected: { color: "#174A72" },
+  bottomNavLabel: { color: "#8793A2", fontSize: 10, fontWeight: "600" },
+  bottomNavLabelSelected: { color: "#174A72", fontWeight: "900" },
+  profilePage: { gap: 13 },
+  profileHero: { alignItems: "center", backgroundColor: "#FFFFFF", borderRadius: 18, padding: 22, borderWidth: 1, borderColor: "#E5EAF0" },
+  profileAvatar: { width: 66, height: 66, borderRadius: 33, backgroundColor: "#EAF3F9", alignItems: "center", justifyContent: "center", marginBottom: 11 },
+  profileAvatarText: { color: "#174A72", fontSize: 29, fontWeight: "900" },
+  profileName: { color: "#142B3D", fontSize: 19, fontWeight: "900" },
+  profileRole: { color: "#667085", fontSize: 12, marginTop: 5 },
+  profileInfoCard: { backgroundColor: "#F0F7FC", borderRadius: 14, borderWidth: 1, borderColor: "#D3E6F3", padding: 14 },
+  profileInfoTitle: { color: "#174A72", fontSize: 13, fontWeight: "900" },
+  profileInfoText: { color: "#526779", fontSize: 11, lineHeight: 17, marginTop: 6 },
+  profileSignOut: { minHeight: 48, borderRadius: 12, borderWidth: 1, borderColor: "#F2C7C4", backgroundColor: "#FFFFFF", alignItems: "center", justifyContent: "center", marginBottom: 12 },
+  profileSignOutText: { color: "#B42318", fontSize: 12, fontWeight: "800" },
+  quickAccessRow: { flexDirection: "row", gap: 10, marginTop: 2, marginBottom: 14 },
+  quickAccessCard: { flex: 1, minHeight: 92, backgroundColor: "#FFFFFF", borderRadius: 14, borderWidth: 1, borderColor: "#E5EAF0", padding: 13, justifyContent: "center" },
+  quickAccessTitle: { color: "#174A72", fontSize: 13, fontWeight: "900" },
+  quickAccessText: { color: "#667085", fontSize: 10, lineHeight: 15, marginTop: 5 },
   customerMapFrame: { height: 285, borderRadius: 22, overflow: "hidden", marginBottom: 18, borderWidth: 1, borderColor: "#E1E8EF", backgroundColor: "#E9F0F5", position: "relative" },
   pickupLocationPill: { position: "absolute", left: 12, right: 12, bottom: 12, backgroundColor: "#FFFFFF", borderRadius: 15, padding: 11, flexDirection: "row", alignItems: "center", shadowColor: "#102A43", shadowOpacity: 0.15, shadowRadius: 10, elevation: 4 },
   pickupLocationCopy: { flex: 1, paddingRight: 8 },
