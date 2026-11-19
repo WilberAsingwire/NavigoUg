@@ -329,11 +329,7 @@ async function updateAssignedParcel(
     );
   }
 
-  const now = new Date();
-  const updates = {
-    status: nextStatus,
-    ...(nextStatus === "ARRIVED_AT_PICKUP" ? {} : {}),
-  };
+  const updates = { status: nextStatus };
 
   return prisma.$transaction(async (tx) => {
     const changed = await tx.parcelRequest.updateMany({
