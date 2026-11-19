@@ -17,7 +17,10 @@ import {
   listRiderRides,
   RideError,
   updateRideStatus,
-  recordRidePayment
+  recordRidePayment,
+  setRiderOnline,
+  updateRiderAvailabilityLocation,
+  setRiderOffline
 } from "./rides.service.js";
 
 export const ridesRouter = Router();
@@ -86,14 +89,35 @@ ridesRouter.get("/mine", requireRole("CUSTOMER", "RIDER"), async (request, respo
   }
 });
 
+function parseRiderLocation(body: unknown): { latitude: number; longitude: number; accuracyMeters: number } | null {
+  if (!body || typeof body !== "object") return null;
+  const value = body as Record<string, unknown>;
+  if (typeof value.latitude !== "number" || typeof value.longitude !== "number" || typeof value.accuracyMeters !== "number") return null;
+  return { latitude: value.latitude, longitude: value.longitude, accuracyMeters: value.accuracyMeters };
+}
+
+ridesRouter.post("/availability/online", requireRole("RIDER"), async (request, response, next) => {
+  const point = parseRiderLocation(request.body);
+  if (!point) { validationError(response, "A valid GPS latitude, longitude and accuracy are required."); return; }
+  try { response.status(200).json({ data: await setRiderOnline(request.auth!.userId, point) }); }
+  catch (error) { next(error); }
+});
+
+ridesRouter.post("/availability/location", requireRole("RIDER"), async (request, response, next) => {
+  const point = parseRiderLocation(request.body);
+  if (!point) { validationError(response, "A valid GPS latitude, longitude and accuracy are required."); return; }
+  try { response.status(200).json({ data: await updateRiderAvailabilityLocation(request.auth!.userId, point) }); }
+  catch (error) { next(error); }
+});
+
+ridesRouter.post("/availability/offline", requireRole("RIDER"), async (request, response, next) => {
+  try { response.status(200).json({ data: await setRiderOffline(request.auth!.userId) }); }
+  catch (error) { next(error); }
+});
+
 ridesRouter.get("/available", requireRole("RIDER"), async (request, response, next) => {
-  try {
-    response.status(200).json({
-      data: await listAvailableRides(request.auth!.userId)
-    });
-  } catch (error) {
-    next(error);
-  }
+  try { response.status(200).json({ data: await listAvailableRides(request.auth!.userId) }); }
+  catch (error) { next(error); }
 });
 
 ridesRouter.post("/:rideId/accept", requireRole("RIDER"), async (request, response, next) => {

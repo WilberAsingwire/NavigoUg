@@ -4,6 +4,39 @@ import { RIDE_DISTANCE_TARIFF } from "./fare-rules.js";
 import { getMotorcycleRoute, MotorcycleRoutingError } from "./routing.service.js";
 
 const EARTH_RADIUS_KM = 6371.0088;
+const ARUA_LOCATION_BOUNDS = { minLatitude: 2.75, maxLatitude: 3.30, minLongitude: 30.55, maxLongitude: 31.25 };
+const MAX_RIDER_LOCATION_ACCURACY_METERS = 500;
+const LOCATION_STALE_AFTER_MS = Math.max(15, Number(process.env.LOCATION_STALE_AFTER_SECONDS ?? 45)) * 1000;
+
+type RiderLocationPoint = { latitude: number; longitude: number; accuracyMeters: number };
+
+function validateRiderLocation(point: RiderLocationPoint): void {
+  if (
+    !Number.isFinite(point.latitude) || !Number.isFinite(point.longitude) ||
+    point.latitude < ARUA_LOCATION_BOUNDS.minLatitude || point.latitude > ARUA_LOCATION_BOUNDS.maxLatitude ||
+    point.longitude < ARUA_LOCATION_BOUNDS.minLongitude || point.longitude > ARUA_LOCATION_BOUNDS.maxLongitude ||
+    !Number.isFinite(point.accuracyMeters) || point.accuracyMeters < 0 ||
+    point.accuracyMeters > MAX_RIDER_LOCATION_ACCURACY_METERS
+  ) {
+    throw new RideError(400, "INVALID_RIDER_LOCATION", "A valid, reasonably accurate GPS location inside the Arua pilot area is required.");
+  }
+}
+
+function isFreshAvailability(availability: { isOnline: boolean; lastSeenAt: Date | null; latitude: unknown; longitude: unknown; accuracyMeters: number | null } | null): boolean {
+  return Boolean(
+    availability?.isOnline && availability.lastSeenAt &&
+    Date.now() - availability.lastSeenAt.getTime() <= LOCATION_STALE_AFTER_MS &&
+    availability.latitude !== null && availability.longitude !== null &&
+    availability.accuracyMeters !== null && availability.accuracyMeters <= MAX_RIDER_LOCATION_ACCURACY_METERS
+  );
+}
+
+function dispatchRadiusKm(createdAt: Date, now = Date.now()): number {
+  const ageSeconds = Math.max(0, (now - createdAt.getTime()) / 1000);
+  if (ageSeconds < 60) return 5;
+  if (ageSeconds < 120) return 8;
+  return 12;
+}
 
 export class RideError extends Error {
   constructor(
@@ -233,49 +266,113 @@ export async function listRiderRides(userId: string) {
   });
 }
 
-export async function listAvailableRides(riderId: string) {
+async function assertApprovedRider(riderId: string, action: string): Promise<void> {
   const rider = await prisma.user.findUnique({
     where: { id: riderId },
-    select: {
-      isActive: true,
-      riderProfile: { select: { approvalStatus: true } }
-    }
+    select: { isActive: true, riderProfile: { select: { approvalStatus: true } } }
   });
-
   if (!rider || !rider.isActive || rider.riderProfile?.approvalStatus !== "APPROVED") {
-    throw new RideError(403, "RIDER_NOT_APPROVED", "Your rider account must be active and approved before viewing available rides.");
+    throw new RideError(403, "RIDER_NOT_APPROVED", `Your rider account must be active and approved before ${action}.`);
   }
+}
 
-  return prisma.rideRequest.findMany({
-    where: {
-      status: "PENDING",
-      riderId: null,
-      rejections: { none: { riderId } }
-    },
-    orderBy: { createdAt: "asc" },
-    include: {
-      customer: { select: { fullName: true } }
-    }
+export async function setRiderOnline(riderId: string, point: RiderLocationPoint) {
+  await assertApprovedRider(riderId, "going online");
+  validateRiderLocation(point);
+  const now = new Date();
+  return prisma.riderAvailability.upsert({
+    where: { riderId },
+    create: { riderId, isOnline: true, latitude: point.latitude, longitude: point.longitude, accuracyMeters: point.accuracyMeters, lastSeenAt: now },
+    update: { isOnline: true, latitude: point.latitude, longitude: point.longitude, accuracyMeters: point.accuracyMeters, lastSeenAt: now },
+    select: { isOnline: true, lastSeenAt: true }
   });
 }
 
-export async function acceptRide(riderId: string, rideId: string) {
-  const rider = await prisma.user.findUnique({
-    where: { id: riderId },
-    select: {
-      isActive: true,
-      riderProfile: { select: { approvalStatus: true } }
-    }
+export async function updateRiderAvailabilityLocation(riderId: string, point: RiderLocationPoint) {
+  await assertApprovedRider(riderId, "sharing availability");
+  validateRiderLocation(point);
+  const current = await prisma.riderAvailability.findUnique({ where: { riderId } });
+  if (!current?.isOnline) throw new RideError(409, "RIDER_NOT_ONLINE", "Go online before updating your rider location.");
+  const now = new Date();
+  return prisma.riderAvailability.update({
+    where: { riderId },
+    data: { latitude: point.latitude, longitude: point.longitude, accuracyMeters: point.accuracyMeters, lastSeenAt: now },
+    select: { isOnline: true, lastSeenAt: true }
   });
+}
 
-  if (!rider || !rider.isActive || rider.riderProfile?.approvalStatus !== "APPROVED") {
-    throw new RideError(403, "RIDER_NOT_APPROVED", "Your rider account must be active and approved before accepting rides.");
+export async function setRiderOffline(riderId: string) {
+  await prisma.riderAvailability.upsert({
+    where: { riderId },
+    create: { riderId, isOnline: false },
+    update: { isOnline: false, latitude: null, longitude: null, accuracyMeters: null, lastSeenAt: null }
+  });
+  return { isOnline: false };
+}
+
+export async function listAvailableRides(riderId: string) {
+  await assertApprovedRider(riderId, "viewing available rides");
+  const availability = await prisma.riderAvailability.findUnique({
+    where: { riderId },
+    select: { isOnline: true, latitude: true, longitude: true, accuracyMeters: true, lastSeenAt: true }
+  });
+  if (!isFreshAvailability(availability)) return [];
+
+  const rides = await prisma.rideRequest.findMany({
+    where: { status: "PENDING", riderId: null, rejections: { none: { riderId } } },
+    orderBy: { createdAt: "asc" },
+    include: { customer: { select: { fullName: true } } }
+  });
+  const riderPoint = { latitude: Number(availability!.latitude), longitude: Number(availability!.longitude) };
+  return rides.flatMap((ride) => {
+    const pickupDistanceKm = calculateStraightLineDistanceKm(riderPoint, {
+      latitude: Number(ride.pickupLatitude), longitude: Number(ride.pickupLongitude)
+    });
+    return pickupDistanceKm <= dispatchRadiusKm(ride.createdAt)
+      ? [{ ...ride, pickupDistanceKm: Math.round(pickupDistanceKm * 100) / 100 }]
+      : [];
+  }).sort((a, b) => a.pickupDistanceKm - b.pickupDistanceKm);
+}
+
+export async function acceptRide(riderId: string, rideId: string) {
+  await assertApprovedRider(riderId, "accepting rides");
+  const availability = await prisma.riderAvailability.findUnique({
+    where: { riderId },
+    select: { isOnline: true, latitude: true, longitude: true, accuracyMeters: true, lastSeenAt: true }
+  });
+  if (!isFreshAvailability(availability)) {
+    throw new RideError(403, "RIDER_NOT_ONLINE", "Go online and allow fresh location updates before accepting a ride.");
+  }
+  const rideRequest = await prisma.rideRequest.findFirst({
+    where: { id: rideId, status: "PENDING", riderId: null },
+    select: { id: true, pickupLatitude: true, pickupLongitude: true, createdAt: true }
+  });
+  if (!rideRequest) throw new RideError(409, "RIDE_ALREADY_ASSIGNED", "This ride is no longer available. Refresh the list to see other requests.");
+
+  const riderPoint = { latitude: Number(availability!.latitude), longitude: Number(availability!.longitude) };
+  const pickupPoint = { latitude: Number(rideRequest.pickupLatitude), longitude: Number(rideRequest.pickupLongitude) };
+  const pickupDistanceKm = calculateStraightLineDistanceKm(riderPoint, pickupPoint);
+  if (pickupDistanceKm > dispatchRadiusKm(rideRequest.createdAt)) {
+    throw new RideError(403, "RIDE_OUTSIDE_MATCHING_AREA", "This ride is outside your current matching area. Refresh to see nearby requests.");
+  }
+
+  let riderArrivalEstimateMinutes: number | null = null;
+  try {
+    const arrivalRoute = await getMotorcycleRoute(riderPoint, pickupPoint);
+    riderArrivalEstimateMinutes = Math.max(1, Math.ceil(arrivalRoute.durationSeconds / 60));
+  } catch {
+    // A rider can still accept if routing is unavailable; the customer will not see an invented ETA.
   }
 
   return prisma.$transaction(async (tx) => {
+    const acceptedAt = new Date();
     const claimed = await tx.rideRequest.updateMany({
       where: { id: rideId, status: "PENDING", riderId: null },
-      data: { riderId, status: "ACCEPTED", acceptedAt: new Date() }
+      data: {
+        riderId, status: "ACCEPTED", acceptedAt,
+        riderArrivalEstimateMinutes,
+        riderArrivalEstimateUpdatedAt: riderArrivalEstimateMinutes === null ? null : acceptedAt
+      }
     });
 
     if (claimed.count !== 1) {

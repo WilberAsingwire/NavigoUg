@@ -39,6 +39,9 @@ type Ride = {
   fareAmountUgx: number;
   estimatedDistanceKm: number | string | null;
   createdAt: string;
+  pickupDistanceKm?: number | null;
+  riderArrivalEstimateMinutes?: number | null;
+  riderArrivalEstimateUpdatedAt?: string | null;
   customer?: { fullName: string } | null;
   rider?: {
     fullName: string;
@@ -173,9 +176,9 @@ type Props = {
 
 const API_BASE_URL = "https://navigou-api-2978.onrender.com";
 const STATUS_LABELS: Record<string, string> = {
-  PENDING: "Looking for a rider",
-  ACCEPTED: "Rider assigned",
-  ARRIVED_AT_PICKUP: "Rider at pickup",
+  PENDING: "Finding a nearby rider",
+  ACCEPTED: "Your rider is on the way",
+  ARRIVED_AT_PICKUP: "Your rider has arrived",
   IN_PROGRESS: "Trip in progress",
   COMPLETED: "Trip completed",
   CANCELLED: "Cancelled",
@@ -670,9 +673,11 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
   const [selectedDestinationSearchQuery, setSelectedDestinationSearchQuery] = useState("");
   const [rides, setRides] = useState<Ride[]>([]);
   const [availableRides, setAvailableRides] = useState<Ride[]>([]);
+  const [riderOnline, setRiderOnline] = useState(false);
   const [availableParcels, setAvailableParcels] = useState<RiderParcel[]>([]);
   const [assignedParcels, setAssignedParcels] = useState<RiderParcel[]>([]);
   const [sentParcels, setSentParcels] = useState<RiderParcel[]>([]);
+  const hasActiveCustomerRides = isCustomer && rides.some((ride) => !["COMPLETED", "CANCELLED", "EXPIRED"].includes(ride.status));
   const [parcelCodeInputs, setParcelCodeInputs] = useState<Record<string, string>>({});
   const [ridePaymentReferences, setRidePaymentReferences] = useState<Record<string, string>>({});
   const [parcelPaymentReferences, setParcelPaymentReferences] = useState<Record<string, string>>({});
@@ -741,8 +746,12 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
       const mine = await apiRequest<{ data: Ride[] }>("/api/v1/rides/mine", activeSession.accessToken, undefined, refreshAccessToken);
       setRides(mine.data ?? []);
       if (isApprovedRider) {
-        const available = await apiRequest<{ data: Ride[] }>("/api/v1/rides/available", activeSession.accessToken, undefined, refreshAccessToken);
-        setAvailableRides(available.data ?? []);
+        if (riderOnline) {
+          const available = await apiRequest<{ data: Ride[] }>("/api/v1/rides/available", activeSession.accessToken, undefined, refreshAccessToken);
+          setAvailableRides(available.data ?? []);
+        } else {
+          setAvailableRides([]);
+        }
         const [parcelQueue, myParcels] = await Promise.all([
           apiRequest<{ data: RiderParcel[] }>("/api/v1/parcels/available", activeSession.accessToken, undefined, refreshAccessToken),
           apiRequest<{ data: RiderParcel[] }>("/api/v1/parcels/mine", activeSession.accessToken, undefined, refreshAccessToken)
@@ -766,11 +775,41 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
     } finally {
       setLoading(false);
     }
-  }, [activeSession.accessToken, session.user.role, isApprovedRider, adminRiderFilter, refreshAccessToken]);
+  }, [activeSession.accessToken, session.user.role, isApprovedRider, riderOnline, adminRiderFilter, refreshAccessToken]);
+
+  const refreshAvailableRides = useCallback(async () => {
+    if (!isApprovedRider || !riderOnline) return;
+    try {
+      const available = await apiRequest<{ data: Ride[] }>("/api/v1/rides/available", activeSession.accessToken, undefined, refreshAccessToken);
+      setAvailableRides(available.data ?? []);
+    } catch {
+      // Keep the last confirmed queue visible; the next poll will retry.
+    }
+  }, [isApprovedRider, riderOnline, activeSession.accessToken, refreshAccessToken]);
+
+  useEffect(() => { void loadDashboard(); }, [loadDashboard]);
 
   useEffect(() => {
-    void loadDashboard();
-  }, [loadDashboard]);
+    if (!isApprovedRider || !riderOnline) return undefined;
+    void refreshAvailableRides();
+    const timer = setInterval(() => void refreshAvailableRides(), 10_000);
+    return () => clearInterval(timer);
+  }, [isApprovedRider, riderOnline, refreshAvailableRides]);
+
+  useEffect(() => {
+    if (!hasActiveCustomerRides) return undefined;
+    let disposed = false;
+    const refreshCustomerRides = async () => {
+      try {
+        const result = await apiRequest<{ data: Ride[] }>("/api/v1/rides/mine", activeSession.accessToken, undefined, refreshAccessToken);
+        if (!disposed) setRides(result.data ?? []);
+      } catch {
+        // Continue showing the last server-confirmed state when temporarily offline.
+      }
+    };
+    const timer = setInterval(() => void refreshCustomerRides(), 8_000);
+    return () => { disposed = true; clearInterval(timer); };
+  }, [hasActiveCustomerRides, activeSession.accessToken, refreshAccessToken]);
 
   useEffect(() => {
     if (!isCustomer) return undefined;
@@ -866,6 +905,36 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
     }
   }, [isCustomer]);
 
+  async function toggleRiderAvailability() {
+    setWorking(true);
+    setError("");
+    setMessage("");
+    try {
+      if (riderOnline) {
+        await apiRequest("/api/v1/rides/availability/offline", activeSession.accessToken, { method: "POST" }, refreshAccessToken);
+        setRiderOnline(false);
+        setAvailableRides([]);
+        setMessage("You are offline. NAVIGO will no longer send nearby ride requests to this device.");
+      } else {
+        const permission = await Location.requestForegroundPermissionsAsync();
+        if (permission.status !== "granted") throw new Error("Allow location access while using NAVIGO to receive nearby ride requests.");
+        const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Highest, mayShowUserSettingsDialog: true });
+        const accuracyMeters = position.coords.accuracy;
+        if (accuracyMeters === null || accuracyMeters > 500) throw new Error("Your GPS accuracy is too low. Move to an open area and try going online again.");
+        await apiRequest("/api/v1/rides/availability/online", activeSession.accessToken, {
+          method: "POST",
+          body: JSON.stringify({ latitude: position.coords.latitude, longitude: position.coords.longitude, accuracyMeters })
+        }, refreshAccessToken);
+        setRiderOnline(true);
+        setMessage("You are online. NAVIGO will show you ride requests near your current location.");
+      }
+    } catch (availabilityError) {
+      setError(availabilityError instanceof Error ? availabilityError.message : "Unable to update your rider availability.");
+    } finally {
+      setWorking(false);
+    }
+  }
+
   async function getFareEstimate() {
     setWorking(true);
     setError("");
@@ -900,7 +969,7 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
         method: "POST",
         body: JSON.stringify({ ...locations, paymentMethod })
       }, refreshAccessToken);
-      setMessage("Your ride request has been sent. We'll show it here as soon as a rider accepts.");
+      setMessage("Your request is in. NAVIGO is finding a nearby rider. Follow the progress under My rides.");
       setQuote(null);
       setLocations(null);
       setPickup("");
@@ -1087,6 +1156,43 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
       setWorking(false);
     }
   }
+
+  useEffect(() => {
+    if (!isApprovedRider || !riderOnline || AppState.currentState !== "active") return undefined;
+    let disposed = false;
+    let subscription: Location.LocationSubscription | null = null;
+    const startAvailabilityWatcher = async () => {
+      const permission = await Location.getForegroundPermissionsAsync();
+      if (permission.status !== "granted") return;
+      try {
+        const watcher = await Location.watchPositionAsync({ accuracy: Location.Accuracy.Highest, timeInterval: 10_000, distanceInterval: 12 }, (position) => {
+          const accuracyMeters = position.coords.accuracy;
+          if (accuracyMeters === null || accuracyMeters > 500) return;
+          void apiRequest("/api/v1/rides/availability/location", activeSession.accessToken, {
+            method: "POST",
+            body: JSON.stringify({ latitude: position.coords.latitude, longitude: position.coords.longitude, accuracyMeters })
+          }, refreshAccessToken).catch(() => undefined);
+        });
+        if (disposed) watcher.remove(); else subscription = watcher;
+      } catch {
+        // Stale server-side location will remove this rider from matching if GPS stops.
+      }
+    };
+    void startAvailabilityWatcher();
+    return () => { disposed = true; subscription?.remove(); };
+  }, [isApprovedRider, riderOnline, activeSession.accessToken, refreshAccessToken]);
+
+  useEffect(() => {
+    if (!isApprovedRider || !riderOnline) return undefined;
+    const subscription = AppState.addEventListener("change", (nextState) => {
+      if (nextState !== "active") {
+        setRiderOnline(false);
+        setAvailableRides([]);
+        void apiRequest("/api/v1/rides/availability/offline", activeSession.accessToken, { method: "POST" }, refreshAccessToken).catch(() => undefined);
+      }
+    });
+    return () => subscription.remove();
+  }, [isApprovedRider, riderOnline, activeSession.accessToken, refreshAccessToken]);
 
   useEffect(() => {
     if (!isApprovedRider || !trackingParcelIds.length || AppState.currentState !== "active") {
@@ -1619,12 +1725,21 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
               </View>
             ) : (
               <>
+                <View style={styles.trackingControlPanel}>
+                  <Text style={styles.sectionTitle}>Rider availability</Text>
+                  <Text style={styles.trackingPrivacyText}>
+                    {riderOnline
+                      ? "You are visible to NAVIGO for nearby ride matching while this app stays open. Your location is used for matching and is not shown to customers before you accept a ride."
+                      : "Go online when you are ready to receive ride requests near your current location. Location access is used only while you are online."}
+                  </Text>
+                  <PrimaryButton label={riderOnline ? "Go offline" : "Go online"} loading={working} onPress={toggleRiderAvailability} disabled={working} />
+                </View>
                 <View style={styles.heroCard}>
                   <Text style={styles.heroEyebrow}>RIDER REQUESTS</Text>
-                  <Text style={styles.heroTitle}>Find your next ride.</Text>
-                  <Text style={styles.heroText}>Review pending customer requests and accept a ride when you are ready.</Text>
+                  <Text style={styles.heroTitle}>{riderOnline ? "Nearby rides." : "Ready for your next ride?"}</Text>
+                  <Text style={styles.heroText}>{riderOnline ? "Ride requests are matched to your fresh location and shown nearest first." : "Go online to receive ride requests close to you."}</Text>
                 </View>
-                <SectionHeader title="Available rides" onRefresh={loadDashboard} loading={loading} />
+                <SectionHeader title="Nearby rides" onRefresh={loadDashboard} loading={loading} />
                 {availableRides.length ? availableRides.map((ride) => (
                   <RideCard
                     key={ride.id}
@@ -1633,7 +1748,10 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
                     riderView
                     onAccept={() => performRideAction(ride.id, "accept")}
                   />
-                )) : <EmptyState title="No available rides" text="New customer requests will appear here. Pull to refresh or tap refresh." />}
+                )) : <EmptyState
+                  title={riderOnline ? "No nearby rides yet" : "You are offline"}
+                  text={riderOnline ? "There are no ride requests within your current matching area. NAVIGO will keep checking for nearby requests." : "Go online to see ride requests near your current location."}
+                />}
 
                 <SectionHeader title="Available item deliveries" onRefresh={loadDashboard} loading={loading} />
                 {availableParcels.length ? availableParcels.map((parcel) => (
@@ -2073,7 +2191,7 @@ function RideCard({
   return (
     <View style={styles.rideCard}>
       <View style={styles.rideTopRow}>
-        <Text style={styles.rideStatus}>{STATUS_LABELS[ride.status] ?? ride.status}</Text>
+        <Text style={styles.rideStatus}>{riderView && ride.status === "PENDING" ? "Nearby ride request" : (STATUS_LABELS[ride.status] ?? ride.status)}</Text>
         <Text style={styles.rideFare}>{money(ride.fareAmountUgx)}</Text>
       </View>
       <View style={styles.routeRow}>
@@ -2111,6 +2229,22 @@ function RideCard({
           <Text style={styles.rideMeta}>{ride.rider.phone}{ride.rider.riderProfile?.motorcyclePlate ? ` • ${ride.rider.riderProfile.motorcyclePlate}` : ""}</Text>
         </View>
       ) : null}
+      {customerView && ride.status === "PENDING" ? (
+        <View style={styles.trackingPanel}>
+          <Text style={styles.trackingStatusText}>Finding a nearby rider</Text>
+          <Text style={styles.trackingPrivacyText}>NAVIGO is matching your pickup location with approved riders nearby. This request is sent only to riders within the current matching area.</Text>
+        </View>
+      ) : null}
+      {customerView && ride.status === "ACCEPTED" ? (
+        <View style={styles.trackingPanel}>
+          <Text style={styles.trackingStatusText}>Your rider is confirmed and on the way.</Text>
+          {typeof ride.riderArrivalEstimateMinutes === "number"
+            ? <Text style={styles.assignedName}>Estimated arrival: about {ride.riderArrivalEstimateMinutes} minute{ride.riderArrivalEstimateMinutes === 1 ? "" : "s"}</Text>
+            : <Text style={styles.trackingPrivacyText}>Your rider has accepted the request. An arrival estimate is not available right now.</Text>}
+          <Text style={styles.trackingPrivacyText}>This is an estimate based on the motorcycle route and may change with road conditions or delays.</Text>
+        </View>
+      ) : null}
+      {riderView && typeof ride.pickupDistanceKm === "number" ? <Text style={styles.rideMeta}>Pickup is about {ride.pickupDistanceKm.toFixed(1)} km away in a straight line</Text> : null}
       {riderView && ride.customer ? <Text style={styles.rideMeta}>Customer: {ride.customer.fullName}</Text> : null}
       {onAccept ? <PrimaryButton label="Accept this ride" loading={busy} onPress={onAccept} disabled={busy} /> : null}
       {onAdvance ? <PrimaryButton label={nextLabel[ride.status] ?? "Update ride"} loading={busy} onPress={onAdvance} disabled={busy} /> : null}

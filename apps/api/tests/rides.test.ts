@@ -7,6 +7,10 @@ const mocks = vi.hoisted(() => ({
   landmarkFindMany: vi.fn(),
   landmarkFareFindFirst: vi.fn(),
   userFindUnique: vi.fn(),
+  availabilityFindUnique: vi.fn(),
+  availabilityUpsert: vi.fn(),
+  availabilityUpdate: vi.fn(),
+  rideFindFirst: vi.fn(),
   rideCreate: vi.fn(),
   rideFindMany: vi.fn(),
   rideFindUnique: vi.fn(),
@@ -24,9 +28,15 @@ vi.mock("../src/lib/prisma.js", () => ({
     landmark: { findMany: mocks.landmarkFindMany },
     landmarkFare: { findFirst: mocks.landmarkFareFindFirst },
     user: { findUnique: mocks.userFindUnique },
+    riderAvailability: {
+      findUnique: mocks.availabilityFindUnique,
+      upsert: mocks.availabilityUpsert,
+      update: mocks.availabilityUpdate
+    },
     rideRequest: {
       create: mocks.rideCreate,
       findMany: mocks.rideFindMany,
+      findFirst: mocks.rideFindFirst,
       findUnique: mocks.rideFindUnique,
       updateMany: mocks.rideUpdateMany
     },
@@ -77,6 +87,8 @@ const route = {
 describe("Motorcycle ride API", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.availabilityFindUnique.mockResolvedValue(null);
+    mocks.availabilityUpsert.mockResolvedValue({ isOnline: true, lastSeenAt: new Date() });
     mocks.getMotorcycleRoute.mockResolvedValue({
       distanceKm: 2.5,
       durationSeconds: 420,
@@ -274,6 +286,82 @@ describe("Motorcycle ride API", () => {
       data: expect.objectContaining({ status: "PAID", recordedById: "7b6bce6e-9d14-4b11-9f0e-0e8e9408e8e4", transactionReference: "MM123456" })
     }));
     expect(mocks.auditLogCreate).toHaveBeenCalled();
+  });
+
+  it("requires an approved rider and a valid Arua GPS fix to go online", async () => {
+    const token = await accessToken("RIDER");
+    mocks.userFindUnique.mockResolvedValue({ isActive: true, riderProfile: { approvalStatus: "APPROVED" } });
+    const response = await request(app).post("/api/v1/rides/availability/online")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ latitude: 3.02, longitude: 30.91, accuracyMeters: 15 });
+    expect(response.status).toBe(200);
+    expect(mocks.availabilityUpsert).toHaveBeenCalledWith(expect.objectContaining({
+      where: { riderId: "7b6bce6e-9d14-4b11-9f0e-0e8e9408e8e4" },
+      create: expect.objectContaining({ isOnline: true, latitude: 3.02, longitude: 30.91 })
+    }));
+  });
+
+  it("rejects inaccurate rider GPS fixes", async () => {
+    const token = await accessToken("RIDER");
+    const response = await request(app).post("/api/v1/rides/availability/online")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ latitude: 3.02, longitude: 30.91, accuracyMeters: 900 });
+    expect(response.status).toBe(400);
+    expect(response.body.error.code).toBe("INVALID_RIDER_LOCATION");
+  });
+
+  it("returns nearby ride requests nearest first to a fresh online rider", async () => {
+    const token = await accessToken("RIDER");
+    const now = new Date();
+    mocks.userFindUnique.mockResolvedValue({ isActive: true, riderProfile: { approvalStatus: "APPROVED" } });
+    mocks.availabilityFindUnique.mockResolvedValue({ isOnline: true, latitude: 3.02, longitude: 30.91, accuracyMeters: 10, lastSeenAt: now });
+    mocks.rideFindMany.mockResolvedValue([
+      { id: "farther", pickupLatitude: 3.025, pickupLongitude: 30.915, createdAt: now },
+      { id: "nearest", pickupLatitude: 3.0205, pickupLongitude: 30.9105, createdAt: now },
+      { id: "outside", pickupLatitude: 3.15, pickupLongitude: 30.91, createdAt: now }
+    ]);
+    const response = await request(app).get("/api/v1/rides/available").set("Authorization", `Bearer ${token}`);
+    expect(response.status).toBe(200);
+    expect(response.body.data.map((ride: { id: string }) => ride.id)).toEqual(["nearest", "farther"]);
+    expect(response.body.data[0].pickupDistanceKm).toBeLessThan(response.body.data[1].pickupDistanceKm);
+  });
+
+  it("returns an empty queue when the rider is offline", async () => {
+    const token = await accessToken("RIDER");
+    mocks.userFindUnique.mockResolvedValue({ isActive: true, riderProfile: { approvalStatus: "APPROVED" } });
+    mocks.availabilityFindUnique.mockResolvedValue({ isOnline: false, latitude: 3.02, longitude: 30.91, accuracyMeters: 10, lastSeenAt: new Date() });
+    const response = await request(app).get("/api/v1/rides/available").set("Authorization", `Bearer ${token}`);
+    expect(response.status).toBe(200);
+    expect(response.body.data).toEqual([]);
+    expect(mocks.rideFindMany).not.toHaveBeenCalled();
+  });
+
+  it("prevents an offline rider from accepting a ride", async () => {
+    const token = await accessToken("RIDER");
+    mocks.userFindUnique.mockResolvedValue({ isActive: true, riderProfile: { approvalStatus: "APPROVED" } });
+    mocks.availabilityFindUnique.mockResolvedValue(null);
+    const response = await request(app).post("/api/v1/rides/9d530def-28a0-4c1d-8c2e-6ffbaed03ec3/accept")
+      .set("Authorization", `Bearer ${token}`).send({});
+    expect(response.status).toBe(403);
+    expect(response.body.error.code).toBe("RIDER_NOT_ONLINE");
+    expect(mocks.transaction).not.toHaveBeenCalled();
+  });
+
+  it("stores an arrival estimate when an online nearby rider accepts", async () => {
+    const token = await accessToken("RIDER");
+    const rideId = "9d530def-28a0-4c1d-8c2e-6ffbaed03ec3";
+    const now = new Date();
+    mocks.userFindUnique.mockResolvedValue({ isActive: true, riderProfile: { approvalStatus: "APPROVED" } });
+    mocks.availabilityFindUnique.mockResolvedValue({ isOnline: true, latitude: 3.02, longitude: 30.91, accuracyMeters: 10, lastSeenAt: now });
+    mocks.rideFindFirst.mockResolvedValue({ id: rideId, pickupLatitude: 3.0205, pickupLongitude: 30.9105, createdAt: now });
+    mocks.rideUpdateMany.mockResolvedValue({ count: 1 });
+    mocks.rideFindUnique.mockResolvedValue({ id: rideId, status: "ACCEPTED", riderArrivalEstimateMinutes: 7 });
+    mocks.rideHistoryCreate.mockResolvedValue({});
+    const response = await request(app).post(`/api/v1/rides/${rideId}/accept`).set("Authorization", `Bearer ${token}`).send({});
+    expect(response.status).toBe(200);
+    expect(mocks.rideUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ status: "ACCEPTED", riderArrivalEstimateMinutes: 7 })
+    }));
   });
 
   it("does not allow ride payment recording before the trip is completed", async () => {
