@@ -1684,7 +1684,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
           <>
             {mainTab === "home" ? (
               <>
-            <View style={[styles.customerMapFrame, { height: pickup.trim() && destination.trim() ? Math.min(Dimensions.get("window").height * 0.46, 390) : 230 }]}>
+            <View style={[styles.customerMapFrame, { height: activeLocationField !== null ? 0 : pickup.trim() && destination.trim() ? Math.min(Dimensions.get("window").height * 0.46, 390) : 230 }]}>
               <MapView
                 ref={customerMapRef}
                 style={[styles.customerMap, { opacity: customerMapLoaded ? 1 : 0 }]}
@@ -1747,7 +1747,8 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                 </TouchableOpacity>
               ) : null}
             </View>
-            <Animated.View style={[styles.customerMapSheet, { height: mapSheetHeight }]}>
+            <Animated.View style={[styles.customerMapSheet, activeLocationField !== null ? styles.customerMapSearchSheet : null, { height: mapSheetHeight }]}>
+              {activeLocationField === null ? (
               <View style={styles.mapSheetDragArea} {...mapSheetPanResponder.panHandlers}>
                 <View style={styles.mapSheetGrip} />
                 <TouchableOpacity style={styles.mapSheetWhereTo} onPress={() => setMapSheetExpanded((expanded) => !expanded)}>
@@ -1757,8 +1758,16 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                   </Text>
                 </TouchableOpacity>
               </View>
+              ) : (
+                <View style={styles.locationSearchHeader}>
+                  <TouchableOpacity accessibilityRole="button" accessibilityLabel="Back to booking map" style={styles.locationSearchBackButton} onPress={() => { setActiveLocationField(null); Keyboard.dismiss(); }}>
+                    <Text style={styles.locationSearchBackText}>‹</Text>
+                  </TouchableOpacity>
+                  <Text style={styles.locationSearchTitle}>Pickup & Drop Off</Text>
+                </View>
+              )}
               <ScrollView style={styles.mapSheetScroll} contentContainerStyle={styles.mapSheetContent} keyboardShouldPersistTaps="handled" nestedScrollEnabled showsVerticalScrollIndicator={false}>
-            <View style={styles.serviceHeading}>
+            {activeLocationField === null ? <View style={styles.serviceHeading}>
               <Text style={styles.serviceHeadingTitle}>Where can we help you go?</Text>
               <Text style={styles.serviceHeadingSubtitle}>Choose a service</Text>
             </View>
@@ -1773,12 +1782,12 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                 <Text style={styles.serviceTitle}>Send an Item</Text>
                 <Text style={styles.serviceDescription}>Pickup and delivery</Text>
               </TouchableOpacity>
-            </View>
+            </View> : null}
 
 
             {tab === "parcel" ? (
               <View style={styles.card}>
-                <Text style={styles.cardTitle}>Send an item</Text>
+                {activeLocationField === null ? <Text style={styles.cardTitle}>Send an item</Text> : null}
                 <Text style={styles.bodyText}>We'll collect your item and deliver it to the person you choose.</Text>
                 {createdParcel ? (
                   <View style={styles.codePanel}>
@@ -1794,6 +1803,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                   <>
                     <Text style={styles.label}>Pickup location</Text>
                     <TextInput style={styles.addressInput} value={pickup} onFocus={() => setActiveLocationField("pickup")} onChangeText={(value) => { setPickup(value); setSelectedPickupLocation(null); setSelectedPickupSearchQuery(""); setParcelQuote(null); setParcelLocations(null); }} placeholder="Where should we collect the item?" placeholderTextColor="#98A2B3" />
+                    {activeLocationField === "pickup" ? <TouchableOpacity style={styles.locationSearchLocationAction} onPress={() => void detectPickupLocation(true)}><Text style={styles.locationSearchLocationActionText}>◎  Use current location</Text></TouchableOpacity> : null}
                     <LocationSuggestions visible={activeLocationField === "pickup"} query={pickup} onSelect={(suggestion) => { setPickup(suggestion.label); setSelectedPickupLocation(suggestion.latitude !== undefined && suggestion.longitude !== undefined ? { latitude: suggestion.latitude, longitude: suggestion.longitude, description: suggestion.label } : null); setSelectedPickupSearchQuery(suggestion.searchQuery ?? ""); setActiveLocationField(null); setParcelQuote(null); setParcelLocations(null); }} />
                     <Text style={styles.label}>Delivery location</Text>
                     <TextInput style={styles.addressInput} value={destination} onFocus={() => setActiveLocationField("destination")} onChangeText={(value) => { setDestination(value); setSelectedDestinationLocation(null); setSelectedDestinationSearchQuery(""); setParcelQuote(null); setParcelLocations(null); }} placeholder="Where should we deliver it?" placeholderTextColor="#98A2B3" />
@@ -1845,7 +1855,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
 
             ) : (
               <View style={styles.card}>
-                <Text style={styles.cardTitle}>Plan your trip</Text>
+                {activeLocationField === null ? <Text style={styles.cardTitle}>Plan your trip</Text> : null}
                 <Text style={styles.label}>Pickup location</Text>
                 <TextInput
                   style={styles.addressInput}
@@ -1861,6 +1871,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                   placeholder="e.g. Muni University or Arua Main Market"
                   placeholderTextColor="#98A2B3"
                 />
+                {activeLocationField === "pickup" ? <TouchableOpacity style={styles.locationSearchLocationAction} onPress={() => void detectPickupLocation(true)}><Text style={styles.locationSearchLocationActionText}>◎  Use current location</Text></TouchableOpacity> : null}
                 <LocationSuggestions
                   visible={activeLocationField === "pickup"}
                   query={pickup}
@@ -2342,7 +2353,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
           </>
         ) : null}
       </ScrollView>
-      {(activeSession.user.role === "CUSTOMER" || activeSession.user.role === "RIDER") && !(isCustomer && keyboardVisible) ? (
+      {(activeSession.user.role === "CUSTOMER" || activeSession.user.role === "RIDER") && !(isCustomer && (keyboardVisible || activeLocationField !== null)) ? (
         <BottomNavigation role={activeSession.user.role} activeTab={mainTab} onChange={(nextTab) => {
           setMainTab(nextTab);
           if (nextTab === "home" && activeSession.user.role === "CUSTOMER") setTab("book");
@@ -3515,6 +3526,13 @@ const baseStyles = StyleSheet.create({
   mapHomePage: { flexGrow: 1, paddingHorizontal: 0, paddingTop: 0, paddingBottom: 0 },
   customerMapFrame: { height: Dimensions.get("window").height - 88, borderRadius: 0, overflow: "hidden", marginBottom: 0, marginHorizontal: 0, marginTop: 0, borderWidth: 0, backgroundColor: "#E9F0F5", position: "relative" },
   customerMapSheet: { position: "relative", backgroundColor: "#FFFFFF", borderRadius: 18, overflow: "hidden", elevation: 3, shadowColor: "#102A43", shadowOpacity: 0.08, shadowRadius: 8, marginTop: 12, marginHorizontal: 12, marginBottom: 16 },
+  customerMapSearchSheet: { marginTop: 0, marginHorizontal: 0, marginBottom: 0, borderRadius: 0, elevation: 0, shadowOpacity: 0 },
+  locationSearchHeader: { minHeight: 58, flexDirection: "row", alignItems: "center", justifyContent: "center", paddingHorizontal: 16, borderBottomWidth: 1, borderBottomColor: "#E5EAF0", backgroundColor: "#FFFFFF" },
+  locationSearchBackButton: { position: "absolute", left: 14, top: 4, width: 42, height: 50, justifyContent: "center" },
+  locationSearchBackText: { color: "#174A72", fontSize: 34, lineHeight: 38, fontWeight: "400" },
+  locationSearchTitle: { color: "#182230", fontSize: 16, fontWeight: "800" },
+  locationSearchLocationAction: { minHeight: 42, justifyContent: "center", paddingHorizontal: 4, marginTop: 4, marginBottom: 4 },
+  locationSearchLocationActionText: { color: "#174A72", fontSize: 12, fontWeight: "800" },
   mapSheetDragArea: { paddingTop: 10, paddingHorizontal: 16, paddingBottom: 10 },
   mapSheetGrip: { alignSelf: "center", width: 42, height: 5, borderRadius: 3, backgroundColor: "#C8D0D8", marginBottom: 11 },
   mapSheetWhereTo: { minHeight: 54, borderRadius: 14, backgroundColor: "#F4F6F8", paddingHorizontal: 15, paddingVertical: 9, justifyContent: "center" },
