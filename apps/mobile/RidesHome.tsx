@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import * as SecureStore from "expo-secure-store";
 import * as Location from "expo-location";
 import {
+  AppState,
   ActivityIndicator,
   SafeAreaView,
   ScrollView,
@@ -117,6 +118,23 @@ type RiderParcel = {
   payment?: { method: PaymentMethod; status: "UNPAID" | "PAID" } | null;
   history?: { id: string; fromStatus: string | null; toStatus: string; note?: string | null; createdAt: string }[];
 };
+
+type ParcelTracking = {
+  parcelId: string;
+  status: string;
+  pickup: RouteCoordinate;
+  destination: RouteCoordinate;
+  rider: (RouteCoordinate & { accuracyMeters: number; updatedAt: string }) | null;
+  sharingEnabled: boolean;
+};
+
+const ACTIVE_TRACKING_STATUSES = [
+  "ACCEPTED",
+  "ARRIVED_AT_PICKUP",
+  "COLLECTED",
+  "IN_TRANSIT",
+  "ARRIVED_AT_DESTINATION"
+];
 
 
 type Props = {
@@ -628,6 +646,8 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
   const [assignedParcels, setAssignedParcels] = useState<RiderParcel[]>([]);
   const [sentParcels, setSentParcels] = useState<RiderParcel[]>([]);
   const [parcelCodeInputs, setParcelCodeInputs] = useState<Record<string, string>>({});
+  const [parcelTrackings, setParcelTrackings] = useState<Record<string, ParcelTracking>>({});
+  const [trackingParcelIds, setTrackingParcelIds] = useState<string[]>([]);
   const [parcelSize, setParcelSize] = useState<ParcelSize>("SMALL");
   const [recipientName, setRecipientName] = useState("");
   const [recipientPhone, setRecipientPhone] = useState("");
@@ -694,6 +714,49 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
   useEffect(() => {
     void loadDashboard();
   }, [loadDashboard]);
+
+  useEffect(() => {
+    if (!isCustomer) return undefined;
+    const activeParcels = sentParcels.filter((parcel) =>
+      ACTIVE_TRACKING_STATUSES.includes(parcel.status) && Boolean(parcel.rider)
+    );
+    let disposed = false;
+
+    const refreshTracking = async () => {
+      const results = await Promise.all(activeParcels.map(async (parcel) => {
+        try {
+          const response = await apiRequest<{ data: ParcelTracking }>(
+            `/api/v1/parcels/${parcel.id}/tracking`,
+            activeSession.accessToken,
+            undefined,
+            refreshAccessToken
+          );
+          return [parcel.id, response.data] as const;
+        } catch {
+          return null;
+        }
+      }));
+      if (disposed) return;
+      setParcelTrackings((current) => {
+        const next: Record<string, ParcelTracking> = {};
+        for (const result of results) {
+          if (result) next[result[0]] = result[1];
+        }
+        return next;
+      });
+    };
+
+    if (activeParcels.length) {
+      void refreshTracking();
+      const timer = setInterval(() => void refreshTracking(), 10_000);
+      return () => {
+        disposed = true;
+        clearInterval(timer);
+      };
+    }
+    setParcelTrackings({});
+    return () => { disposed = true; };
+  }, [isCustomer, sentParcels, activeSession.accessToken, refreshAccessToken]);
 
   const detectPickupLocation = useCallback(async (allowReplace = false) => {
     setLocationStatus("locating");
@@ -878,6 +941,147 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
       setWorking(false);
     }
   }
+
+  async function startParcelLocationSharing(parcelId: string) {
+    setWorking(true);
+    setError("");
+    setMessage("");
+    try {
+      const permission = await Location.requestForegroundPermissionsAsync();
+      if (permission.status !== "granted") {
+        throw new Error("Allow location access to share your live position with the item sender.");
+      }
+
+      const position = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Highest,
+        mayShowUserSettingsDialog: true
+      });
+      const accuracyMeters = position.coords.accuracy;
+      if (accuracyMeters === null || accuracyMeters > 500) {
+        throw new Error("Your GPS accuracy is too low. Move to an open area and try again.");
+      }
+
+      await apiRequest(`/api/v1/parcels/${parcelId}/tracking/start`, activeSession.accessToken, {
+        method: "POST"
+      }, refreshAccessToken);
+      await apiRequest(`/api/v1/parcels/${parcelId}/tracking/location`, activeSession.accessToken, {
+        method: "POST",
+        body: JSON.stringify({
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+          accuracyMeters
+        })
+      }, refreshAccessToken);
+
+      setTrackingParcelIds((current) => current.includes(parcelId) ? current : [...current, parcelId]);
+      setMessage("Live location sharing is on. The sender can see your recent location while the app is open.");
+    } catch (trackingError) {
+      try {
+        await apiRequest(`/api/v1/parcels/${parcelId}/tracking/stop`, activeSession.accessToken, {
+          method: "POST"
+        }, refreshAccessToken);
+      } catch {
+        // The server's two-minute freshness limit prevents an old point from appearing as live.
+      }
+      setError(trackingError instanceof Error ? trackingError.message : "Unable to start live location sharing.");
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function stopParcelLocationSharing(parcelId: string) {
+    setWorking(true);
+    setError("");
+    try {
+      await apiRequest(`/api/v1/parcels/${parcelId}/tracking/stop`, activeSession.accessToken, {
+        method: "POST"
+      }, refreshAccessToken);
+      setTrackingParcelIds((current) => current.filter((id) => id !== parcelId));
+      setMessage("Live location sharing has stopped.");
+    } catch (trackingError) {
+      setError(trackingError instanceof Error ? trackingError.message : "Unable to stop location sharing.");
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!isApprovedRider || !trackingParcelIds.length || AppState.currentState !== "active") {
+      return undefined;
+    }
+
+    let disposed = false;
+    const subscriptions: Location.LocationSubscription[] = [];
+
+    const startWatchers = async () => {
+      const permission = await Location.getForegroundPermissionsAsync();
+      if (permission.status !== "granted") return;
+
+      for (const parcelId of trackingParcelIds) {
+        try {
+          const subscription = await Location.watchPositionAsync({
+            accuracy: Location.Accuracy.Highest,
+            timeInterval: 10_000,
+            distanceInterval: 12
+          }, (position) => {
+            const accuracyMeters = position.coords.accuracy;
+            if (accuracyMeters === null || accuracyMeters > 500) return;
+            void apiRequest(`/api/v1/parcels/${parcelId}/tracking/location`, activeSession.accessToken, {
+              method: "POST",
+              body: JSON.stringify({
+                latitude: position.coords.latitude,
+                longitude: position.coords.longitude,
+                accuracyMeters
+              })
+            }, refreshAccessToken).catch(() => undefined);
+          });
+
+          if (disposed) subscription.remove();
+          else subscriptions.push(subscription);
+        } catch {
+          // A failed watcher does not invent a position; the sender sees the last fresh point only.
+        }
+      }
+    };
+
+    void startWatchers();
+    return () => {
+      disposed = true;
+      subscriptions.forEach((subscription) => subscription.remove());
+    };
+  }, [isApprovedRider, trackingParcelIds, activeSession.accessToken, refreshAccessToken]);
+
+  useEffect(() => {
+    if (!isApprovedRider || !trackingParcelIds.length) return undefined;
+    const subscription = AppState.addEventListener("change", (nextState) => {
+      if (nextState !== "active") {
+        const ids = [...trackingParcelIds];
+        setTrackingParcelIds([]);
+        ids.forEach((parcelId) => {
+          void apiRequest(`/api/v1/parcels/${parcelId}/tracking/stop`, activeSession.accessToken, {
+            method: "POST"
+          }, refreshAccessToken).catch(() => undefined);
+        });
+      }
+    });
+    return () => subscription.remove();
+  }, [isApprovedRider, trackingParcelIds, activeSession.accessToken, refreshAccessToken]);
+
+  useEffect(() => {
+    const activeAssignedIds = new Set(
+      assignedParcels
+        .filter((parcel) => ACTIVE_TRACKING_STATUSES.includes(parcel.status))
+        .map((parcel) => parcel.id)
+    );
+    const expiredIds = trackingParcelIds.filter((parcelId) => !activeAssignedIds.has(parcelId));
+    if (!expiredIds.length) return;
+    setTrackingParcelIds((current) => current.filter((parcelId) => activeAssignedIds.has(parcelId)));
+    expiredIds.forEach((parcelId) => {
+      void apiRequest(`/api/v1/parcels/${parcelId}/tracking/stop`, activeSession.accessToken, {
+        method: "POST"
+      }, refreshAccessToken).catch(() => undefined);
+    });
+  }, [assignedParcels, trackingParcelIds, activeSession.accessToken, refreshAccessToken]);
 
   async function performRideAction(rideId: string, action: "accept" | "cancel" | "ARRIVED_AT_PICKUP" | "IN_PROGRESS" | "COMPLETED") {
     setWorking(true);
@@ -1176,6 +1380,7 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
                   <CustomerParcelCard
                     key={parcel.id}
                     parcel={parcel}
+                    tracking={parcelTrackings[parcel.id] ?? null}
                     busy={working}
                     onCancel={["PENDING", "ACCEPTED", "ARRIVED_AT_PICKUP"].includes(parcel.status) ? () => performParcelAction(parcel.id, "cancel") : undefined}
                   />
@@ -1248,6 +1453,12 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
                     }
                     onVerifyPickup={parcel.status === "ARRIVED_AT_PICKUP" ? () => performParcelAction(parcel.id, "verify-pickup") : undefined}
                     onVerifyDelivery={parcel.status === "ARRIVED_AT_DESTINATION" ? () => performParcelAction(parcel.id, "verify-delivery") : undefined}
+                    trackingEnabled={trackingParcelIds.includes(parcel.id)}
+                    onToggleTracking={ACTIVE_TRACKING_STATUSES.includes(parcel.status)
+                      ? () => trackingParcelIds.includes(parcel.id)
+                        ? stopParcelLocationSharing(parcel.id)
+                        : startParcelLocationSharing(parcel.id)
+                      : undefined}
                   />
                 )) : <EmptyState title="No assigned item deliveries" text="Item deliveries you accept will appear here." />}
 
@@ -1531,7 +1742,22 @@ function RideCard({
   );
 }
 
-function CustomerParcelCard({ parcel, busy, onCancel }: { parcel: RiderParcel; busy: boolean; onCancel?: () => void }) {
+function parcelTrackingRegion(tracking: ParcelTracking) {
+  const points = [tracking.pickup, tracking.destination, ...(tracking.rider ? [tracking.rider] : [])];
+  return routeMapRegion(points);
+}
+
+function CustomerParcelCard({
+  parcel,
+  tracking,
+  busy,
+  onCancel
+}: {
+  parcel: RiderParcel;
+  tracking: ParcelTracking | null;
+  busy: boolean;
+  onCancel?: () => void;
+}) {
   const labels: Record<string, string> = {
     PENDING: "Finding a rider",
     ACCEPTED: "Rider assigned",
@@ -1567,6 +1793,39 @@ function CustomerParcelCard({ parcel, busy, onCancel }: { parcel: RiderParcel; b
           <Text style={styles.routeAddress}>{parcel.destinationDescription}</Text>
         </View>
       </View>
+      {tracking && ACTIVE_TRACKING_STATUSES.includes(parcel.status) ? (
+        <View style={styles.trackingPanel}>
+          <Text style={styles.label}>RIDER LOCATION</Text>
+          <View style={styles.trackingMapFrame}>
+            <MapView
+              style={styles.routeMap}
+              initialRegion={parcelTrackingRegion(tracking)}
+              customMapStyle={LIGHT_MAP_STYLE}
+              scrollEnabled
+              zoomEnabled
+              rotateEnabled={false}
+              pitchEnabled={false}
+              toolbarEnabled={false}
+              showsCompass={false}
+              showsScale={false}
+            >
+              <Marker coordinate={tracking.pickup} title="Pickup point" pinColor="#21865B" />
+              <Marker coordinate={tracking.destination} title="Delivery point" pinColor="#C54848" />
+              {tracking.rider ? (
+                <Marker coordinate={tracking.rider} title="Rider's latest location" description="Last reported GPS position" pinColor="#236B9A" />
+              ) : null}
+            </MapView>
+          </View>
+          <Text style={styles.trackingStatusText}>
+            {tracking.rider
+              ? `Rider location updated at ${new Date(tracking.rider.updatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
+              : tracking.sharingEnabled
+                ? "Waiting for the rider's next GPS update. Keep this screen open to refresh."
+                : "The rider has not enabled live location sharing yet."}
+          </Text>
+          <Text style={styles.trackingPrivacyText}>Only you, as the sender, can view the rider's shared location. A position older than two minutes is hidden.</Text>
+        </View>
+      ) : null}
       <View style={styles.progressPanel}>
         <Text style={styles.label}>DELIVERY PROGRESS</Text>
         {steps.map((step, index) => (
@@ -1603,11 +1862,15 @@ function ParcelRiderCard({
   onAccept,
   onAdvance,
   onVerifyPickup,
-  onVerifyDelivery
+  onVerifyDelivery,
+  trackingEnabled,
+  onToggleTracking
 }: {
   parcel: RiderParcel;
   busy: boolean;
   code?: string;
+  trackingEnabled?: boolean;
+  onToggleTracking?: () => void;
   onCodeChange?: (value: string) => void;
   onAccept?: () => void;
   onAdvance?: () => void;
@@ -1656,6 +1919,17 @@ function ParcelRiderCard({
       </View>
       <Text style={styles.rideMeta}>Recipient: {parcel.recipientName} • {parcel.recipientPhone}</Text>
       {parcel.sender?.fullName ? <Text style={styles.rideMeta}>Sender: {parcel.sender.fullName}</Text> : null}
+      {onToggleTracking ? (
+        <View style={styles.trackingControlPanel}>
+          <Text style={styles.trackingPrivacyText}>Live location is shared with this item's sender only. Sharing works while NAVIGO remains open.</Text>
+          <PrimaryButton
+            label={trackingEnabled ? "Stop live location sharing" : "Enable live location sharing"}
+            loading={busy}
+            onPress={onToggleTracking}
+            disabled={busy}
+          />
+        </View>
+      ) : null}
       {onAccept ? <PrimaryButton label="Accept item delivery" loading={busy} onPress={onAccept} disabled={busy} /> : null}
       {onAdvance ? <PrimaryButton label={nextLabels[parcel.status] ?? "Update delivery"} loading={busy} onPress={onAdvance} disabled={busy} /> : null}
       {needsPickupCode && onVerifyPickup ? (
@@ -1770,6 +2044,11 @@ const styles = StyleSheet.create({
   choiceText: { color: "#667085", fontSize: 12, fontWeight: "700" },
   choiceTextSelected: { color: "#174A72" },
   routeMapFrame: { height: 190, borderRadius: 13, overflow: "hidden", marginTop: 10, borderWidth: 1, borderColor: "#DCE3EB" },
+  trackingMapFrame: { height: 220, borderRadius: 13, overflow: "hidden", marginTop: 8, borderWidth: 1, borderColor: "#DCE3EB" },
+  trackingPanel: { backgroundColor: "#F7FAFC", borderRadius: 13, padding: 12, marginTop: 12, borderWidth: 1, borderColor: "#E0E8EF" },
+  trackingControlPanel: { backgroundColor: "#F7FAFC", borderRadius: 12, padding: 11, marginTop: 12, borderWidth: 1, borderColor: "#E0E8EF" },
+  trackingStatusText: { color: "#174A72", fontSize: 11, fontWeight: "700", marginTop: 8 },
+  trackingPrivacyText: { color: "#667085", fontSize: 10, lineHeight: 15, marginTop: 5 },
   routeMap: { width: "100%", height: "100%" },
   progressPanel: { backgroundColor: "#F7F9FB", borderRadius: 12, padding: 12, marginTop: 12, marginBottom: 10 },
   progressRow: { flexDirection: "row", alignItems: "center", gap: 9, marginTop: 9 },
