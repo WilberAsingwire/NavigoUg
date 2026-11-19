@@ -137,7 +137,7 @@ authRouter.post("/switch-workspace", requireAuth, async (request, response, next
     return;
   }
   try {
-    response.status(200).json({ data: await switchWorkspace(request.auth!.userId, parsed.data.role) });
+    response.status(200).json({ data: await switchWorkspace(request.auth!.userId, request.auth!.role, parsed.data.role) });
   } catch (error) { next(error); }
 });
 
