@@ -52,16 +52,21 @@ type RideLocation = {
   description: string;
 };
 
+type RouteCoordinate = {
+  latitude: number;
+  longitude: number;
+};
+
 type Quote = {
   fareAmountUgx: number;
   distanceKm: number;
   fareBasis: "LANDMARK_FARE" | "DISTANCE_RULE";
   durationSeconds: number;
-  routeCoordinates: RideLocation[];
+  routeCoordinates: RouteCoordinate[];
   routingProvider: "GOOGLE_TWO_WHEELER" | "VALHALLA_MOTORCYCLE";
 };
 
-function routeMapRegion(coordinates: RideLocation[]) {
+function routeMapRegion(coordinates: RouteCoordinate[]) {
   const latitudes = coordinates.map((point) => point.latitude);
   const longitudes = coordinates.map((point) => point.longitude);
   const minLatitude = Math.min(...latitudes);
