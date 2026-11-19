@@ -2060,7 +2060,7 @@ export default function RidesHome({
             </View>
             <View style={styles.tabRow}>
               <TouchableOpacity style={[styles.tabButton, adminTab === "riders" ? styles.tabButtonSelected : null]} onPress={() => { setAdminTab("riders"); setMessage(""); setError(""); }}>
-                <Text style={[styles.tabText, adminTab === "riders" ? styles.tabTextSelected : null]}>Rider applications</Text>
+                <Text style={[styles.tabText, adminTab === "riders" ? styles.tabTextSelected : null]}>Riders</Text>
               </TouchableOpacity>
               <TouchableOpacity style={[styles.tabButton, adminTab === "fares" ? styles.tabButtonSelected : null]} onPress={() => { setAdminTab("fares"); setMessage(""); setError(""); }}>
                 <Text style={[styles.tabText, adminTab === "fares" ? styles.tabTextSelected : null]}>Fare rules</Text>
