@@ -210,6 +210,7 @@ describe("Authentication API", () => {
     const passwordHash = await argon2.hash(password);
     mocks.userFindUnique
       .mockResolvedValueOnce({ ...sampleUser, passwordHash })
+      .mockResolvedValueOnce({ ...sampleUser, passwordHash })
       .mockResolvedValueOnce({ ...sampleUser, passwordHash: "updated-hash" });
     mocks.userUpdate.mockResolvedValue({});
     mocks.refreshUpdateMany.mockResolvedValue({ count: 1 });
