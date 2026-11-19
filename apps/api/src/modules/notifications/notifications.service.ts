@@ -153,3 +153,76 @@ export async function sendPushNotificationToUser(
     );
   }
 }
+
+
+/**
+ * Sends one announcement to all registered devices for a selected group of users.
+ * The in-app notification rows are created by the caller and remain the source
+ * of truth if the external push service is unavailable.
+ */
+export async function sendPushNotificationToUsers(
+  userIds: string[],
+  message: Omit<PushMessage, "to" | "sound" | "priority" | "channelId">
+) {
+  if (userIds.length === 0) return;
+
+  try {
+    const devices = await prisma.deviceToken.findMany({
+      where: { userId: { in: [...new Set(userIds)] } },
+      select: { pushToken: true }
+    });
+    if (!devices.length) return;
+
+    const messages: PushMessage[] = devices.map(({ pushToken }) => ({
+      to: pushToken,
+      sound: "default",
+      title: message.title,
+      body: message.body,
+      priority: "high",
+      channelId: "default",
+      data: message.data
+    }));
+
+    for (let offset = 0; offset < messages.length; offset += EXPO_PUSH_BATCH_SIZE) {
+      const batch = messages.slice(offset, offset + EXPO_PUSH_BATCH_SIZE);
+      const response = await fetch(EXPO_PUSH_API_URL, {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "Accept-Encoding": "gzip, deflate",
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(batch),
+        signal: AbortSignal.timeout(10_000)
+      });
+
+      if (!response.ok) {
+        console.warn("[notifications] Expo announcement push returned HTTP", response.status);
+        continue;
+      }
+
+      const payload = await response.json() as { data?: ExpoPushTicket[] | ExpoPushTicket };
+      const tickets = Array.isArray(payload.data)
+        ? payload.data
+        : payload.data
+          ? [payload.data]
+          : [];
+      const invalidTokens = tickets.flatMap((ticket, index) =>
+        ticket.status === "error" && ticket.details?.error === "DeviceNotRegistered"
+          ? [batch[index]?.to]
+          : []
+      ).filter((token): token is string => Boolean(token));
+
+      if (invalidTokens.length) {
+        await prisma.deviceToken.deleteMany({
+          where: { pushToken: { in: invalidTokens } }
+        });
+      }
+    }
+  } catch (error) {
+    console.warn(
+      "[notifications] Announcement push delivery was unavailable:",
+      error instanceof Error ? error.message : "unknown error"
+    );
+  }
+}
