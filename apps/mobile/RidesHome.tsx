@@ -120,6 +120,7 @@ type PhotonFeature = {
     country?: string;
     osm_key?: string;
     osm_value?: string;
+    extra?: Record<string, string | number | boolean | null>;
   };
 };
 
@@ -162,9 +163,20 @@ function formatDistance(value: number | string | null): string {
   return Number.isFinite(parsed) ? `${parsed.toFixed(2)} km estimated` : "Distance estimate unavailable";
 }
 
-function describeMapFeature(key?: string, value?: string): string {
+function describeMapFeature(
+  key?: string,
+  value?: string,
+  extra?: Record<string, string | number | boolean | null>
+): string {
   const tag = (value ?? "").toLowerCase();
   const normalizedKey = (key ?? "").toLowerCase();
+  const bridge = String(extra?.bridge ?? "").toLowerCase();
+  const ford = String(extra?.ford ?? "").toLowerCase();
+  const tunnel = String(extra?.tunnel ?? "").toLowerCase();
+
+  if (bridge && bridge !== "no") return "Bridge / road crossing";
+  if (ford && ford !== "no") return "Ford / water crossing";
+  if (tunnel && tunnel !== "no") return "Tunnel";
 
   if (normalizedKey === "waterway") {
     const labels: Record<string, string> = {
@@ -175,7 +187,9 @@ function describeMapFeature(key?: string, value?: string): string {
       ditch: "Ditch",
       waterfall: "Waterfall",
       dam: "Dam",
-      weir: "Weir"
+      weir: "Weir",
+      riverbank: "River bank",
+      lock: "Canal lock"
     };
     return labels[tag] ?? "Waterway";
   }
@@ -183,8 +197,10 @@ function describeMapFeature(key?: string, value?: string): string {
   if (normalizedKey === "natural") {
     const labels: Record<string, string> = {
       peak: "Hill / peak",
+      hill: "Hill",
       ridge: "Ridge",
       saddle: "Mountain pass",
+      isthmus: "Land passage",
       volcano: "Volcano",
       valley: "Valley",
       cliff: "Cliff",
@@ -227,6 +243,17 @@ function describeMapFeature(key?: string, value?: string): string {
 
   if (normalizedKey === "bridge" || (normalizedKey === "man_made" && tag === "bridge")) return "Bridge";
   if (normalizedKey === "ford") return "River crossing / ford";
+  if (normalizedKey === "water") {
+    const labels: Record<string, string> = {
+      lake: "Lake",
+      pond: "Pond",
+      reservoir: "Reservoir",
+      river: "River",
+      basin: "Water basin"
+    };
+    return labels[tag] ?? "Water feature";
+  }
+  if (normalizedKey === "barrier") return "Access barrier / crossing control";
   if (normalizedKey === "railway") return "Railway feature";
   if (normalizedKey === "aeroway") return "Airport / airfield feature";
   if (normalizedKey === "amenity") return tag ? tag.replace(/_/g, " ") : "Public facility";
@@ -671,7 +698,11 @@ function LocationSuggestions({
             properties.country
           ].filter((part): part is string => Boolean(part) && part !== primary);
           const uniqueDetails = [...new Set(details)];
-          const category = describeMapFeature(properties.osm_key, properties.osm_value);
+          const category = describeMapFeature(
+            properties.osm_key,
+            properties.osm_value,
+            properties.extra
+          );
           return [{
             label: [primary, ...uniqueDetails].join(", "),
             category,
