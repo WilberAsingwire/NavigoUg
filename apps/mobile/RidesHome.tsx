@@ -1102,8 +1102,8 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
       setMapRegion({
         latitude,
         longitude,
-        latitudeDelta: 0.045,
-        longitudeDelta: 0.045
+        latitudeDelta: 0.075,
+        longitudeDelta: 0.075
       });
       if (allowReplace || !pickup.trim()) {
         setPickup(description);
