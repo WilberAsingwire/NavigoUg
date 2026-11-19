@@ -192,6 +192,9 @@ describe("Parcel delivery API", () => {
     expect(response.body.data[0]).not.toHaveProperty("pickupLandmarkId");
     expect(response.body.data[0].pickupDescription).toBe("Pickup details shared after acceptance");
     expect(response.body.data[0].destinationDescription).toBe("Destination details shared after acceptance");
+    expect(response.body.data[0].recipientName).toBe("Recipient details shared after acceptance");
+    expect(response.body.data[0]).not.toHaveProperty("recipientPhone");
+    expect(response.body.data[0]).not.toHaveProperty("sender");
     expect(response.body.data[0]).not.toHaveProperty("pickupCodeHash");
     expect(response.body.data[0]).not.toHaveProperty("deliveryCodeHash");
   });
