@@ -100,6 +100,23 @@ type ParcelRequest = {
   status: string;
 };
 
+type RiderParcel = {
+  id: string;
+  status: string;
+  pickupDescription: string;
+  destinationDescription: string;
+  recipientName: string;
+  recipientPhone: string;
+  parcelDescription: string;
+  sizeCategory: ParcelSize;
+  fareAmountUgx: number;
+  estimatedDistanceKm: number | string | null;
+  createdAt: string;
+  sender?: { fullName: string; phone?: string } | null;
+  payment?: { method: PaymentMethod; status: "UNPAID" | "PAID" } | null;
+};
+
+
 type Props = {
   session: Session;
   onSignOut: () => void;
@@ -605,6 +622,9 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
   const [selectedDestinationSearchQuery, setSelectedDestinationSearchQuery] = useState("");
   const [rides, setRides] = useState<Ride[]>([]);
   const [availableRides, setAvailableRides] = useState<Ride[]>([]);
+  const [availableParcels, setAvailableParcels] = useState<RiderParcel[]>([]);
+  const [assignedParcels, setAssignedParcels] = useState<RiderParcel[]>([]);
+  const [parcelCodeInputs, setParcelCodeInputs] = useState<Record<string, string>>({});
   const [parcelSize, setParcelSize] = useState<ParcelSize>("SMALL");
   const [recipientName, setRecipientName] = useState("");
   const [recipientPhone, setRecipientPhone] = useState("");
@@ -643,8 +663,16 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
       if (isApprovedRider) {
         const available = await apiRequest<{ data: Ride[] }>("/api/v1/rides/available", activeSession.accessToken, undefined, refreshAccessToken);
         setAvailableRides(available.data ?? []);
+        const [parcelQueue, myParcels] = await Promise.all([
+          apiRequest<{ data: RiderParcel[] }>("/api/v1/parcels/available", activeSession.accessToken, undefined, refreshAccessToken),
+          apiRequest<{ data: RiderParcel[] }>("/api/v1/parcels/mine", activeSession.accessToken, undefined, refreshAccessToken)
+        ]);
+        setAvailableParcels(parcelQueue.data ?? []);
+        setAssignedParcels(myParcels.data ?? []);
       } else {
         setAvailableRides([]);
+        setAvailableParcels([]);
+        setAssignedParcels([]);
       }
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Unable to load your rides.");
@@ -804,6 +832,36 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
       setParcelLocations(null);
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Unable to send this item.");
+    } finally {
+      setWorking(false);
+    }
+  }
+
+  async function performParcelAction(parcelId: string, action: "accept" | "ARRIVED_AT_PICKUP" | "IN_TRANSIT" | "ARRIVED_AT_DESTINATION" | "verify-pickup" | "verify-delivery") {
+    setWorking(true);
+    setError("");
+    setMessage("");
+    try {
+      if (action === "accept") {
+        await apiRequest(`/api/v1/parcels/${parcelId}/accept`, activeSession.accessToken, { method: "POST" }, refreshAccessToken);
+      } else if (action === "verify-pickup" || action === "verify-delivery") {
+        const code = (parcelCodeInputs[parcelId] ?? "").trim();
+        if (!/^\d{6}$/.test(code)) throw new Error("Enter the six-digit verification code.");
+        await apiRequest(`/api/v1/parcels/${parcelId}/${action}`, activeSession.accessToken, {
+          method: "POST",
+          body: JSON.stringify({ code })
+        }, refreshAccessToken);
+        setParcelCodeInputs((current) => ({ ...current, [parcelId]: "" }));
+      } else {
+        await apiRequest(`/api/v1/parcels/${parcelId}/status`, activeSession.accessToken, {
+          method: "PATCH",
+          body: JSON.stringify({ status: action })
+        }, refreshAccessToken);
+      }
+      setMessage(action === "accept" ? "Item delivery accepted." : action.startsWith("verify") ? "Verification successful. Delivery progress updated." : "Item delivery progress updated.");
+      await loadDashboard();
+    } catch (actionError) {
+      setError(actionError instanceof Error ? actionError.message : "Unable to update this item delivery.");
     } finally {
       setWorking(false);
     }
@@ -1147,6 +1205,30 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
                   />
                 )) : <EmptyState title="No available rides" text="New customer requests will appear here. Pull to refresh or tap refresh." />}
 
+                <SectionHeader title="Available item deliveries" onRefresh={loadDashboard} loading={loading} />
+                {availableParcels.length ? availableParcels.map((parcel) => (
+                  <ParcelRiderCard key={parcel.id} parcel={parcel} busy={working} onAccept={() => performParcelAction(parcel.id, "accept")} />
+                )) : <EmptyState title="No available item deliveries" text="New customer item requests will appear here." />}
+
+                <SectionHeader title="My assigned item deliveries" onRefresh={loadDashboard} loading={loading} />
+                {assignedParcels.length ? assignedParcels.map((parcel) => (
+                  <ParcelRiderCard
+                    key={parcel.id}
+                    parcel={parcel}
+                    busy={working}
+                    code={parcelCodeInputs[parcel.id] ?? ""}
+                    onCodeChange={(value) => setParcelCodeInputs((current) => ({ ...current, [parcel.id]: value.replace(/\D/g, "").slice(0, 6) }))}
+                    onAdvance={
+                      parcel.status === "ACCEPTED" ? () => performParcelAction(parcel.id, "ARRIVED_AT_PICKUP")
+                      : parcel.status === "COLLECTED" ? () => performParcelAction(parcel.id, "IN_TRANSIT")
+                      : parcel.status === "IN_TRANSIT" ? () => performParcelAction(parcel.id, "ARRIVED_AT_DESTINATION")
+                      : undefined
+                    }
+                    onVerifyPickup={parcel.status === "ARRIVED_AT_PICKUP" ? () => performParcelAction(parcel.id, "verify-pickup") : undefined}
+                    onVerifyDelivery={parcel.status === "ARRIVED_AT_DESTINATION" ? () => performParcelAction(parcel.id, "verify-delivery") : undefined}
+                  />
+                )) : <EmptyState title="No assigned item deliveries" text="Item deliveries you accept will appear here." />}
+
                 <SectionHeader title="My assigned rides" onRefresh={loadDashboard} loading={loading} />
                 {rides.length ? rides.map((ride) => {
                   const nextStatus = NEXT_RIDER_STATUS[ride.status];
@@ -1427,6 +1509,87 @@ function RideCard({
   );
 }
 
+function ParcelRiderCard({
+  parcel,
+  busy,
+  code,
+  onCodeChange,
+  onAccept,
+  onAdvance,
+  onVerifyPickup,
+  onVerifyDelivery
+}: {
+  parcel: RiderParcel;
+  busy: boolean;
+  code?: string;
+  onCodeChange?: (value: string) => void;
+  onAccept?: () => void;
+  onAdvance?: () => void;
+  onVerifyPickup?: () => void;
+  onVerifyDelivery?: () => void;
+}) {
+  const statusLabels: Record<string, string> = {
+    PENDING: "Waiting for a rider",
+    ACCEPTED: "You accepted this delivery",
+    ARRIVED_AT_PICKUP: "You are at the pickup point",
+    COLLECTED: "Item collected",
+    IN_TRANSIT: "On the way to recipient",
+    ARRIVED_AT_DESTINATION: "You are at the delivery point",
+    DELIVERED: "Successfully delivered",
+    CANCELLED: "Cancelled",
+    EXPIRED: "Expired"
+  };
+  const nextLabels: Record<string, string> = {
+    ACCEPTED: "I have arrived at pickup",
+    COLLECTED: "Start delivery journey",
+    IN_TRANSIT: "I have arrived at destination"
+  };
+  const needsPickupCode = parcel.status === "ARRIVED_AT_PICKUP";
+  const needsDeliveryCode = parcel.status === "ARRIVED_AT_DESTINATION";
+  return (
+    <View style={styles.rideCard}>
+      <View style={styles.rideTopRow}>
+        <Text style={styles.rideStatus}>{statusLabels[parcel.status] ?? parcel.status}</Text>
+        <Text style={styles.rideFare}>{money(parcel.fareAmountUgx)}</Text>
+      </View>
+      <Text style={styles.rideMeta}>{parcel.sizeCategory} item • {formatDistance(parcel.estimatedDistanceKm)} • {parcel.payment?.method === "MOBILE_MONEY" ? "Mobile Money" : "Cash"}</Text>
+      <Text style={styles.label}>ITEM</Text>
+      <Text style={styles.routeAddress}>{parcel.parcelDescription}</Text>
+      <View style={styles.routeRow}>
+        <View style={styles.routeMarkers}>
+          <View style={styles.pickupDot} />
+          <View style={styles.routeLine} />
+          <View style={styles.destinationDot} />
+        </View>
+        <View style={styles.routeTexts}>
+          <Text style={styles.routeLabel}>PICKUP</Text>
+          <Text style={styles.routeAddress}>{parcel.pickupDescription}</Text>
+          <Text style={[styles.routeLabel, styles.destinationLabel]}>DELIVERY</Text>
+          <Text style={styles.routeAddress}>{parcel.destinationDescription}</Text>
+        </View>
+      </View>
+      <Text style={styles.rideMeta}>Recipient: {parcel.recipientName} • {parcel.recipientPhone}</Text>
+      {parcel.sender?.fullName ? <Text style={styles.rideMeta}>Sender: {parcel.sender.fullName}</Text> : null}
+      {onAccept ? <PrimaryButton label="Accept item delivery" loading={busy} onPress={onAccept} disabled={busy} /> : null}
+      {onAdvance ? <PrimaryButton label={nextLabels[parcel.status] ?? "Update delivery"} loading={busy} onPress={onAdvance} disabled={busy} /> : null}
+      {needsPickupCode && onVerifyPickup ? (
+        <View style={styles.codeEntryPanel}>
+          <Text style={styles.label}>Enter sender's 6-digit pickup code</Text>
+          <TextInput style={styles.addressInput} value={code} onChangeText={onCodeChange} keyboardType="number-pad" maxLength={6} placeholder="Pickup code" placeholderTextColor="#98A2B3" />
+          <PrimaryButton label="Verify collection" loading={busy} onPress={onVerifyPickup} disabled={busy || (code ?? "").length !== 6} />
+        </View>
+      ) : null}
+      {needsDeliveryCode && onVerifyDelivery ? (
+        <View style={styles.codeEntryPanel}>
+          <Text style={styles.label}>Enter recipient's 6-digit delivery code</Text>
+          <TextInput style={styles.addressInput} value={code} onChangeText={onCodeChange} keyboardType="number-pad" maxLength={6} placeholder="Delivery code" placeholderTextColor="#98A2B3" />
+          <PrimaryButton label="Verify delivery" loading={busy} onPress={onVerifyDelivery} disabled={busy || (code ?? "").length !== 6} />
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
 function EmptyState({ title, text }: { title: string; text: string }) {
   return (
     <View style={styles.emptyState}>
@@ -1522,6 +1685,7 @@ const styles = StyleSheet.create({
   choiceTextSelected: { color: "#174A72" },
   routeMapFrame: { height: 190, borderRadius: 13, overflow: "hidden", marginTop: 10, borderWidth: 1, borderColor: "#DCE3EB" },
   routeMap: { width: "100%", height: "100%" },
+  codeEntryPanel: { backgroundColor: "#F0F7FC", borderRadius: 12, padding: 12, marginTop: 12, borderWidth: 1, borderColor: "#D3E6F3" },
   codePanel: { backgroundColor: "#F0F7FC", borderRadius: 13, padding: 14, marginTop: 14, marginBottom: 10, borderWidth: 1, borderColor: "#D3E6F3" },
   codeHeading: { color: "#174A72", fontSize: 14, fontWeight: "900", marginTop: 7, marginBottom: 5 },
   codeValue: { color: "#142B3D", fontSize: 25, fontWeight: "900", letterSpacing: 5, backgroundColor: "#FFFFFF", padding: 12, borderRadius: 10, marginTop: 5, overflow: "hidden" },
