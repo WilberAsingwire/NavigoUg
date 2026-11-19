@@ -251,8 +251,9 @@ model RideRequest {
   tracking        RideTrackingSession?
   rejections      RideRejection[]
 
-  @@index([status, createdAt])
   arrivalEstimate       RideArrivalEstimate?
+
+  @@index([status, createdAt])
 
   @@index([customerId, createdAt])
   @@index([riderId, status])
