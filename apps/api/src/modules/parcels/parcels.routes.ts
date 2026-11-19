@@ -30,6 +30,7 @@ export const parcelsRouter = Router();
 const parcelsLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   limit: 300,
+  keyGenerator: (request) => request.auth!.userId,
   standardHeaders: "draft-8",
   legacyHeaders: false
 });
@@ -37,6 +38,7 @@ const parcelsLimiter = rateLimit({
 const trackingLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   limit: 180,
+  keyGenerator: (request) => request.auth!.userId,
   standardHeaders: "draft-8",
   legacyHeaders: false
 });
