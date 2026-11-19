@@ -431,7 +431,7 @@ export default function App() {
           </View>
 
           <Text style={styles.legalText}>
-            By continuing, you agree to use NAVIGO responsibly and provide accurate account details.
+            A simpler way to move around Arua and send parcels with confidence.
           </Text>
           <Text style={styles.footer}>Arua, Uganda</Text>
         </ScrollView>
