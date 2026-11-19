@@ -26,7 +26,7 @@ type User = {
   id: string;
   fullName: string;
   phone: string;
-  email: string | null;
+  email?: string | null;
   role: UserRole;
   riderApprovalStatus: RiderApprovalStatus;
 };
