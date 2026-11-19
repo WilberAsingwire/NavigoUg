@@ -4,6 +4,7 @@ import * as Location from "expo-location";
 import {
   AppState,
   ActivityIndicator,
+  Dimensions,
   SafeAreaView,
   ScrollView,
   StyleSheet,
@@ -783,6 +784,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
   const [rides, setRides] = useState<Ride[]>([]);
   const [availableRides, setAvailableRides] = useState<Ride[]>([]);
   const [riderOnline, setRiderOnline] = useState(false);
+  const [riderDeviceLocation, setRiderDeviceLocation] = useState<RideLocation | null>(null);
   const [availableParcels, setAvailableParcels] = useState<RiderParcel[]>([]);
   const [assignedParcels, setAssignedParcels] = useState<RiderParcel[]>([]);
   const [sentParcels, setSentParcels] = useState<RiderParcel[]>([]);
@@ -1034,6 +1036,9 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
           method: "POST",
           body: JSON.stringify({ latitude: position.coords.latitude, longitude: position.coords.longitude, accuracyMeters })
         }, refreshAccessToken);
+        const riderLocation = { latitude: position.coords.latitude, longitude: position.coords.longitude, description: "Your current location" };
+        setRiderDeviceLocation(riderLocation);
+        setMapRegion({ latitude: riderLocation.latitude, longitude: riderLocation.longitude, latitudeDelta: 0.055, longitudeDelta: 0.055 });
         setRiderOnline(true);
         setMessage("You are online. NAVIGO will show you ride requests near your current location.");
       }
@@ -1850,6 +1855,23 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
               </View>
             ) : mainTab === "home" ? (
               <>
+                <View style={styles.riderMapFrame}>
+                  <MapView
+                    style={styles.customerMap}
+                    region={riderDeviceLocation ? { latitude: riderDeviceLocation.latitude, longitude: riderDeviceLocation.longitude, latitudeDelta: 0.055, longitudeDelta: 0.055 } : mapRegion}
+                    onRegionChangeComplete={setMapRegion}
+                    customMapStyle={LIGHT_MAP_STYLE}
+                    showsCompass={false}
+                    showsScale={false}
+                    showsUserLocation={riderOnline}
+                    showsMyLocationButton={false}
+                    toolbarEnabled={false}
+                  >
+                    {riderDeviceLocation ? <Marker coordinate={riderDeviceLocation} title="Your current location" pinColor="#236B9A" /> : null}
+                  </MapView>
+                  <View style={styles.mapBrandPill}><Text style={styles.mapBrandText}>NAVIGO • RIDER MAP</Text></View>
+                  <View style={styles.riderMapStatus}><View style={[styles.riderOnlineDot, riderOnline ? styles.riderOnlineDotActive : null]} /><Text style={styles.riderMapStatusText}>{riderOnline ? "You are online" : "You are offline"}</Text></View>
+                </View>
                 <View style={styles.trackingControlPanel}>
                   <Text style={styles.sectionTitle}>Rider availability</Text>
                   <Text style={styles.trackingPrivacyText}>
@@ -3302,7 +3324,12 @@ const baseStyles = StyleSheet.create({
   quickAccessCard: { flex: 1, minHeight: 92, backgroundColor: "#FFFFFF", borderRadius: 14, borderWidth: 1, borderColor: "#E5EAF0", padding: 13, justifyContent: "center" },
   quickAccessTitle: { color: "#174A72", fontSize: 13, fontWeight: "900" },
   quickAccessText: { color: "#667085", fontSize: 10, lineHeight: 15, marginTop: 5 },
-  customerMapFrame: { height: 285, borderRadius: 22, overflow: "hidden", marginBottom: 18, borderWidth: 1, borderColor: "#E1E8EF", backgroundColor: "#E9F0F5", position: "relative" },
+  customerMapFrame: { height: Dimensions.get("window").height * 0.68, borderRadius: 0, overflow: "hidden", marginBottom: 18, marginHorizontal: -19, marginTop: -20, borderWidth: 0, backgroundColor: "#E9F0F5", position: "relative" },
+  riderMapFrame: { height: Dimensions.get("window").height * 0.48, borderRadius: 18, overflow: "hidden", marginTop: 12, marginBottom: 12, backgroundColor: "#E9F0F5", position: "relative" },
+  riderMapStatus: { position: "absolute", left: 13, bottom: 13, backgroundColor: "#FFFFFF", borderRadius: 20, paddingHorizontal: 12, paddingVertical: 9, flexDirection: "row", alignItems: "center", gap: 7, elevation: 3 },
+  riderOnlineDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: "#98A2B3" },
+  riderOnlineDotActive: { backgroundColor: "#12B76A" },
+  riderMapStatusText: { color: "#344054", fontSize: 10, fontWeight: "800" },
   pickupLocationPill: { position: "absolute", left: 12, right: 12, bottom: 12, backgroundColor: "#FFFFFF", borderRadius: 15, padding: 11, flexDirection: "row", alignItems: "center", shadowColor: "#102A43", shadowOpacity: 0.15, shadowRadius: 10, elevation: 4 },
   pickupLocationCopy: { flex: 1, paddingRight: 8 },
   pickupLocationLabel: { color: "#8793A2", fontSize: 8, fontWeight: "900", letterSpacing: 1 },
