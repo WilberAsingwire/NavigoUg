@@ -11,6 +11,9 @@ const mocks = vi.hoisted(() => ({
   refreshFindUnique: vi.fn(),
   refreshUpdateMany: vi.fn(),
   riderProfileCreate: vi.fn(),
+  rideRequestCount: vi.fn(),
+  parcelRequestCount: vi.fn(),
+  riderAvailabilityUpdateMany: vi.fn(),
   queryRaw: vi.fn()
 }));
 
@@ -22,6 +25,9 @@ vi.mock("../src/lib/prisma.js", () => ({
       update: mocks.userUpdate
     },
     riderProfile: { create: mocks.riderProfileCreate },
+    rideRequest: { count: mocks.rideRequestCount },
+    parcelRequest: { count: mocks.parcelRequestCount },
+    riderAvailability: { updateMany: mocks.riderAvailabilityUpdateMany },
     refreshToken: {
       create: mocks.refreshCreate,
       findUnique: mocks.refreshFindUnique,
@@ -253,6 +259,39 @@ describe("Authentication API", () => {
     expect(mocks.refreshCreate).toHaveBeenLastCalledWith(expect.objectContaining({
       data: expect.objectContaining({ userId: sampleUser.id, activeRole: "RIDER" })
     }));
+  });
+
+  it("prevents a rider from leaving the rider workspace while active jobs remain", async () => {
+    const passwordHash = await argon2.hash(password);
+    const approvedUser = {
+      ...sampleUser,
+      passwordHash,
+      riderProfile: { approvalStatus: "APPROVED" as const }
+    };
+    mocks.userFindUnique.mockResolvedValue(approvedUser);
+    mocks.refreshCreate.mockResolvedValue({});
+    mocks.rideRequestCount.mockResolvedValue(1);
+    mocks.parcelRequestCount.mockResolvedValue(0);
+
+    const loginResponse = await request(app)
+      .post("/api/v1/auth/login")
+      .send({ phone: sampleUser.phone, password });
+    const customerToken = loginResponse.body.data.accessToken as string;
+
+    const riderSession = await request(app)
+      .post("/api/v1/auth/switch-workspace")
+      .set("Authorization", `Bearer ${customerToken}`)
+      .send({ role: "RIDER" });
+    expect(riderSession.status).toBe(200);
+
+    const response = await request(app)
+      .post("/api/v1/auth/switch-workspace")
+      .set("Authorization", `Bearer ${riderSession.body.data.accessToken}`)
+      .send({ role: "CUSTOMER" });
+
+    expect(response.status).toBe(409);
+    expect(response.body.error.code).toBe("ACTIVE_RIDER_JOBS");
+    expect(mocks.riderAvailabilityUpdateMany).not.toHaveBeenCalled();
   });
 
   it("does not grant rider workspace access before administrator approval", async () => {
