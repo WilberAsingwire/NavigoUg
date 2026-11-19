@@ -368,6 +368,7 @@ export async function listAvailableRides(riderId: string) {
           destinationLandmarkId: undefined,
           pickupDescription: "Pickup details shared after acceptance",
           destinationDescription: "Destination details shared after acceptance",
+          customer: undefined,
           pickupDistanceKm: Math.round(pickupDistanceKm * 100) / 100
         }]
       : [];
