@@ -105,13 +105,33 @@ describe("Motorcycle ride API", () => {
     expect(response.body.data.distanceKm).toBeGreaterThan(0);
   });
 
-  it("does not invent a fare when no active rule covers the route", async () => {
+  it("uses the researched Arua pilot tariff when the database has no active rule", async () => {
     mocks.fareRuleFindMany.mockResolvedValue([]);
     const token = await accessToken("CUSTOMER");
     const response = await request(app)
       .post("/api/v1/rides/fare-quote")
       .set("Authorization", `Bearer ${token}`)
       .send(route);
+
+    expect(response.status).toBe(200);
+    expect(response.body.data.fareAmountUgx).toBe(2000);
+    expect(response.body.data.fareBasis).toBe("DISTANCE_RULE");
+  });
+
+  it("does not quote journeys beyond the pilot tariff coverage", async () => {
+    mocks.fareRuleFindMany.mockResolvedValue([]);
+    const token = await accessToken("CUSTOMER");
+    const response = await request(app)
+      .post("/api/v1/rides/fare-quote")
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        pickup: route.pickup,
+        destination: {
+          latitude: 3.32,
+          longitude: 30.91,
+          description: "Outside Arua pilot tariff range"
+        }
+      });
 
     expect(response.status).toBe(422);
     expect(response.body.error.code).toBe("FARE_NOT_CONFIGURED");
