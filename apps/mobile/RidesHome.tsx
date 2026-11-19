@@ -113,7 +113,9 @@ type RiderParcel = {
   estimatedDistanceKm: number | string | null;
   createdAt: string;
   sender?: { fullName: string; phone?: string } | null;
+  rider?: { fullName: string; phone?: string; riderProfile?: { motorcyclePlate?: string | null } | null } | null;
   payment?: { method: PaymentMethod; status: "UNPAID" | "PAID" } | null;
+  history?: { id: string; fromStatus: string | null; toStatus: string; note?: string | null; createdAt: string }[];
 };
 
 
@@ -624,6 +626,7 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
   const [availableRides, setAvailableRides] = useState<Ride[]>([]);
   const [availableParcels, setAvailableParcels] = useState<RiderParcel[]>([]);
   const [assignedParcels, setAssignedParcels] = useState<RiderParcel[]>([]);
+  const [sentParcels, setSentParcels] = useState<RiderParcel[]>([]);
   const [parcelCodeInputs, setParcelCodeInputs] = useState<Record<string, string>>({});
   const [parcelSize, setParcelSize] = useState<ParcelSize>("SMALL");
   const [recipientName, setRecipientName] = useState("");
@@ -669,10 +672,17 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
         ]);
         setAvailableParcels(parcelQueue.data ?? []);
         setAssignedParcels(myParcels.data ?? []);
+        setSentParcels([]);
+      } else if (session.user.role === "CUSTOMER") {
+        const mine = await apiRequest<{ data: RiderParcel[] }>("/api/v1/parcels/mine", activeSession.accessToken, undefined, refreshAccessToken);
+        setSentParcels(mine.data ?? []);
+        setAvailableParcels([]);
+        setAssignedParcels([]);
       } else {
         setAvailableRides([]);
         setAvailableParcels([]);
         setAssignedParcels([]);
+        setSentParcels([]);
       }
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Unable to load your rides.");
@@ -842,7 +852,9 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
     setError("");
     setMessage("");
     try {
-      if (action === "accept") {
+      if (action === "cancel") {
+        await apiRequest(`/api/v1/parcels/${parcelId}/cancel`, activeSession.accessToken, { method: "POST" }, refreshAccessToken);
+      } else if (action === "accept") {
         await apiRequest(`/api/v1/parcels/${parcelId}/accept`, activeSession.accessToken, { method: "POST" }, refreshAccessToken);
       } else if (action === "verify-pickup" || action === "verify-delivery") {
         const code = (parcelCodeInputs[parcelId] ?? "").trim();
@@ -1158,6 +1170,16 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
               </View>
             ) : (
               <View style={styles.section}>
+                <SectionHeader title="Your ride requests" onRefresh={loadDashboard} loading={loading} />
+                <SectionHeader title="Your item deliveries" onRefresh={loadDashboard} loading={loading} />
+                {sentParcels.length ? sentParcels.map((parcel) => (
+                  <CustomerParcelCard
+                    key={parcel.id}
+                    parcel={parcel}
+                    busy={working}
+                    onCancel={["PENDING", "ACCEPTED", "ARRIVED_AT_PICKUP"].includes(parcel.status) ? () => performParcelAction(parcel.id, "cancel") : undefined}
+                  />
+                )) : <EmptyState title="No item deliveries yet" text="Items you send will appear here with their delivery progress." />}
                 <SectionHeader title="Your ride requests" onRefresh={loadDashboard} loading={loading} />
                 {rides.length ? rides.map((ride) => (
                   <RideCard
@@ -1509,6 +1531,70 @@ function RideCard({
   );
 }
 
+function CustomerParcelCard({ parcel, busy, onCancel }: { parcel: RiderParcel; busy: boolean; onCancel?: () => void }) {
+  const labels: Record<string, string> = {
+    PENDING: "Finding a rider",
+    ACCEPTED: "Rider assigned",
+    ARRIVED_AT_PICKUP: "Rider at pickup",
+    COLLECTED: "Item collected",
+    IN_TRANSIT: "On the way to recipient",
+    ARRIVED_AT_DESTINATION: "Rider at delivery point",
+    DELIVERED: "Successfully delivered",
+    CANCELLED: "Cancelled",
+    EXPIRED: "Request expired"
+  };
+  const steps = ["PENDING", "ACCEPTED", "COLLECTED", "IN_TRANSIT", "DELIVERED"];
+  const current = steps.indexOf(parcel.status);
+  return (
+    <View style={styles.rideCard}>
+      <View style={styles.rideTopRow}>
+        <Text style={styles.rideStatus}>{labels[parcel.status] ?? parcel.status}</Text>
+        <Text style={styles.rideFare}>{money(parcel.fareAmountUgx)}</Text>
+      </View>
+      <Text style={styles.rideMeta}>{parcel.sizeCategory} item • {formatDistance(parcel.estimatedDistanceKm)} • {parcel.payment?.method === "MOBILE_MONEY" ? "Mobile Money" : "Cash"}</Text>
+      <Text style={styles.label}>ITEM</Text>
+      <Text style={styles.routeAddress}>{parcel.parcelDescription}</Text>
+      <View style={styles.routeRow}>
+        <View style={styles.routeMarkers}>
+          <View style={styles.pickupDot} />
+          <View style={styles.routeLine} />
+          <View style={styles.destinationDot} />
+        </View>
+        <View style={styles.routeTexts}>
+          <Text style={styles.routeLabel}>PICKUP</Text>
+          <Text style={styles.routeAddress}>{parcel.pickupDescription}</Text>
+          <Text style={[styles.routeLabel, styles.destinationLabel]}>DELIVERY</Text>
+          <Text style={styles.routeAddress}>{parcel.destinationDescription}</Text>
+        </View>
+      </View>
+      <View style={styles.progressPanel}>
+        <Text style={styles.label}>DELIVERY PROGRESS</Text>
+        {steps.map((step, index) => (
+          <View key={step} style={styles.progressRow}>
+            <View style={[styles.progressDot, index <= current && parcel.status !== "CANCELLED" ? styles.progressDotDone : null]} />
+            <Text style={[styles.progressText, index <= current && parcel.status !== "CANCELLED" ? styles.progressTextDone : null]}>{labels[step]}</Text>
+          </View>
+        ))}
+      </View>
+      {parcel.rider ? (
+        <View style={styles.assignedRider}>
+          <Text style={styles.assignedLabel}>YOUR RIDER</Text>
+          <Text style={styles.assignedName}>{parcel.rider.fullName}</Text>
+          <Text style={styles.rideMeta}>{parcel.rider.phone}{parcel.rider.riderProfile?.motorcyclePlate ? ` • ${parcel.rider.riderProfile.motorcyclePlate}` : ""}</Text>
+        </View>
+      ) : null}
+      <Text style={styles.rideMeta}>Recipient: {parcel.recipientName} • {parcel.recipientPhone}</Text>
+      {parcel.history?.length ? (
+        <View style={styles.historyNotes}>
+          <Text style={styles.label}>LATEST UPDATE</Text>
+          <Text style={styles.rideMeta}>{parcel.history[parcel.history.length - 1].note || labels[parcel.status] || parcel.status}</Text>
+        </View>
+      ) : null}
+      {onCancel ? <TouchableOpacity onPress={onCancel} disabled={busy} style={styles.cancelButton}><Text style={styles.cancelText}>Cancel item delivery</Text></TouchableOpacity> : null}
+    </View>
+  );
+}
+
 function ParcelRiderCard({
   parcel,
   busy,
@@ -1685,6 +1771,13 @@ const styles = StyleSheet.create({
   choiceTextSelected: { color: "#174A72" },
   routeMapFrame: { height: 190, borderRadius: 13, overflow: "hidden", marginTop: 10, borderWidth: 1, borderColor: "#DCE3EB" },
   routeMap: { width: "100%", height: "100%" },
+  progressPanel: { backgroundColor: "#F7F9FB", borderRadius: 12, padding: 12, marginTop: 12, marginBottom: 10 },
+  progressRow: { flexDirection: "row", alignItems: "center", gap: 9, marginTop: 9 },
+  progressDot: { width: 9, height: 9, borderRadius: 5, backgroundColor: "#D0D7DE" },
+  progressDotDone: { backgroundColor: "#21865B" },
+  progressText: { color: "#8793A2", fontSize: 11 },
+  progressTextDone: { color: "#174A72", fontWeight: "800" },
+  historyNotes: { backgroundColor: "#F7F9FB", borderRadius: 10, padding: 10, marginTop: 9 },
   codeEntryPanel: { backgroundColor: "#F0F7FC", borderRadius: 12, padding: 12, marginTop: 12, borderWidth: 1, borderColor: "#D3E6F3" },
   codePanel: { backgroundColor: "#F0F7FC", borderRadius: 13, padding: 14, marginTop: 14, marginBottom: 10, borderWidth: 1, borderColor: "#D3E6F3" },
   codeHeading: { color: "#174A72", fontSize: 14, fontWeight: "900", marginTop: 7, marginBottom: 5 },
