@@ -711,10 +711,43 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
 
         {isCustomer ? (
           <>
-            <View style={styles.heroCard}>
-              <Text style={styles.heroEyebrow}>MOTORCYCLE RIDES</Text>
-              <Text style={styles.heroTitle}>Where would you like to go?</Text>
-              <Text style={styles.heroText}>Set your pickup and destination in Arua to see an estimated fare.</Text>
+            <View style={styles.customerMapFrame}>
+              <MapView
+                style={styles.customerMap}
+                initialRegion={{
+                  latitude: 3.02,
+                  longitude: 30.92,
+                  latitudeDelta: 0.085,
+                  longitudeDelta: 0.085
+                }}
+                showsCompass={false}
+                showsScale={false}
+                toolbarEnabled={false}
+              />
+              <View style={styles.mapBrandPill}>
+                <Text style={styles.mapBrandText}>NAVIGO  •  ARUA</Text>
+              </View>
+              <View style={styles.mapHintPill}>
+                <Text style={styles.mapHintText}>Choose a service below to get started</Text>
+              </View>
+            </View>
+
+            <View style={styles.serviceHeading}>
+              <Text style={styles.serviceHeadingTitle}>Where can we help you go?</Text>
+              <Text style={styles.serviceHeadingSubtitle}>Choose a service</Text>
+            </View>
+            <View style={styles.serviceChoices}>
+              <View style={[styles.serviceTile, styles.serviceTileActive]}>
+                <Text style={styles.serviceEmoji}>🏍️</Text>
+                <Text style={styles.serviceTitle}>Ride</Text>
+                <Text style={styles.serviceDescription}>Travel around Arua</Text>
+              </View>
+              <View style={[styles.serviceTile, styles.serviceTileUpcoming]}>
+                <Text style={styles.serviceEmoji}>📦</Text>
+                <Text style={styles.serviceTitle}>Send an Item</Text>
+                <Text style={styles.serviceDescription}>Pickup and delivery</Text>
+                <Text style={styles.comingSoon}>COMING SOON</Text>
+              </View>
             </View>
 
             <View style={styles.tabRow}>
@@ -1195,6 +1228,23 @@ const styles = StyleSheet.create({
   muted: { color: "#8793A2", fontSize: 12, marginTop: 4 },
   signOut: { borderWidth: 1, borderColor: "#D5DFE8", paddingHorizontal: 13, paddingVertical: 9, borderRadius: 10, backgroundColor: "#FFFFFF" },
   signOutText: { color: "#174A72", fontWeight: "700", fontSize: 12 },
+  customerMapFrame: { height: 285, borderRadius: 22, overflow: "hidden", marginBottom: 18, borderWidth: 1, borderColor: "#E1E8EF", backgroundColor: "#E9F0F5", position: "relative" },
+  customerMap: { width: "100%", height: "100%" },
+  mapBrandPill: { position: "absolute", top: 13, left: 13, backgroundColor: "#FFFFFF", borderRadius: 20, paddingHorizontal: 12, paddingVertical: 8, shadowColor: "#102A43", shadowOpacity: 0.12, shadowRadius: 8, elevation: 3 },
+  mapBrandText: { color: "#174A72", fontSize: 10, fontWeight: "900", letterSpacing: 1.2 },
+  mapHintPill: { position: "absolute", bottom: 13, left: 13, right: 13, backgroundColor: "rgba(255,255,255,0.94)", borderRadius: 12, paddingHorizontal: 13, paddingVertical: 10 },
+  mapHintText: { color: "#344054", fontSize: 11, fontWeight: "600", textAlign: "center" },
+  serviceHeading: { marginBottom: 11 },
+  serviceHeadingTitle: { color: "#142B3D", fontSize: 19, fontWeight: "900" },
+  serviceHeadingSubtitle: { color: "#8793A2", fontSize: 11, marginTop: 4 },
+  serviceChoices: { flexDirection: "row", gap: 10, marginBottom: 17 },
+  serviceTile: { flex: 1, minHeight: 126, borderRadius: 17, padding: 13, borderWidth: 1, position: "relative" },
+  serviceTileActive: { backgroundColor: "#F0F7FC", borderColor: "#8DBBD8" },
+  serviceTileUpcoming: { backgroundColor: "#FFFFFF", borderColor: "#E5EAF0" },
+  serviceEmoji: { fontSize: 23, marginBottom: 8 },
+  serviceTitle: { color: "#182230", fontSize: 13, fontWeight: "900" },
+  serviceDescription: { color: "#667085", fontSize: 10, marginTop: 4 },
+  comingSoon: { color: "#236B9A", fontSize: 8, fontWeight: "900", letterSpacing: 0.8, marginTop: 8 },
   heroCard: { backgroundColor: "#174A72", borderRadius: 20, padding: 20, marginBottom: 18 },
   heroEyebrow: { color: "#BDD7EA", fontSize: 10, fontWeight: "800", letterSpacing: 1.4 },
   heroTitle: { color: "#FFFFFF", fontSize: 23, fontWeight: "800", marginTop: 8 },
