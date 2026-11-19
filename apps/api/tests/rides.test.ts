@@ -12,7 +12,8 @@ const mocks = vi.hoisted(() => ({
   rideFindUnique: vi.fn(),
   rideUpdateMany: vi.fn(),
   rideHistoryCreate: vi.fn(),
-  transaction: vi.fn()
+  transaction: vi.fn(),
+  getMotorcycleRoute: vi.fn()
 }));
 
 vi.mock("../src/lib/prisma.js", () => ({
@@ -29,6 +30,17 @@ vi.mock("../src/lib/prisma.js", () => ({
     },
     rideStatusHistory: { create: mocks.rideHistoryCreate },
     $transaction: mocks.transaction
+  }
+}));
+
+vi.mock("../src/modules/rides/routing.service.js", () => ({
+  getMotorcycleRoute: mocks.getMotorcycleRoute,
+  MotorcycleRoutingError: class MotorcycleRoutingError extends Error {
+    constructor(
+      public readonly statusCode: number,
+      public readonly code: string,
+      message: string
+    ) { super(message); }
   }
 }));
 
@@ -61,6 +73,15 @@ const route = {
 describe("Motorcycle ride API", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.getMotorcycleRoute.mockResolvedValue({
+      distanceKm: 2.5,
+      durationSeconds: 420,
+      coordinates: [
+        { latitude: route.pickup.latitude, longitude: route.pickup.longitude },
+        { latitude: route.destination.latitude, longitude: route.destination.longitude }
+      ],
+      provider: "VALHALLA_MOTORCYCLE"
+    });
     process.env.JWT_ACCESS_SECRET = "local-test-secret-that-is-long-enough-123456";
     mocks.transaction.mockImplementation(async (callback: (tx: unknown) => unknown) =>
       callback({
@@ -102,12 +123,24 @@ describe("Motorcycle ride API", () => {
     expect(response.status).toBe(200);
     expect(response.body.data.fareAmountUgx).toBe(2500);
     expect(response.body.data.fareBasis).toBe("DISTANCE_RULE");
-    expect(response.body.data.distanceKm).toBeGreaterThan(0);
+    expect(response.body.data.distanceKm).toBe(2.5);
+    expect(response.body.data.durationSeconds).toBe(420);
+    expect(response.body.data.routingProvider).toBe("VALHALLA_MOTORCYCLE");
+    expect(response.body.data.routeCoordinates).toHaveLength(2);
   });
 
   it("applies the UGX 1,000 minimum to a 0.9 km journey", async () => {
     mocks.fareRuleFindMany.mockResolvedValue([]);
     const token = await accessToken("CUSTOMER");
+    mocks.getMotorcycleRoute.mockResolvedValueOnce({
+      distanceKm: 0.9,
+      durationSeconds: 180,
+      coordinates: [
+        { latitude: 3.0200, longitude: 30.9100 },
+        { latitude: 3.0200, longitude: 30.9181 }
+      ],
+      provider: "VALHALLA_MOTORCYCLE"
+    });
     const response = await request(app)
       .post("/api/v1/rides/fare-quote")
       .set("Authorization", `Bearer ${token}`)
@@ -133,6 +166,15 @@ describe("Motorcycle ride API", () => {
   it("calculates fares proportionally at UGX 500 per kilometre above the minimum", async () => {
     mocks.fareRuleFindMany.mockResolvedValue([]);
     const token = await accessToken("CUSTOMER");
+    mocks.getMotorcycleRoute.mockResolvedValueOnce({
+      distanceKm: 4,
+      durationSeconds: 600,
+      coordinates: [
+        { latitude: 3.0200, longitude: 30.9100 },
+        { latitude: 3.0200, longitude: 30.9460 }
+      ],
+      provider: "VALHALLA_MOTORCYCLE"
+    });
     const response = await request(app)
       .post("/api/v1/rides/fare-quote")
       .set("Authorization", `Bearer ${token}`)
@@ -153,15 +195,24 @@ describe("Motorcycle ride API", () => {
   it("does not quote journeys beyond the pilot tariff coverage", async () => {
     mocks.fareRuleFindMany.mockResolvedValue([]);
     const token = await accessToken("CUSTOMER");
+    mocks.getMotorcycleRoute.mockResolvedValueOnce({
+      distanceKm: 31,
+      durationSeconds: 4000,
+      coordinates: [
+        { latitude: 3.0200, longitude: 30.9100 },
+        { latitude: 3.3000, longitude: 30.9100 }
+      ],
+      provider: "VALHALLA_MOTORCYCLE"
+    });
     const response = await request(app)
       .post("/api/v1/rides/fare-quote")
       .set("Authorization", `Bearer ${token}`)
       .send({
         pickup: route.pickup,
         destination: {
-          latitude: 3.32,
-          longitude: 30.91,
-          description: "Outside Arua pilot tariff range"
+          latitude: 3.3000,
+          longitude: 30.9100,
+          description: "31 km road journey within pilot map bounds"
         }
       });
 
