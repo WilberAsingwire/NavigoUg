@@ -15,6 +15,11 @@ import {
 import { StatusBar } from "expo-status-bar";
 import MapView, { Marker, Polyline } from "react-native-maps";
 
+type UiAppearance = "LIGHT" | "DARK";
+type UiTextSize = "COMPACT" | "STANDARD" | "LARGE";
+type UiPreferences = { appearance: UiAppearance; textSize: UiTextSize };
+const UI_PREFERENCES_KEY = "navigo.uiPreferences";
+
 type Session = {
   accessToken: string;
   refreshToken: string;
@@ -24,7 +29,10 @@ type Session = {
     id: string;
     fullName: string;
     phone: string;
+    email?: string | null;
     role: "CUSTOMER" | "RIDER" | "ADMIN";
+    availableRoles?: Array<"CUSTOMER" | "RIDER" | "ADMIN">;
+    riderProfile?: { licenceNumber: string | null; motorcyclePlate: string | null; motorcycleDescription: string | null } | null;
     riderApprovalStatus: "PENDING" | "APPROVED" | "REJECTED" | "SUSPENDED" | null;
   };
 };
@@ -168,9 +176,12 @@ const ACTIVE_TRACKING_STATUSES = [
 ];
 
 
+type WorkspaceTab = "home" | "activity" | "requests" | "jobs" | "profile";
+
 type Props = {
   session: Session;
   onSignOut: () => void;
+  onSessionChange: (session: Session) => void;
   signingOut: boolean;
 };
 
@@ -619,10 +630,45 @@ async function geocodeAruaAddress(value: string): Promise<RideLocation> {
   };
 }
 
-export default function RidesHome({ session, onSignOut, signingOut }: Props) {
-  const isCustomer = session.user.role === "CUSTOMER";
-  const isApprovedRider = session.user.role === "RIDER" && session.user.riderApprovalStatus === "APPROVED";
+export default function RidesHome({ session, onSignOut, onSessionChange, signingOut }: Props) {
   const [activeSession, setActiveSession] = useState(session);
+
+  useEffect(() => {
+    setActiveSession(session);
+  }, [session]);
+  const [mainTab, setMainTab] = useState<WorkspaceTab>("home");
+  const [appearance, setAppearance] = useState<UiAppearance>("LIGHT");
+  const [textSize, setTextSize] = useState<UiTextSize>("STANDARD");
+  const isCustomer = activeSession.user.role === "CUSTOMER";
+
+  useEffect(() => {
+    let mounted = true;
+    SecureStore.getItemAsync(UI_PREFERENCES_KEY).then((stored) => {
+      if (!stored) return;
+      const parsed = JSON.parse(stored) as Partial<UiPreferences>;
+      const nextAppearance: UiAppearance = parsed.appearance === "DARK" ? "DARK" : "LIGHT";
+      const nextTextSize: UiTextSize = parsed.textSize === "COMPACT" || parsed.textSize === "LARGE"
+        ? parsed.textSize
+        : "STANDARD";
+      if (!mounted) return;
+      styles = createAppStyles(nextAppearance, nextTextSize);
+      setAppearance(nextAppearance);
+      setTextSize(nextTextSize);
+    }).catch(() => undefined);
+    return () => { mounted = false; };
+  }, []);
+
+  const updateUiPreferences = useCallback(async (changes: Partial<UiPreferences>) => {
+    const next: UiPreferences = {
+      appearance: changes.appearance ?? appearance,
+      textSize: changes.textSize ?? textSize
+    };
+    styles = createAppStyles(next.appearance, next.textSize);
+    setAppearance(next.appearance);
+    setTextSize(next.textSize);
+    await SecureStore.setItemAsync(UI_PREFERENCES_KEY, JSON.stringify(next)).catch(() => undefined);
+  }, [appearance, textSize]);
+  const isApprovedRider = activeSession.user.role === "RIDER" && activeSession.user.riderApprovalStatus === "APPROVED";
   const refreshTokenRef = useRef(session.refreshToken);
   refreshTokenRef.current = activeSession.refreshToken;
   const refreshInFlight = useRef<Promise<string> | null>(null);
@@ -650,6 +696,7 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
       const renewedSession = payload.data;
       await SecureStore.setItemAsync("navigo.session", JSON.stringify(renewedSession));
       setActiveSession(renewedSession);
+      onSessionChange(renewedSession);
       return renewedSession.accessToken;
     })();
 
@@ -659,9 +706,71 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
     } finally {
       if (refreshInFlight.current === pending) refreshInFlight.current = null;
     }
-  }, [onSignOut]);
+  }, [onSignOut, onSessionChange]);
 
-  const [tab, setTab] = useState<"book" | "history" | "parcel">("book");
+  const saveOwnProfile = useCallback(async (input: { fullName: string; email: string }) => {
+    const result = await apiRequest<{ data: Session["user"] }>(
+      "/api/v1/auth/me",
+      activeSession.accessToken,
+      {
+        method: "PATCH",
+        body: JSON.stringify(input)
+      },
+      refreshAccessToken
+    );
+    const updatedSession = { ...activeSession, user: result.data };
+    await SecureStore.setItemAsync("navigo.session", JSON.stringify(updatedSession));
+    setActiveSession(updatedSession);
+    onSessionChange(updatedSession);
+  }, [activeSession, refreshAccessToken, onSessionChange]);
+
+  const changeOwnPassword = useCallback(async (input: { currentPassword: string; newPassword: string }) => {
+    const result = await apiRequest<{ data: Session }>(
+      "/api/v1/auth/change-password",
+      activeSession.accessToken,
+      {
+        method: "POST",
+        body: JSON.stringify(input)
+      },
+      refreshAccessToken
+    );
+    await SecureStore.setItemAsync("navigo.session", JSON.stringify(result.data));
+    setActiveSession(result.data);
+    onSessionChange(result.data);
+  }, [activeSession.accessToken, refreshAccessToken, onSessionChange]);
+
+  const switchWorkspace = useCallback(async (role: "CUSTOMER" | "RIDER") => {
+    const result = await apiRequest<{ data: Session }>(
+      "/api/v1/auth/switch-workspace",
+      activeSession.accessToken,
+      { method: "POST", body: JSON.stringify({ role }) },
+      refreshAccessToken
+    );
+    await SecureStore.setItemAsync("navigo.session", JSON.stringify(result.data));
+    setActiveSession(result.data);
+    onSessionChange(result.data);
+    setMainTab("home");
+  }, [activeSession.accessToken, refreshAccessToken, onSessionChange]);
+
+  const applyForRider = useCallback(async (input: {
+    licenceNumber: string; motorcyclePlate: string; motorcycleDescription: string;
+  }) => {
+    const result = await apiRequest<{ data: Session["user"] }>(
+      "/api/v1/auth/apply-rider",
+      activeSession.accessToken,
+      { method: "POST", body: JSON.stringify(input) },
+      refreshAccessToken
+    );
+    const updatedSession = { ...activeSession, user: result.data };
+    await SecureStore.setItemAsync("navigo.session", JSON.stringify(updatedSession));
+    setActiveSession(updatedSession);
+    onSessionChange(updatedSession);
+  }, [activeSession, refreshAccessToken, onSessionChange]);
+
+  const [tab, setTab] = useState<"book" | "parcel">("book");
+  const [customerActivityTab, setCustomerActivityTab] = useState<"rides" | "parcels">("rides");
+  const [riderRequestTab, setRiderRequestTab] = useState<"rides" | "parcels">("rides");
+  const [riderJobTab, setRiderJobTab] = useState<"rides" | "parcels">("rides");
   const [pickup, setPickup] = useState("");
   const [destination, setDestination] = useState("");
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("CASH");
@@ -721,7 +830,7 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
   const loadDashboard = useCallback(async () => {
     setLoading(true);
     setError("");
-    if (session.user.role === "ADMIN") {
+    if (activeSession.user.role === "ADMIN") {
       try {
         const riderQuery = adminRiderFilter === "ALL" ? "" : `?status=${adminRiderFilter}`;
         const [riderResult, fareResult] = await Promise.all([
@@ -759,7 +868,7 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
         setAvailableParcels(parcelQueue.data ?? []);
         setAssignedParcels(myParcels.data ?? []);
         setSentParcels([]);
-      } else if (session.user.role === "CUSTOMER") {
+      } else if (activeSession.user.role === "CUSTOMER") {
         const mine = await apiRequest<{ data: RiderParcel[] }>("/api/v1/parcels/mine", activeSession.accessToken, undefined, refreshAccessToken);
         setSentParcels(mine.data ?? []);
         setAvailableParcels([]);
@@ -775,7 +884,7 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
     } finally {
       setLoading(false);
     }
-  }, [activeSession.accessToken, session.user.role, isApprovedRider, riderOnline, adminRiderFilter, refreshAccessToken]);
+  }, [activeSession.accessToken, activeSession.user.role, isApprovedRider, riderOnline, adminRiderFilter, refreshAccessToken]);
 
   const refreshAvailableRides = useCallback(async () => {
     if (!isApprovedRider || !riderOnline) return;
@@ -974,7 +1083,8 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
       setLocations(null);
       setPickup("");
       setDestination("");
-      setTab("history");
+      setMainTab("activity");
+      setCustomerActivityTab("rides");
       await loadDashboard();
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "Unable to create the ride request.");
@@ -1418,21 +1528,25 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      <StatusBar style="dark" />
-      <ScrollView contentContainerStyle={styles.page} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+      <StatusBar style={appearance === "DARK" ? "light" : "dark"} />
+      <ScrollView style={styles.mainScroll} contentContainerStyle={styles.page} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
         <View style={styles.topBar}>
           <View>
             <Text style={styles.brandSmall}>NAVIGO</Text>
             <Text style={styles.greeting}>Hello, {session.user.fullName.split(" ")[0]}</Text>
             <Text style={styles.muted}>{isCustomer ? "Your ride starts here" : "Your rider workspace"}</Text>
           </View>
-          <TouchableOpacity style={styles.signOut} onPress={onSignOut} disabled={signingOut}>
-            {signingOut ? <ActivityIndicator color="#174A72" /> : <Text style={styles.signOutText}>Sign out</Text>}
-          </TouchableOpacity>
+{activeSession.user.role === "ADMIN" ? (
+            <TouchableOpacity style={styles.signOut} onPress={onSignOut} disabled={signingOut}>
+              {signingOut ? <ActivityIndicator color="#174A72" /> : <Text style={styles.signOutText}>Sign out</Text>}
+            </TouchableOpacity>
+          ) : null}
         </View>
 
         {isCustomer ? (
           <>
+            {mainTab === "home" ? (
+              <>
             <View style={styles.customerMapFrame}>
               <MapView
                 style={styles.customerMap}
@@ -1478,24 +1592,18 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
               <Text style={styles.serviceHeadingSubtitle}>Choose a service</Text>
             </View>
             <View style={styles.serviceChoices}>
-              <TouchableOpacity style={[styles.serviceTile, tab !== "parcel" ? styles.serviceTileActive : null]} onPress={() => { setTab("book"); setError(""); setMessage(""); }}>
+              <TouchableOpacity style={[styles.serviceTile, tab !== "parcel" ? styles.serviceTileActive : null]} onPress={() => { setMainTab("home"); setTab("book"); setError(""); setMessage(""); }}>
                 <Text style={styles.serviceEmoji}>🏍️</Text>
                 <Text style={styles.serviceTitle}>Ride</Text>
                 <Text style={styles.serviceDescription}>Travel around Arua</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={[styles.serviceTile, tab === "parcel" ? styles.serviceTileActive : null]} onPress={() => { setTab("parcel"); setError(""); setMessage(""); setCreatedParcel(null); }}>
+              <TouchableOpacity style={[styles.serviceTile, tab === "parcel" ? styles.serviceTileActive : null]} onPress={() => { setMainTab("home"); setTab("parcel"); setError(""); setMessage(""); setCreatedParcel(null); }}>
                 <Text style={styles.serviceEmoji}>📦</Text>
                 <Text style={styles.serviceTitle}>Send an Item</Text>
                 <Text style={styles.serviceDescription}>Pickup and delivery</Text>
               </TouchableOpacity>
             </View>
 
-            {tab !== "parcel" ? (
-              <View style={styles.tabRow}>
-                <TabButton label="Book a ride" selected={tab === "book"} onPress={() => setTab("book")} />
-                <TabButton label="My rides" selected={tab === "history"} onPress={() => { setTab("history"); void loadDashboard(); }} />
-              </View>
-            ) : null}
 
             {tab === "parcel" ? (
               <View style={styles.card}>
@@ -1563,7 +1671,8 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
                   <PrimaryButton label="Send another item" loading={false} onPress={() => { setCreatedParcel(null); setPickup(""); setDestination(""); setItemDescription(""); setRecipientName(""); setRecipientPhone(""); setSelectedPickupLocation(null); setSelectedDestinationLocation(null); setParcelQuote(null); }} />
                 )}
               </View>
-            ) : tab === "book" ? (
+
+            ) : (
               <View style={styles.card}>
                 <Text style={styles.cardTitle}>Plan your trip</Text>
                 <Text style={styles.label}>Pickup location</Text>
@@ -1681,11 +1790,19 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
                   <PrimaryButton label="Confirm ride request" loading={working} onPress={requestRide} disabled={working} />
                 )}
               </View>
-            ) : (
+
+            )}
+              </>
+            ) : mainTab === "activity" ? (
               <View style={styles.section}>
-                <SectionHeader title="Your ride requests" onRefresh={loadDashboard} loading={loading} />
-                <SectionHeader title="Your item deliveries" onRefresh={loadDashboard} loading={loading} />
-                {sentParcels.length ? sentParcels.map((parcel) => (
+                <SectionHeader title="Your activity" onRefresh={loadDashboard} loading={loading} />
+                <View style={styles.tabRow}>
+                  <TabButton label="Rides" selected={customerActivityTab === "rides"} onPress={() => setCustomerActivityTab("rides")} />
+                  <TabButton label="Item deliveries" selected={customerActivityTab === "parcels"} onPress={() => setCustomerActivityTab("parcels")} />
+                </View>
+                {customerActivityTab === "parcels" ? (
+                  <>
+                    {sentParcels.length ? sentParcels.map((parcel) => (
                   <CustomerParcelCard
                     key={parcel.id}
                     parcel={parcel}
@@ -1694,8 +1811,10 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
                     onCancel={["PENDING", "ACCEPTED", "ARRIVED_AT_PICKUP"].includes(parcel.status) ? () => performParcelAction(parcel.id, "cancel") : undefined}
                   />
                 )) : <EmptyState title="No item deliveries yet" text="Items you send will appear here with their delivery progress." />}
-                <SectionHeader title="Your ride requests" onRefresh={loadDashboard} loading={loading} />
-                {rides.length ? rides.map((ride) => (
+                  </>
+                ) : (
+                  <>
+                    {rides.length ? rides.map((ride) => (
                   <RideCard
                     key={ride.id}
                     ride={ride}
@@ -1704,26 +1823,32 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
                     onCancel={() => performRideAction(ride.id, "cancel")}
                   />
                 )) : <EmptyState title="No rides yet" text="Your ride requests and trip history will appear here." />}
+                  </>
+                )}
                 {error ? <Notice tone="error" text={error} /> : null}
                 {message ? <Notice tone="success" text={message} /> : null}
               </View>
+            ) : (
+              <ProfilePanel session={activeSession} onSignOut={onSignOut} signingOut={signingOut} onSaveProfile={saveOwnProfile} onChangePassword={changeOwnPassword} onSwitchWorkspace={switchWorkspace} onApplyRider={applyForRider} refreshAccessToken={refreshAccessToken} appearance={appearance} textSize={textSize} onUpdateUiPreferences={updateUiPreferences} />
             )}
           </>
-        ) : session.user.role === "RIDER" ? (
+        ) : activeSession.user.role === "RIDER" ? (
           <>
-            {session.user.riderApprovalStatus !== "APPROVED" ? (
+            {mainTab === "profile" ? (
+              <ProfilePanel session={activeSession} onSignOut={onSignOut} signingOut={signingOut} onSaveProfile={saveOwnProfile} onChangePassword={changeOwnPassword} onSwitchWorkspace={switchWorkspace} onApplyRider={applyForRider} refreshAccessToken={refreshAccessToken} appearance={appearance} textSize={textSize} onUpdateUiPreferences={updateUiPreferences} />
+            ) : activeSession.user.riderApprovalStatus !== "APPROVED" ? (
               <View style={styles.card}>
                 <Text style={styles.cardTitle}>Rider application status</Text>
                 <View style={styles.statusPill}>
-                  <Text style={styles.statusPillText}>{session.user.riderApprovalStatus ?? "NOT SET"}</Text>
+                  <Text style={styles.statusPillText}>{activeSession.user.riderApprovalStatus ?? "NOT SET"}</Text>
                 </View>
                 <Text style={styles.bodyText}>
-                  {session.user.riderApprovalStatus === "PENDING"
+                  {activeSession.user.riderApprovalStatus === "PENDING"
                     ? "Thank you for applying. Your details are waiting for administrator review. You can access ride requests after your account is approved."
                     : "Your rider account is not approved for accepting bookings. Please contact NAVIGO support for guidance."}
                 </Text>
               </View>
-            ) : (
+            ) : mainTab === "home" ? (
               <>
                 <View style={styles.trackingControlPanel}>
                   <Text style={styles.sectionTitle}>Rider availability</Text>
@@ -1739,8 +1864,27 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
                   <Text style={styles.heroTitle}>{riderOnline ? "Nearby rides." : "Ready for your next ride?"}</Text>
                   <Text style={styles.heroText}>{riderOnline ? "Ride requests are matched to your fresh location and shown nearest first." : "Go online to receive ride requests close to you."}</Text>
                 </View>
-                <SectionHeader title="Nearby rides" onRefresh={loadDashboard} loading={loading} />
-                {availableRides.length ? availableRides.map((ride) => (
+                <View style={styles.quickAccessRow}>
+                  <TouchableOpacity style={styles.quickAccessCard} onPress={() => setMainTab("requests")}>
+                    <Text style={styles.quickAccessTitle}>Find requests</Text>
+                    <Text style={styles.quickAccessText}>View nearby rides and item deliveries</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity style={styles.quickAccessCard} onPress={() => setMainTab("jobs")}>
+                    <Text style={styles.quickAccessTitle}>My jobs</Text>
+                    <Text style={styles.quickAccessText}>Manage work you have accepted</Text>
+                  </TouchableOpacity>
+                </View>
+              </>
+            ) : mainTab === "requests" ? (
+              <View style={styles.section}>
+                <SectionHeader title="Nearby requests" onRefresh={loadDashboard} loading={loading} />
+                <View style={styles.tabRow}>
+                  <TabButton label="Ride requests" selected={riderRequestTab === "rides"} onPress={() => setRiderRequestTab("rides")} />
+                  <TabButton label="Item deliveries" selected={riderRequestTab === "parcels"} onPress={() => setRiderRequestTab("parcels")} />
+                </View>
+                {riderRequestTab === "rides" ? (
+                  <>
+                    {availableRides.length ? availableRides.map((ride) => (
                   <RideCard
                     key={ride.id}
                     ride={ride}
@@ -1752,14 +1896,43 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
                   title={riderOnline ? "No nearby rides yet" : "You are offline"}
                   text={riderOnline ? "There are no ride requests within your current matching area. NAVIGO will keep checking for nearby requests." : "Go online to see ride requests near your current location."}
                 />}
-
-                <SectionHeader title="Available item deliveries" onRefresh={loadDashboard} loading={loading} />
-                {availableParcels.length ? availableParcels.map((parcel) => (
+                  </>
+                ) : (
+                  <>
+                    {availableParcels.length ? availableParcels.map((parcel) => (
                   <ParcelRiderCard key={parcel.id} parcel={parcel} busy={working} onAccept={() => performParcelAction(parcel.id, "accept")} />
                 )) : <EmptyState title="No available item deliveries" text="New customer item requests will appear here." />}
-
-                <SectionHeader title="My assigned item deliveries" onRefresh={loadDashboard} loading={loading} />
-                {assignedParcels.length ? assignedParcels.map((parcel) => (
+                  </>
+                )}
+              </View>
+            ) : mainTab === "jobs" ? (
+              <View style={styles.section}>
+                <SectionHeader title="My jobs" onRefresh={loadDashboard} loading={loading} />
+                <View style={styles.tabRow}>
+                  <TabButton label="Ride jobs" selected={riderJobTab === "rides"} onPress={() => setRiderJobTab("rides")} />
+                  <TabButton label="Item deliveries" selected={riderJobTab === "parcels"} onPress={() => setRiderJobTab("parcels")} />
+                </View>
+                {riderJobTab === "rides" ? (
+                  <>
+                    {rides.length ? rides.map((ride) => {
+                  const nextStatus = NEXT_RIDER_STATUS[ride.status];
+                  return (
+                    <RideCard
+                      key={ride.id}
+                      ride={ride}
+                      busy={working}
+                      riderView
+                      onAdvance={nextStatus ? () => performRideAction(ride.id, nextStatus) : undefined}
+                      paymentReference={ridePaymentReferences[ride.id] ?? ""}
+                      onPaymentReferenceChange={(value) => setRidePaymentReferences((current) => ({ ...current, [ride.id]: value }))}
+                      onRecordPayment={ride.status === "COMPLETED" && ride.payment?.status === "UNPAID" ? () => recordManualPayment("ride", ride.id) : undefined}
+                    />
+                  );
+                }) : <EmptyState title="No assigned rides" text="Rides you accept will appear here." />}
+                  </>
+                ) : (
+                  <>
+                    {assignedParcels.length ? assignedParcels.map((parcel) => (
                   <ParcelRiderCard
                     key={parcel.id}
                     parcel={parcel}
@@ -1785,29 +1958,16 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
                       : undefined}
                   />
                 )) : <EmptyState title="No assigned item deliveries" text="Item deliveries you accept will appear here." />}
-
-                <SectionHeader title="My assigned rides" onRefresh={loadDashboard} loading={loading} />
-                {rides.length ? rides.map((ride) => {
-                  const nextStatus = NEXT_RIDER_STATUS[ride.status];
-                  return (
-                    <RideCard
-                      key={ride.id}
-                      ride={ride}
-                      busy={working}
-                      riderView
-                      onAdvance={nextStatus ? () => performRideAction(ride.id, nextStatus) : undefined}
-                      paymentReference={ridePaymentReferences[ride.id] ?? ""}
-                      onPaymentReferenceChange={(value) => setRidePaymentReferences((current) => ({ ...current, [ride.id]: value }))}
-                      onRecordPayment={ride.status === "COMPLETED" && ride.payment?.status === "UNPAID" ? () => recordManualPayment("ride", ride.id) : undefined}
-                    />
-                  );
-                }) : <EmptyState title="No assigned rides" text="Rides you accept will appear here." />}
-              </>
+                  </>
+                )}
+              </View>
+            ) : (
+              <ProfilePanel session={activeSession} onSignOut={onSignOut} signingOut={signingOut} onSaveProfile={saveOwnProfile} onChangePassword={changeOwnPassword} onSwitchWorkspace={switchWorkspace} onApplyRider={applyForRider} refreshAccessToken={refreshAccessToken} appearance={appearance} textSize={textSize} onUpdateUiPreferences={updateUiPreferences} />
             )}
             {error ? <Notice tone="error" text={error} /> : null}
             {message ? <Notice tone="success" text={message} /> : null}
           </>
-        ) : session.user.role === "ADMIN" ? (
+        ) : activeSession.user.role === "ADMIN" ? (
           <>
             <View style={styles.heroCard}>
               <Text style={styles.heroEyebrow}>NAVIGO MANAGEMENT</Text>
@@ -1976,7 +2136,576 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
         )}
         <Text style={styles.footer}>NAVIGO • Arua, Uganda</Text>
       </ScrollView>
+      {activeSession.user.role === "CUSTOMER" || activeSession.user.role === "RIDER" ? (
+        <BottomNavigation role={activeSession.user.role} activeTab={mainTab} onChange={(nextTab) => {
+          setMainTab(nextTab);
+          if (nextTab === "home" && activeSession.user.role === "CUSTOMER") setTab("book");
+        }} />
+      ) : null}
     </SafeAreaView>
+  );
+}
+
+type ProfileNotification = {
+  id: string;
+  title: string;
+  body: string;
+  requestType: "RIDE" | "PARCEL" | null;
+  requestId: string | null;
+  readAt: string | null;
+  createdAt: string;
+};
+
+type ProfilePage = "home" | "account" | "preferences" | "notifications" | "workspace" | "support" | "privacy";
+
+function ProfilePanel({
+  session,
+  onSignOut,
+  signingOut,
+  onSaveProfile,
+  onChangePassword,
+  onSwitchWorkspace,
+  onApplyRider,
+  refreshAccessToken,
+  appearance,
+  textSize,
+  onUpdateUiPreferences
+}: {
+  session: Session;
+  onSignOut: () => void;
+  signingOut: boolean;
+  onSaveProfile: (input: { fullName: string; email: string }) => Promise<void>;
+  onChangePassword: (input: { currentPassword: string; newPassword: string }) => Promise<void>;
+  onSwitchWorkspace: (role: "CUSTOMER" | "RIDER") => Promise<void>;
+  onApplyRider: (input: { licenceNumber: string; motorcyclePlate: string; motorcycleDescription: string }) => Promise<void>;
+  refreshAccessToken: () => Promise<string>;
+  appearance: UiAppearance;
+  textSize: UiTextSize;
+  onUpdateUiPreferences: (changes: Partial<UiPreferences>) => Promise<void>;
+}) {
+  const roleLabel = session.user.role === "CUSTOMER" ? "Customer" : session.user.role === "RIDER" ? "Rider" : "Administrator";
+  const riderStatus = session.user.riderApprovalStatus ?? "NOT SET";
+  const [page, setPage] = useState<ProfilePage>("home");
+  const [editing, setEditing] = useState(false);
+  const [fullName, setFullName] = useState(session.user.fullName);
+  const [email, setEmail] = useState(session.user.email ?? "");
+  const [showPasswordForm, setShowPasswordForm] = useState(false);
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [licenceNumber, setLicenceNumber] = useState("");
+  const [motorcyclePlate, setMotorcyclePlate] = useState("");
+  const [motorcycleDescription, setMotorcycleDescription] = useState("");
+  const [notifications, setNotifications] = useState<ProfileNotification[]>([]);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [notificationsLoading, setNotificationsLoading] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+
+  useEffect(() => {
+    setFullName(session.user.fullName);
+    setEmail(session.user.email ?? "");
+  }, [session.user.fullName, session.user.email]);
+
+  useEffect(() => {
+    if (page !== "notifications" && page !== "home") return;
+    let active = true;
+    setNotificationsLoading(true);
+    apiRequest<{ data: { items: ProfileNotification[]; unreadCount: number } }>(
+      "/api/v1/notifications",
+      session.accessToken,
+      {},
+      refreshAccessToken
+    ).then((result) => {
+      if (!active) return;
+      setNotifications(result.data.items);
+      setUnreadCount(result.data.unreadCount);
+      setError("");
+    }).catch((cause) => {
+      if (active) setError(cause instanceof Error ? cause.message : "Notifications could not be loaded.");
+    }).finally(() => {
+      if (active) setNotificationsLoading(false);
+    });
+    return () => { active = false; };
+  }, [page, session.accessToken, refreshAccessToken]);
+
+  async function saveProfile() {
+    setBusy(true);
+    setError("");
+    setSuccess("");
+    try {
+      await onSaveProfile({ fullName: fullName.trim(), email: email.trim() });
+      setEditing(false);
+      setSuccess("Your profile has been updated.");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "We couldn't update your profile. Please try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function savePassword() {
+    setError("");
+    setSuccess("");
+    if (newPassword !== confirmPassword) {
+      setError("The new password and confirmation do not match.");
+      return;
+    }
+    if (newPassword.length < 8) {
+      setError("Your new password must contain at least 8 characters.");
+      return;
+    }
+    setBusy(true);
+    try {
+      await onChangePassword({ currentPassword, newPassword });
+      setCurrentPassword("");
+      setNewPassword("");
+      setConfirmPassword("");
+      setShowPasswordForm(false);
+      setSuccess("Password changed. Other devices will need to sign in again.");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "We couldn't change your password. Please try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function updatePreferences(changes: Partial<UiPreferences>) {
+    setBusy(true);
+    setError("");
+    setSuccess("");
+    try {
+      await onUpdateUiPreferences(changes);
+      setSuccess("Your display preferences have been saved.");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Your preferences could not be saved.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function submitRiderApplication() {
+    setError("");
+    setSuccess("");
+    if (!licenceNumber.trim() || !motorcyclePlate.trim() || !motorcycleDescription.trim()) {
+      setError("Complete your licence and motorcycle details before submitting.");
+      return;
+    }
+    setBusy(true);
+    try {
+      await onApplyRider({
+        licenceNumber: licenceNumber.trim(),
+        motorcyclePlate: motorcyclePlate.trim().toUpperCase(),
+        motorcycleDescription: motorcycleDescription.trim()
+      });
+      setSuccess("Your rider application has been submitted and is waiting for NAVIGO review.");
+      setLicenceNumber("");
+      setMotorcyclePlate("");
+      setMotorcycleDescription("");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Your rider application could not be submitted.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function changeWorkspace(role: "CUSTOMER" | "RIDER") {
+    setError("");
+    setBusy(true);
+    try {
+      await onSwitchWorkspace(role);
+      setPage("home");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "The workspace could not be changed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function markNotificationRead(notificationId: string) {
+    try {
+      await apiRequest<{ data: { id: string; read: boolean } }>(
+        `/api/v1/notifications/${notificationId}/read`,
+        session.accessToken,
+        { method: "PATCH" },
+        refreshAccessToken
+      );
+      setNotifications((current) => current.map((item) => item.id === notificationId
+        ? { ...item, readAt: new Date().toISOString() }
+        : item));
+      setUnreadCount((count) => Math.max(0, count - 1));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "This notification could not be updated.");
+    }
+  }
+
+  async function markAllNotificationsRead() {
+    try {
+      await apiRequest<{ data: { updatedCount: number } }>(
+        "/api/v1/notifications/read-all",
+        session.accessToken,
+        { method: "POST" },
+        refreshAccessToken
+      );
+      const now = new Date().toISOString();
+      setNotifications((current) => current.map((item) => ({ ...item, readAt: item.readAt ?? now })));
+      setUnreadCount(0);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Notifications could not be updated.");
+    }
+  }
+
+  function menuItem(title: string, description: string, destination: ProfilePage, badgeText?: string) {
+    return (
+      <TouchableOpacity
+        key={title}
+        style={styles.profileMenuItem}
+        accessibilityRole="button"
+        onPress={() => { setError(""); setSuccess(""); setPage(destination); }}
+      >
+        <View style={styles.profileMenuCopy}>
+          <Text style={styles.profileMenuTitle}>{title}</Text>
+          <Text style={styles.profileMenuDescription}>{description}</Text>
+        </View>
+        {badgeText ? <Text style={styles.profileMenuBadge}>{badgeText}</Text> : null}
+        <Text style={styles.profileMenuArrow}>›</Text>
+      </TouchableOpacity>
+    );
+  }
+
+  const pageTitle: Record<ProfilePage, string> = {
+    home: "Profile",
+    account: "My account",
+    preferences: "Preferences",
+    notifications: "Notifications",
+    workspace: "NAVIGO workspace",
+    support: "Help and support",
+    privacy: "Privacy and about"
+  };
+
+  return (
+    <View style={styles.profilePage}>
+      {page === "home" ? (
+        <>
+          <View style={styles.profileHero}>
+            <View style={styles.profileAvatar}>
+              <Text style={styles.profileAvatarText}>{session.user.fullName.trim().charAt(0).toUpperCase() || "N"}</Text>
+            </View>
+            <Text style={styles.profileName}>{session.user.fullName}</Text>
+            <Text style={styles.profileRole}>{roleLabel} workspace</Text>
+            <Text style={styles.profileHint}>Manage your account, settings and NAVIGO services.</Text>
+          </View>
+
+          <View style={styles.card}>
+            <Text style={styles.profileMenuGroupTitle}>ACCOUNT</Text>
+            {menuItem("Personal information and security", "Update your details and password", "account")}
+            {menuItem("NAVIGO workspace", "Switch between customer and rider services", "workspace")}
+          </View>
+          <View style={styles.card}>
+            <Text style={styles.profileMenuGroupTitle}>APP SETTINGS</Text>
+            {menuItem("Preferences and accessibility", "Appearance, text size and notifications", "preferences")}
+            {menuItem("Notifications", "Ride and item-delivery updates", "notifications", unreadCount > 0 ? String(unreadCount) : undefined)}
+          </View>
+          <View style={styles.card}>
+            <Text style={styles.profileMenuGroupTitle}>HELP AND INFORMATION</Text>
+            {menuItem("Help and support", "Answers to common questions", "support")}
+            {menuItem("Privacy and about NAVIGO", "Permissions, data use and app information", "privacy")}
+          </View>
+          {error ? <Notice tone="error" text={error} /> : null}
+          {success ? <Notice tone="success" text={success} /> : null}
+          <TouchableOpacity style={styles.profileSignOut} onPress={onSignOut} disabled={signingOut || busy}>
+            {signingOut ? <ActivityIndicator color="#B42318" /> : <Text style={styles.profileSignOutText}>Sign out of NAVIGO</Text>}
+          </TouchableOpacity>
+        </>
+      ) : (
+        <>
+          <TouchableOpacity style={styles.profileBack} onPress={() => { setPage("home"); setError(""); setSuccess(""); }}>
+            <Text style={styles.profileBackText}>‹  Profile</Text>
+          </TouchableOpacity>
+          <Text style={styles.profileSubTitle}>{pageTitle[page]}</Text>
+
+          {page === "account" ? (
+            <>
+              <View style={styles.card}>
+                <View style={styles.profileSectionHeader}>
+                  <Text style={styles.cardTitle}>Personal information</Text>
+                  <TouchableOpacity onPress={() => { setEditing((value) => !value); setError(""); setSuccess(""); }}>
+                    <Text style={styles.profileActionText}>{editing ? "Cancel" : "Edit"}</Text>
+                  </TouchableOpacity>
+                </View>
+                {editing ? (
+                  <>
+                    <Text style={styles.label}>Full name</Text>
+                    <TextInput style={styles.addressInput} value={fullName} onChangeText={setFullName} placeholder="Your full name" placeholderTextColor="#98A2B3" autoCapitalize="words" />
+                    <Text style={styles.label}>Email address</Text>
+                    <TextInput style={styles.addressInput} value={email} onChangeText={setEmail} placeholder="name@example.com (optional)" placeholderTextColor="#98A2B3" keyboardType="email-address" autoCapitalize="none" />
+                    <Text style={styles.profileHint}>Your phone number is used to sign in and identify your account, so it cannot be changed here without verification.</Text>
+                    <PrimaryButton label="Save profile" loading={busy} onPress={saveProfile} disabled={busy || fullName.trim().length < 2} />
+                  </>
+                ) : (
+                  <>
+                    <Detail label="Full name" value={session.user.fullName} />
+                    <Detail label="Phone number" value={session.user.phone} />
+                    <Detail label="Email address" value={session.user.email || "Not added"} />
+                    <Detail label="Account type" value={roleLabel} />
+                  </>
+                )}
+              </View>
+
+              {session.user.riderProfile ? (
+                <View style={styles.card}>
+                  <Text style={styles.cardTitle}>Rider application</Text>
+                  <Detail label="Application status" value={riderStatus.replace(/_/g, " ")} />
+                  <Detail label="Driving licence" value={session.user.riderProfile.licenceNumber || "Not available"} />
+                  <Detail label="Motorcycle" value={session.user.riderProfile.motorcycleDescription || "Not available"} />
+                  <Detail label="Number plate" value={session.user.riderProfile.motorcyclePlate || "Not available"} />
+                  <Text style={styles.profileHint}>Licence and motorcycle changes require NAVIGO review.</Text>
+                </View>
+              ) : null}
+
+              <View style={styles.card}>
+                <View style={styles.profileSectionHeader}>
+                  <Text style={styles.cardTitle}>Account security</Text>
+                  <TouchableOpacity onPress={() => { setShowPasswordForm((value) => !value); setError(""); setSuccess(""); }}>
+                    <Text style={styles.profileActionText}>{showPasswordForm ? "Close" : "Change password"}</Text>
+                  </TouchableOpacity>
+                </View>
+                {showPasswordForm ? (
+                  <>
+                    <Text style={styles.label}>Current password</Text>
+                    <TextInput style={styles.addressInput} value={currentPassword} onChangeText={setCurrentPassword} secureTextEntry placeholder="Enter current password" placeholderTextColor="#98A2B3" />
+                    <Text style={styles.label}>New password</Text>
+                    <TextInput style={styles.addressInput} value={newPassword} onChangeText={setNewPassword} secureTextEntry placeholder="At least 8 characters" placeholderTextColor="#98A2B3" />
+                    <Text style={styles.label}>Confirm new password</Text>
+                    <TextInput style={styles.addressInput} value={confirmPassword} onChangeText={setConfirmPassword} secureTextEntry placeholder="Enter the new password again" placeholderTextColor="#98A2B3" />
+                    <PrimaryButton label="Update password" loading={busy} onPress={savePassword} disabled={busy || !currentPassword || !newPassword || !confirmPassword} />
+                    <Text style={styles.profileHint}>For your security, other devices will need to sign in again when their current access token expires.</Text>
+                  </>
+                ) : (
+                  <Text style={styles.profileInfoText}>Keep your password private and change it whenever you think it may have been exposed.</Text>
+                )}
+              </View>
+            </>
+          ) : null}
+
+          {page === "workspace" ? (
+            <>
+              <View style={styles.card}>
+                <Text style={styles.cardTitle}>Your current workspace</Text>
+                <Detail label="Active workspace" value={roleLabel} />
+                <Text style={styles.profileInfoText}>Your customer and rider activities remain linked to this same NAVIGO account.</Text>
+                {session.user.role === "CUSTOMER" && session.user.riderApprovalStatus === "APPROVED" ? (
+                  <PrimaryButton label="Switch to Rider workspace" loading={busy} onPress={() => changeWorkspace("RIDER")} disabled={busy} />
+                ) : null}
+                {session.user.role === "RIDER" ? (
+                  <PrimaryButton label="Switch to Customer workspace" loading={busy} onPress={() => changeWorkspace("CUSTOMER")} disabled={busy} />
+                ) : null}
+              </View>
+              {!session.user.riderProfile && session.user.role !== "ADMIN" ? (
+                <View style={styles.card}>
+                  <Text style={styles.cardTitle}>Become a NAVIGO rider</Text>
+                  <Text style={styles.profileInfoText}>Apply using your driving licence and motorcycle details. You can use your customer account while NAVIGO reviews your application.</Text>
+                  <Text style={styles.label}>Driving licence number</Text>
+                  <TextInput style={styles.addressInput} value={licenceNumber} onChangeText={setLicenceNumber} placeholder="Enter licence number" placeholderTextColor="#98A2B3" autoCapitalize="characters" />
+                  <Text style={styles.label}>Motorcycle number plate</Text>
+                  <TextInput style={styles.addressInput} value={motorcyclePlate} onChangeText={setMotorcyclePlate} placeholder="e.g. UXX 123X" placeholderTextColor="#98A2B3" autoCapitalize="characters" />
+                  <Text style={styles.label}>Motorcycle description</Text>
+                  <TextInput style={styles.addressInput} value={motorcycleDescription} onChangeText={setMotorcycleDescription} placeholder="Make, model and colour" placeholderTextColor="#98A2B3" />
+                  <PrimaryButton label="Submit rider application" loading={busy} onPress={submitRiderApplication} disabled={busy} />
+                </View>
+              ) : null}
+              {session.user.riderProfile && session.user.riderApprovalStatus !== "APPROVED" ? (
+                <View style={styles.profileInfoCard}>
+                  <Text style={styles.profileInfoTitle}>Rider application {riderStatus.toLowerCase()}</Text>
+                  <Text style={styles.profileInfoText}>
+                    {session.user.riderApprovalStatus === "PENDING"
+                      ? "NAVIGO is reviewing your details. Rider workspace access will become available after approval."
+                      : "Your rider application is not approved. Contact NAVIGO support for guidance before submitting another application."}
+                  </Text>
+                </View>
+              ) : null}
+            </>
+          ) : null}
+
+          {page === "preferences" ? (
+            <>
+              <View style={styles.card}>
+                <Text style={styles.cardTitle}>Appearance</Text>
+                <Text style={styles.profileInfoText}>Choose the appearance used throughout NAVIGO.</Text>
+                <View style={styles.profileChoiceRow}>
+                  {(["LIGHT", "DARK"] as UiAppearance[]).map((option) => (
+                    <TouchableOpacity
+                      key={option}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected: appearance === option }}
+                      style={[styles.profileChoiceButton, appearance === option && styles.profileChoiceButtonSelected]}
+                      onPress={() => updatePreferences({ appearance: option })}
+                      disabled={busy}
+                    >
+                      <Text style={[styles.profileChoiceText, appearance === option && styles.profileChoiceTextSelected]}>
+                        {option === "LIGHT" ? "Light" : "Dark"}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+                <Detail label="Current appearance" value={appearance === "DARK" ? "Dark" : "Light"} />
+              </View>
+              <View style={styles.card}>
+                <Text style={styles.cardTitle}>Text size</Text>
+                <Text style={styles.profileInfoText}>Adjust text throughout NAVIGO. Your phone's accessibility font scaling remains supported too.</Text>
+                <View style={styles.profileChoiceRow}>
+                  {(["COMPACT", "STANDARD", "LARGE"] as UiTextSize[]).map((option) => (
+                    <TouchableOpacity
+                      key={option}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected: textSize === option }}
+                      style={[styles.profileChoiceButton, textSize === option && styles.profileChoiceButtonSelected]}
+                      onPress={() => updatePreferences({ textSize: option })}
+                      disabled={busy}
+                    >
+                      <Text style={[styles.profileChoiceText, textSize === option && styles.profileChoiceTextSelected]}>
+                        {option === "COMPACT" ? "Small" : option === "STANDARD" ? "Standard" : "Large"}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+                <Detail label="Current text size" value={textSize === "COMPACT" ? "Small" : textSize === "LARGE" ? "Large" : "Standard"} />
+              </View>
+              <View style={styles.card}>
+                <Text style={styles.cardTitle}>Notifications</Text>
+                <Detail label="In-app notifications" value="Enabled" />
+                <Detail label="Push notifications" value="Not configured on this build" />
+                <Text style={styles.profileHint}>You can review ride and item-delivery updates in the Notifications section. Push alerts will require device registration and notification-service configuration.</Text>
+              </View>
+            </>
+          ) : null}
+
+          {page === "notifications" ? (
+            <View style={styles.card}>
+              <View style={styles.profileSectionHeader}>
+                <Text style={styles.cardTitle}>Recent updates</Text>
+                {unreadCount > 0 ? (
+                  <TouchableOpacity onPress={markAllNotificationsRead}>
+                    <Text style={styles.profileActionText}>Mark all read</Text>
+                  </TouchableOpacity>
+                ) : null}
+              </View>
+              {notificationsLoading ? (
+                <ActivityIndicator color="#174A72" style={{ marginVertical: 22 }} />
+              ) : notifications.length ? notifications.map((item) => (
+                <TouchableOpacity
+                  key={item.id}
+                  style={[styles.notificationItem, !item.readAt && styles.notificationItemUnread]}
+                  onPress={() => !item.readAt && markNotificationRead(item.id)}
+                  accessibilityRole="button"
+                >
+                  <View style={styles.notificationHeader}>
+                    <Text style={styles.notificationTitle}>{item.title}</Text>
+                    {!item.readAt ? <View style={styles.notificationUnreadDot} /> : null}
+                  </View>
+                  <Text style={styles.profileInfoText}>{item.body}</Text>
+                  <Text style={styles.notificationMeta}>
+                    {item.requestType === "RIDE" ? "Ride" : item.requestType === "PARCEL" ? "Item delivery" : "NAVIGO"}
+                    {"  •  "}{new Date(item.createdAt).toLocaleString()}
+                  </Text>
+                </TouchableOpacity>
+              )) : (
+                <EmptyState title="You're all caught up" text="Ride and item-delivery updates will appear here." />
+              )}
+            </View>
+          ) : null}
+
+          {page === "support" ? (
+            <>
+              <View style={styles.card}>
+                <Text style={styles.cardTitle}>Ride bookings</Text>
+                <Text style={styles.profileInfoText}>After you submit a ride request, NAVIGO looks for an available nearby rider. You can track the request and cancel it while cancellation is available in the app.</Text>
+              </View>
+              <View style={styles.card}>
+                <Text style={styles.cardTitle}>Item deliveries</Text>
+                <Text style={styles.profileInfoText}>Keep your pickup and delivery verification codes safe. Give each code only to the assigned rider at the matching collection or delivery step.</Text>
+              </View>
+              <View style={styles.card}>
+                <Text style={styles.cardTitle}>Payments</Text>
+                <Text style={styles.profileInfoText}>Pay the rider directly using the payment method selected for the request. NAVIGO does not collect or hold customer payments in this version.</Text>
+              </View>
+              <View style={styles.profileInfoCard}>
+                <Text style={styles.profileInfoTitle}>Need more help?</Text>
+                <Text style={styles.profileInfoText}>Official NAVIGO support phone and email details have not yet been configured in this build, so no unverified contact details are shown here.</Text>
+              </View>
+            </>
+          ) : null}
+
+          {page === "privacy" ? (
+            <>
+              <View style={styles.card}>
+                <Text style={styles.cardTitle}>Location and permissions</Text>
+                <Text style={styles.profileInfoText}>Location is used to set pickup points, calculate routes and match nearby riders. Rider availability location is shared while the rider is online and using NAVIGO.</Text>
+              </View>
+              <View style={styles.card}>
+                <Text style={styles.cardTitle}>Account information</Text>
+                <Text style={styles.profileInfoText}>Your name, phone number and optional email identify your account. Keep your password private and never share it with a rider or another user.</Text>
+              </View>
+              <View style={styles.card}>
+                <Text style={styles.cardTitle}>About NAVIGO</Text>
+                <Detail label="App" value="NAVIGO" />
+                <Detail label="Version" value="1.0.0" />
+                <Detail label="Pilot area" value="Arua, Uganda" />
+              </View>
+              <View style={styles.profileInfoCard}>
+                <Text style={styles.profileInfoTitle}>Legal documents</Text>
+                <Text style={styles.profileInfoText}>The final published Terms of Service and full Privacy Policy must be added before public launch. This screen is an in-app data-use summary, not a replacement for those documents.</Text>
+              </View>
+            </>
+          ) : null}
+
+          {error ? <Notice tone="error" text={error} /> : null}
+          {success ? <Notice tone="success" text={success} /> : null}
+        </>
+      )}
+    </View>
+  );
+}
+
+function Detail({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={styles.profileDetailRow}>
+      <Text style={styles.profileDetailLabel}>{label}</Text>
+      <Text style={styles.profileDetailValue}>{value}</Text>
+    </View>
+  );
+}
+
+function BottomNavigation({ role, activeTab, onChange }: {
+  role: "CUSTOMER" | "RIDER";
+  activeTab: WorkspaceTab;
+  onChange: (tab: WorkspaceTab) => void;
+}) {
+  const items: { key: WorkspaceTab; label: string; icon: string }[] = role === "CUSTOMER"
+    ? [
+        { key: "home", label: "Home", icon: "⌂" },
+        { key: "activity", label: "Activity", icon: "▤" },
+        { key: "profile", label: "Profile", icon: "◉" }
+      ]
+    : [
+        { key: "home", label: "Home", icon: "⌂" },
+        { key: "requests", label: "Requests", icon: "⌖" },
+        { key: "jobs", label: "My jobs", icon: "▣" },
+        { key: "profile", label: "Profile", icon: "◉" }
+      ];
+  return (
+    <View style={styles.bottomNav}>
+      {items.map((item) => {
+        const selected = activeTab === item.key;
+        return (
+          <TouchableOpacity key={item.key} accessibilityRole="button" accessibilityLabel={item.label} accessibilityState={{ selected }} style={styles.bottomNavItem} onPress={() => onChange(item.key)}>
+            <Text style={[styles.bottomNavIcon, selected && styles.bottomNavIconSelected]}>{item.icon}</Text>
+            <Text style={[styles.bottomNavLabel, selected && styles.bottomNavLabelSelected]}>{item.label}</Text>
+          </TouchableOpacity>
+        );
+      })}
+    </View>
   );
 }
 
@@ -2514,8 +3243,9 @@ const LIGHT_MAP_STYLE = [
   { featureType: "water", elementType: "geometry", stylers: [{ color: "#CFE3EF" }] }
 ];
 
-const styles = StyleSheet.create({
+const baseStyles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: "#F3F6FA" },
+  mainScroll: { flex: 1 },
   page: { flexGrow: 1, paddingHorizontal: 19, paddingTop: 20, paddingBottom: 30 },
   topBar: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 20 },
   brandSmall: { color: "#174A72", fontSize: 12, fontWeight: "900", letterSpacing: 2 },
@@ -2523,6 +3253,55 @@ const styles = StyleSheet.create({
   muted: { color: "#8793A2", fontSize: 12, marginTop: 4 },
   signOut: { borderWidth: 1, borderColor: "#D5DFE8", paddingHorizontal: 13, paddingVertical: 9, borderRadius: 10, backgroundColor: "#FFFFFF" },
   signOutText: { color: "#174A72", fontWeight: "700", fontSize: 12 },
+  bottomNav: { flexDirection: "row", alignItems: "center", justifyContent: "space-around", backgroundColor: "#FFFFFF", borderTopWidth: 1, borderTopColor: "#E5EAF0", paddingTop: 7, paddingBottom: 8, paddingHorizontal: 8 },
+  bottomNavItem: { flex: 1, minHeight: 49, alignItems: "center", justifyContent: "center", gap: 3 },
+  bottomNavIcon: { color: "#98A2B3", fontSize: 20, lineHeight: 22, fontWeight: "700" },
+  bottomNavIconSelected: { color: "#174A72" },
+  bottomNavLabel: { color: "#8793A2", fontSize: 10, fontWeight: "600" },
+  bottomNavLabelSelected: { color: "#174A72", fontWeight: "900" },
+  profilePage: { gap: 13 },
+  profileHero: { alignItems: "center", backgroundColor: "#FFFFFF", borderRadius: 18, padding: 22, borderWidth: 1, borderColor: "#E5EAF0" },
+  profileAvatar: { width: 66, height: 66, borderRadius: 33, backgroundColor: "#EAF3F9", alignItems: "center", justifyContent: "center", marginBottom: 11 },
+  profileAvatarText: { color: "#174A72", fontSize: 29, fontWeight: "900" },
+  profileName: { color: "#142B3D", fontSize: 19, fontWeight: "900" },
+  profileRole: { color: "#667085", fontSize: 12, marginTop: 5 },
+  profileSectionHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 10 },
+  profileMenuGroupTitle: { color: "#98A2B3", fontSize: 9, fontWeight: "900", letterSpacing: 1.2, marginBottom: 2 },
+  profileMenuItem: { minHeight: 62, flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 11, borderTopWidth: 1, borderTopColor: "#F0F2F5" },
+  profileMenuCopy: { flex: 1 },
+  profileMenuTitle: { color: "#243B4D", fontSize: 12, fontWeight: "800" },
+  profileMenuDescription: { color: "#8793A2", fontSize: 10, lineHeight: 15, marginTop: 3 },
+  profileMenuBadge: { color: "#FFFFFF", backgroundColor: "#236B9A", overflow: "hidden", borderRadius: 9, paddingHorizontal: 7, paddingVertical: 3, fontSize: 9, fontWeight: "900" },
+  profileMenuArrow: { color: "#98A2B3", fontSize: 23, fontWeight: "400" },
+  profileBack: { alignSelf: "flex-start", paddingVertical: 5, paddingRight: 12 },
+  profileBackText: { color: "#236B9A", fontSize: 12, fontWeight: "800" },
+  profileSubTitle: { color: "#142B3D", fontSize: 20, fontWeight: "900", marginBottom: 2 },
+  profileChoiceRow: { flexDirection: "row", gap: 7, marginTop: 11, marginBottom: 9 },
+  profileChoiceButton: { flex: 1, minHeight: 40, borderRadius: 10, borderWidth: 1, borderColor: "#DCE3EB", backgroundColor: "#FBFCFE", alignItems: "center", justifyContent: "center", paddingHorizontal: 5 },
+  profileChoiceButtonSelected: { borderColor: "#236B9A", backgroundColor: "#EAF3F9" },
+  profileChoiceText: { color: "#667085", fontSize: 11, fontWeight: "700" },
+  profileChoiceTextSelected: { color: "#174A72", fontWeight: "900" },
+  notificationItem: { paddingVertical: 13, borderTopWidth: 1, borderTopColor: "#F0F2F5" },
+  notificationItemUnread: { backgroundColor: "#F7FAFC", marginHorizontal: -4, paddingHorizontal: 4, borderRadius: 8 },
+  notificationHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 8 },
+  notificationTitle: { color: "#243B4D", fontSize: 12, fontWeight: "800", flex: 1 },
+  notificationUnreadDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: "#236B9A" },
+  notificationMeta: { color: "#98A2B3", fontSize: 9, marginTop: 7 },
+  profileActionText: { color: "#236B9A", fontSize: 12, fontWeight: "800" },
+  profileHint: { color: "#8793A2", fontSize: 10, lineHeight: 15, marginTop: 7 },
+
+  profileDetailRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", gap: 14, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: "#F0F2F5" },
+  profileDetailLabel: { color: "#8793A2", fontSize: 11, flex: 1 },
+  profileDetailValue: { color: "#344054", fontSize: 11, fontWeight: "700", flex: 1, textAlign: "right" },
+  profileInfoCard: { backgroundColor: "#F0F7FC", borderRadius: 14, borderWidth: 1, borderColor: "#D3E6F3", padding: 14 },
+  profileInfoTitle: { color: "#174A72", fontSize: 13, fontWeight: "900" },
+  profileInfoText: { color: "#526779", fontSize: 11, lineHeight: 17, marginTop: 6 },
+  profileSignOut: { minHeight: 48, borderRadius: 12, borderWidth: 1, borderColor: "#F2C7C4", backgroundColor: "#FFFFFF", alignItems: "center", justifyContent: "center", marginBottom: 12 },
+  profileSignOutText: { color: "#B42318", fontSize: 12, fontWeight: "800" },
+  quickAccessRow: { flexDirection: "row", gap: 10, marginTop: 2, marginBottom: 14 },
+  quickAccessCard: { flex: 1, minHeight: 92, backgroundColor: "#FFFFFF", borderRadius: 14, borderWidth: 1, borderColor: "#E5EAF0", padding: 13, justifyContent: "center" },
+  quickAccessTitle: { color: "#174A72", fontSize: 13, fontWeight: "900" },
+  quickAccessText: { color: "#667085", fontSize: 10, lineHeight: 15, marginTop: 5 },
   customerMapFrame: { height: 285, borderRadius: 22, overflow: "hidden", marginBottom: 18, borderWidth: 1, borderColor: "#E1E8EF", backgroundColor: "#E9F0F5", position: "relative" },
   pickupLocationPill: { position: "absolute", left: 12, right: 12, bottom: 12, backgroundColor: "#FFFFFF", borderRadius: 15, padding: 11, flexDirection: "row", alignItems: "center", shadowColor: "#102A43", shadowOpacity: 0.15, shadowRadius: 10, elevation: 4 },
   pickupLocationCopy: { flex: 1, paddingRight: 8 },
@@ -2651,3 +3430,84 @@ const styles = StyleSheet.create({
   loadingRow: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10, marginTop: 10 },
   footer: { color: "#98A2B3", fontSize: 10, textAlign: "center", marginTop: 23 }
 });
+
+type AppStyles = typeof baseStyles;
+let styles: AppStyles = baseStyles;
+
+function appThemeColor(color: string, property: string, appearance: UiAppearance): string {
+  if (appearance !== "DARK") return color;
+
+  if (property === "backgroundColor") {
+    const backgrounds: Record<string, string> = {
+      "#FFFFFF": "#152638",
+      "#F3F6FA": "#0B1521",
+      "#FBFCFE": "#102031",
+      "#F0F3F7": "#1A2B3D",
+      "#F7FAFC": "#1A2B3D",
+      "#F0F7FC": "#183349",
+      "#EAF3F9": "#20394F",
+      "#FFF4E5": "#47331E",
+      "#FEF3F2": "#482525",
+      "#E9F0F5": "#1A2C3D",
+      "#E1E8EF": "#32475B"
+    };
+    return backgrounds[color.toUpperCase()] ?? color;
+  }
+
+  if (property === "borderColor" || property === "borderTopColor" || property === "borderBottomColor") {
+    const borders: Record<string, string> = {
+      "#E5EAF0": "#304456",
+      "#E6EBF1": "#304456",
+      "#E8EDF2": "#304456",
+      "#F0F2F5": "#304456",
+      "#DCE3EB": "#3A5065",
+      "#E0E6ED": "#3A5065",
+      "#E1E8EF": "#3A5065",
+      "#D5DFE8": "#3A5065",
+      "#D3E6F3": "#31516B",
+      "#F2C7C4": "#6B4141"
+    };
+    return borders[color.toUpperCase()] ?? color;
+  }
+
+  if (property === "color") {
+    const textColors: Record<string, string> = {
+      "#142B3D": "#EAF2F8",
+      "#182230": "#EAF2F8",
+      "#243B4D": "#EAF2F8",
+      "#344054": "#D5E1EC",
+      "#667085": "#AABACB",
+      "#8793A2": "#9AACC0",
+      "#98A2B3": "#9AACC0",
+      "#526779": "#C1D1DF",
+      "#174A72": "#77BCE8",
+      "#236B9A": "#7FC5ED",
+      "#B42318": "#FCA5A5",
+      "#067647": "#6EE7B7",
+      "#93370D": "#FDBA8C"
+    };
+    return textColors[color.toUpperCase()] ?? color;
+  }
+
+  if (property === "shadowColor") return "#000000";
+  return color;
+}
+
+function createAppStyles(appearance: UiAppearance, textSize: UiTextSize): AppStyles {
+  const scale = textSize === "COMPACT" ? 0.92 : textSize === "LARGE" ? 1.16 : 1;
+  const themed: Record<string, Record<string, unknown>> = {};
+
+  for (const [name, baseStyle] of Object.entries(baseStyles)) {
+    const nextStyle: Record<string, unknown> = { ...baseStyle };
+    for (const [property, value] of Object.entries(nextStyle)) {
+      if ((property === "fontSize" || property === "lineHeight") && typeof value === "number") {
+        nextStyle[property] = Math.max(9, Math.round(value * scale));
+      } else if (typeof value === "string" && /^#[0-9A-F]{6}$/i.test(value)) {
+        nextStyle[property] = appThemeColor(value, property, appearance);
+      }
+    }
+    themed[name] = nextStyle;
+  }
+
+  return StyleSheet.create(themed as never) as AppStyles;
+}

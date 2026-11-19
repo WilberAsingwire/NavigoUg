@@ -10,7 +10,12 @@ type SessionUser = {
   email: string | null;
   role: "CUSTOMER" | "RIDER" | "ADMIN";
   isActive: boolean;
-  riderProfile?: { approvalStatus: "PENDING" | "APPROVED" | "REJECTED" | "SUSPENDED" } | null;
+  riderProfile?: {
+    approvalStatus: "PENDING" | "APPROVED" | "REJECTED" | "SUSPENDED";
+    licenceNumber: string | null;
+    motorcyclePlate: string | null;
+    motorcycleDescription: string | null;
+  } | null;
 };
 
 export class AuthError extends Error {
@@ -48,19 +53,38 @@ function hashRefreshToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
 }
 
-function safeUser(user: SessionUser) {
+function defaultActiveRole(user: SessionUser): SessionUser["role"] {
+  if (user.role === "ADMIN") return "ADMIN";
+  return user.riderProfile?.approvalStatus === "APPROVED" && user.role === "RIDER"
+    ? "RIDER"
+    : "CUSTOMER";
+}
+
+function safeUser(user: SessionUser, activeRole: SessionUser["role"] = user.role) {
+  const isApprovedRider = user.riderProfile?.approvalStatus === "APPROVED";
+  const availableRoles: SessionUser["role"][] = user.role === "ADMIN"
+    ? ["ADMIN"]
+    : isApprovedRider ? ["CUSTOMER", "RIDER"] : ["CUSTOMER"];
   return {
     id: user.id,
     fullName: user.fullName,
     phone: user.phone,
     email: user.email,
-    role: user.role,
-    riderApprovalStatus: user.riderProfile?.approvalStatus ?? null
+    role: activeRole,
+    availableRoles,
+    riderApplicationStatus: user.riderProfile?.approvalStatus ?? null,
+    riderApprovalStatus: user.riderProfile?.approvalStatus ?? null,
+    riderProfile: user.riderProfile ? {
+      licenceNumber: user.riderProfile.licenceNumber,
+      motorcyclePlate: user.riderProfile.motorcyclePlate,
+      motorcycleDescription: user.riderProfile.motorcycleDescription
+    } : null
   };
 }
 
-async function buildSession(user: SessionUser) {
-  const accessToken = await new SignJWT({ role: user.role })
+async function buildSession(user: SessionUser, activeRole: SessionUser["role"] = user.role) {
+  const sessionRole = user.role === "ADMIN" ? "ADMIN" : activeRole;
+  const accessToken = await new SignJWT({ role: sessionRole })
     .setProtectedHeader({ alg: "HS256", typ: "JWT" })
     .setSubject(user.id)
     .setIssuedAt()
@@ -77,6 +101,7 @@ async function buildSession(user: SessionUser) {
     data: {
       userId: user.id,
       tokenHash: hashRefreshToken(refreshToken),
+      activeRole: sessionRole,
       expiresAt: new Date(Date.now() + refreshDays * 24 * 60 * 60 * 1000)
     }
   });
@@ -86,7 +111,7 @@ async function buildSession(user: SessionUser) {
     refreshToken,
     tokenType: "Bearer" as const,
     expiresIn: Number(process.env.JWT_ACCESS_TTL_SECONDS ?? 900),
-    user: safeUser(user)
+    user: safeUser(user, sessionRole)
   };
 }
 
@@ -110,7 +135,7 @@ export async function registerCustomer(input: {
         role: "CUSTOMER"
       }
     });
-    return await buildSession(user);
+    return await buildSession(user, "CUSTOMER");
   } catch (error) {
     if (isUniqueConstraintError(error)) {
       throw new AuthError(409, "ACCOUNT_EXISTS", "An account with this phone number or email already exists.");
@@ -144,7 +169,7 @@ export async function registerRider(input: {
       },
       include: { riderProfile: true }
     });
-    return await buildSession(user);
+    return await buildSession(user, "CUSTOMER");
   } catch (error) {
     if (isUniqueConstraintError(error)) {
       throw new AuthError(409, "ACCOUNT_EXISTS", "An account with this phone number or email already exists.");
@@ -174,7 +199,7 @@ export async function login(input: { phone: string; password: string }) {
     throw new AuthError(401, "INVALID_CREDENTIALS", "The phone number or password is incorrect.");
   }
 
-  return buildSession(user);
+  return buildSession(user, defaultActiveRole(user));
 }
 
 export async function refreshSession(refreshToken: string) {
@@ -204,16 +229,23 @@ export async function refreshSession(refreshToken: string) {
     throw new AuthError(401, "INVALID_REFRESH_TOKEN", "This refresh token has already been used.");
   }
 
+  const user = existing.user;
+  const storedRole = existing.activeRole ?? defaultActiveRole(user);
+  const activeRole = user.role === "ADMIN"
+    ? "ADMIN"
+    : storedRole === "RIDER" && user.riderProfile?.approvalStatus === "APPROVED"
+      ? "RIDER"
+      : "CUSTOMER";
+
   await prisma.refreshToken.create({
     data: {
       userId: existing.userId,
       tokenHash: hashRefreshToken(newRefreshToken),
+      activeRole,
       expiresAt: new Date(Date.now() + refreshDays * 24 * 60 * 60 * 1000)
     }
   });
-
-  const user = existing.user;
-  const accessToken = await new SignJWT({ role: user.role })
+  const accessToken = await new SignJWT({ role: activeRole })
     .setProtectedHeader({ alg: "HS256", typ: "JWT" })
     .setSubject(user.id)
     .setIssuedAt()
@@ -225,8 +257,100 @@ export async function refreshSession(refreshToken: string) {
     refreshToken: newRefreshToken,
     tokenType: "Bearer" as const,
     expiresIn: Number(process.env.JWT_ACCESS_TTL_SECONDS ?? 900),
-    user: safeUser(user)
+    user: safeUser(user, activeRole)
   };
+}
+
+export async function switchWorkspace(
+  userId: string,
+  currentRole: SessionUser["role"],
+  role: "CUSTOMER" | "RIDER"
+) {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    include: { riderProfile: true }
+  });
+  if (!user || !user.isActive) {
+    throw new AuthError(401, "ACCOUNT_UNAVAILABLE", "This account is not available.");
+  }
+  if (user.role === "ADMIN") {
+    throw new AuthError(403, "WORKSPACE_NOT_AVAILABLE", "Administrator accounts cannot switch to customer or rider workspaces.");
+  }
+  if (role === "RIDER" && user.riderProfile?.approvalStatus !== "APPROVED") {
+    throw new AuthError(403, "RIDER_NOT_APPROVED", "The rider workspace becomes available after NAVIGO approves your rider application.");
+  }
+
+  if (currentRole === "RIDER" && role === "CUSTOMER") {
+    const [activeRides, activeParcels] = await Promise.all([
+      prisma.rideRequest.count({
+        where: { riderId: userId, status: { in: ["ACCEPTED", "ARRIVED_AT_PICKUP", "IN_PROGRESS"] } }
+      }),
+      prisma.parcelRequest.count({
+        where: { riderId: userId, status: { in: ["ACCEPTED", "ARRIVED_AT_PICKUP", "COLLECTED", "IN_TRANSIT", "ARRIVED_AT_DESTINATION"] } }
+      })
+    ]);
+    if (activeRides + activeParcels > 0) {
+      throw new AuthError(409, "ACTIVE_RIDER_JOBS", "Complete or resolve your active ride and item deliveries before switching to the customer workspace.");
+    }
+
+    await prisma.riderAvailability.updateMany({
+      where: { riderId: userId },
+      data: {
+        isOnline: false,
+        latitude: null,
+        longitude: null,
+        accuracyMeters: null,
+        lastSeenAt: null
+      }
+    });
+  }
+
+  // Issue the new workspace session, then revoke every previous refresh token
+  // for this account so another device cannot keep refreshing into the old workspace.
+  const session = await buildSession(user, role);
+  await prisma.refreshToken.updateMany({
+    where: {
+      userId,
+      revokedAt: null,
+      tokenHash: { not: hashRefreshToken(session.refreshToken) }
+    },
+    data: { revokedAt: new Date() }
+  });
+  return session;
+}
+
+export async function applyForRider(userId: string, input: {
+  licenceNumber: string; motorcyclePlate: string; motorcycleDescription: string;
+}) {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    include: { riderProfile: true }
+  });
+  if (!user || !user.isActive) {
+    throw new AuthError(401, "ACCOUNT_UNAVAILABLE", "This account is not available.");
+  }
+  if (user.role === "ADMIN") {
+    throw new AuthError(403, "RIDER_APPLICATION_NOT_AVAILABLE", "This account cannot submit a rider application.");
+  }
+  if (user.riderProfile) {
+    throw new AuthError(409, "RIDER_APPLICATION_EXISTS", "A rider application already exists for this account. Contact NAVIGO support if you need it reviewed.");
+  }
+
+  await prisma.riderProfile.create({
+    data: {
+      userId,
+      approvalStatus: "PENDING",
+      licenceNumber: input.licenceNumber.trim(),
+      motorcyclePlate: input.motorcyclePlate.trim().toUpperCase(),
+      motorcycleDescription: input.motorcycleDescription.trim()
+    }
+  });
+  const updatedUser = await prisma.user.findUnique({
+    where: { id: userId },
+    include: { riderProfile: true }
+  });
+  if (!updatedUser) throw new AuthError(401, "ACCOUNT_UNAVAILABLE", "This account is not available.");
+  return safeUser(updatedUser, "CUSTOMER");
 }
 
 export async function revokeRefreshToken(refreshToken: string): Promise<void> {
@@ -236,7 +360,76 @@ export async function revokeRefreshToken(refreshToken: string): Promise<void> {
   });
 }
 
-export async function getSafeCurrentUser(userId: string) {
+export async function updateOwnProfile(userId: string, input: { fullName: string; email?: string }, activeRole?: SessionUser["role"]) {
+  const normalizedEmail = input.email?.trim().toLowerCase() || null;
+  try {
+    const user = await prisma.user.update({
+      where: { id: userId },
+      data: {
+        fullName: input.fullName.trim(),
+        email: normalizedEmail
+      },
+      include: { riderProfile: true }
+    });
+    return safeUser(user, activeRole ?? user.role);
+  } catch (error) {
+    if (isUniqueConstraintError(error)) {
+      throw new AuthError(409, "EMAIL_ALREADY_USED", "That email address is already linked to another NAVIGO account.");
+    }
+    throw error;
+  }
+}
+
+export async function changeOwnPassword(
+  userId: string,
+  input: { currentPassword: string; newPassword: string },
+  activeRole?: SessionUser["role"]
+) {
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    include: { riderProfile: true }
+  });
+
+  if (!user || !user.isActive) {
+    throw new AuthError(401, "ACCOUNT_UNAVAILABLE", "This account is not available.");
+  }
+
+  let matches = false;
+  try {
+    matches = await argon2.verify(user.passwordHash, input.currentPassword);
+  } catch {
+    matches = false;
+  }
+
+  if (!matches) {
+    throw new AuthError(400, "CURRENT_PASSWORD_INCORRECT", "Your current password is incorrect.");
+  }
+
+  const passwordHash = await argon2.hash(input.newPassword, { type: argon2.argon2id });
+  await prisma.$transaction(async (transaction) => {
+    await transaction.user.update({
+      where: { id: userId },
+      data: { passwordHash }
+    });
+    await transaction.refreshToken.updateMany({
+      where: { userId, revokedAt: null },
+      data: { revokedAt: new Date() }
+    });
+  });
+
+  const updatedUser = await prisma.user.findUnique({
+    where: { id: userId },
+    include: { riderProfile: true }
+  });
+  if (!updatedUser || !updatedUser.isActive) {
+    throw new AuthError(401, "ACCOUNT_UNAVAILABLE", "This account is not available.");
+  }
+
+  // Replace the sessions revoked above with a fresh session for this device.
+  return buildSession(updatedUser, activeRole ?? updatedUser.role);
+}
+
+export async function getSafeCurrentUser(userId: string, activeRole?: SessionUser["role"]) {
   const user = await prisma.user.findUnique({
     where: { id: userId },
     include: { riderProfile: true }
@@ -244,5 +437,5 @@ export async function getSafeCurrentUser(userId: string) {
   if (!user || !user.isActive) {
     throw new AuthError(401, "ACCOUNT_UNAVAILABLE", "This account is not available.");
   }
-  return safeUser(user);
+  return safeUser(user, activeRole ?? user.role);
 }

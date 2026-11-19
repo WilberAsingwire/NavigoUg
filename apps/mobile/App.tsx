@@ -26,7 +26,7 @@ type User = {
   id: string;
   fullName: string;
   phone: string;
-  email: string | null;
+  email?: string | null;
   role: UserRole;
   riderApprovalStatus: RiderApprovalStatus;
 };
@@ -227,6 +227,7 @@ export default function App() {
       <RidesHome
         session={session}
         onSignOut={signOut}
+        onSessionChange={setSession}
         signingOut={busy}
       />
     );

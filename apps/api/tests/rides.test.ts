@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
   rideHistoryCreate: vi.fn(),
   ridePaymentUpdateMany: vi.fn(),
   auditLogCreate: vi.fn(),
+  notificationCreate: vi.fn(),
   transaction: vi.fn(),
   getMotorcycleRoute: vi.fn()
 }));
@@ -115,7 +116,8 @@ describe("Motorcycle ride API", () => {
         rideStatusHistory: { create: mocks.rideHistoryCreate },
         rideArrivalEstimate: { upsert: mocks.rideArrivalEstimateUpsert },
         ridePayment: { updateMany: mocks.ridePaymentUpdateMany },
-        auditLog: { create: mocks.auditLogCreate }
+        auditLog: { create: mocks.auditLogCreate },
+        notification: { create: mocks.notificationCreate }
       })
     );
   });

@@ -5,9 +5,15 @@ import request from "supertest";
 const mocks = vi.hoisted(() => ({
   userCreate: vi.fn(),
   userFindUnique: vi.fn(),
+  userUpdate: vi.fn(),
+  transaction: vi.fn(),
   refreshCreate: vi.fn(),
   refreshFindUnique: vi.fn(),
   refreshUpdateMany: vi.fn(),
+  riderProfileCreate: vi.fn(),
+  rideRequestCount: vi.fn(),
+  parcelRequestCount: vi.fn(),
+  riderAvailabilityUpdateMany: vi.fn(),
   queryRaw: vi.fn()
 }));
 
@@ -15,14 +21,20 @@ vi.mock("../src/lib/prisma.js", () => ({
   prisma: {
     user: {
       create: mocks.userCreate,
-      findUnique: mocks.userFindUnique
+      findUnique: mocks.userFindUnique,
+      update: mocks.userUpdate
     },
+    riderProfile: { create: mocks.riderProfileCreate },
+    rideRequest: { count: mocks.rideRequestCount },
+    parcelRequest: { count: mocks.parcelRequestCount },
+    riderAvailability: { updateMany: mocks.riderAvailabilityUpdateMany },
     refreshToken: {
       create: mocks.refreshCreate,
       findUnique: mocks.refreshFindUnique,
       updateMany: mocks.refreshUpdateMany
     },
-    $queryRaw: mocks.queryRaw
+    $queryRaw: mocks.queryRaw,
+    $transaction: mocks.transaction
   }
 }));
 
@@ -42,6 +54,10 @@ const sampleUser = {
 describe("Authentication API", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.transaction.mockImplementation(async (callback: (transaction: unknown) => Promise<unknown>) => callback({
+      user: { update: mocks.userUpdate },
+      refreshToken: { updateMany: mocks.refreshUpdateMany }
+    }));
     process.env.JWT_ACCESS_SECRET = "local-test-secret-that-is-long-enough-123456";
     process.env.JWT_ACCESS_TTL_SECONDS = "900";
     process.env.REFRESH_TOKEN_TTL_DAYS = "30";
@@ -104,6 +120,30 @@ describe("Authentication API", () => {
       include: { riderProfile: true }
     }));
     expect(response.body.data.user.riderApprovalStatus).toBe("PENDING");
+    expect(response.body.data.user.role).toBe("CUSTOMER");
+    expect(response.body.data.user.availableRoles).toEqual(["CUSTOMER"]);
+  });
+
+  it("logs pending legacy rider accounts into the customer workspace", async () => {
+    const passwordHash = await argon2.hash(password);
+    mocks.userFindUnique.mockResolvedValue({
+      ...sampleUser,
+      role: "RIDER",
+      passwordHash,
+      riderProfile: { approvalStatus: "PENDING" }
+    });
+    mocks.refreshCreate.mockResolvedValue({});
+
+    const response = await request(app)
+      .post("/api/v1/auth/login")
+      .send({ phone: sampleUser.phone, password });
+
+    expect(response.status).toBe(200);
+    expect(response.body.data.user.role).toBe("CUSTOMER");
+    expect(response.body.data.user.availableRoles).toEqual(["CUSTOMER"]);
+    expect(mocks.refreshCreate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ activeRole: "CUSTOMER" })
+    }));
   });
 
   it("returns a generic authentication error for an incorrect password", async () => {
@@ -148,6 +188,35 @@ describe("Authentication API", () => {
     expect(mocks.refreshCreate).toHaveBeenCalledTimes(1);
   });
 
+  it("downgrades legacy pending rider refresh sessions to customer workspace", async () => {
+    const existingToken = "legacy-pending-rider-refresh-token-123456789";
+    mocks.refreshFindUnique.mockResolvedValue({
+      id: "4ccfa809-038a-46e9-a8e7-f02c8d7dd03c",
+      userId: sampleUser.id,
+      activeRole: "RIDER",
+      revokedAt: null,
+      expiresAt: new Date(Date.now() + 60_000),
+      user: {
+        ...sampleUser,
+        role: "RIDER",
+        riderProfile: { approvalStatus: "PENDING" }
+      }
+    });
+    mocks.refreshUpdateMany.mockResolvedValue({ count: 1 });
+    mocks.refreshCreate.mockResolvedValue({});
+
+    const response = await request(app)
+      .post("/api/v1/auth/refresh")
+      .send({ refreshToken: existingToken });
+
+    expect(response.status).toBe(200);
+    expect(response.body.data.user.role).toBe("CUSTOMER");
+    expect(response.body.data.user.availableRoles).toEqual(["CUSTOMER"]);
+    expect(mocks.refreshCreate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ activeRole: "CUSTOMER" })
+    }));
+  });
+
   it("rejects a refresh token that has already been used", async () => {
     const existingToken = "refresh-token-for-test-12345678901234567890";
     mocks.refreshFindUnique.mockResolvedValue({
@@ -167,4 +236,228 @@ describe("Authentication API", () => {
     expect(response.body.error.code).toBe("INVALID_REFRESH_TOKEN");
     expect(mocks.refreshCreate).not.toHaveBeenCalled();
   });
+  it("allows a customer to apply for the rider workspace without creating a second user", async () => {
+    const passwordHash = await argon2.hash(password);
+    const pendingRiderProfile = {
+      approvalStatus: "PENDING" as const,
+      licenceNumber: "DL-TEST-010",
+      motorcyclePlate: "UAA 010A",
+      motorcycleDescription: "Blue motorcycle"
+    };
+    mocks.userFindUnique
+      .mockResolvedValueOnce({ ...sampleUser, passwordHash })
+      .mockResolvedValueOnce(sampleUser)
+      .mockResolvedValueOnce({ ...sampleUser, riderProfile: pendingRiderProfile });
+    mocks.riderProfileCreate.mockResolvedValue(pendingRiderProfile);
+    mocks.refreshCreate.mockResolvedValue({});
+
+    const loginResponse = await request(app)
+      .post("/api/v1/auth/login")
+      .send({ phone: sampleUser.phone, password });
+    const accessToken = loginResponse.body.data.accessToken as string;
+
+    const response = await request(app)
+      .post("/api/v1/auth/apply-rider")
+      .set("Authorization", `Bearer ${accessToken}`)
+      .send({
+        licenceNumber: "DL-TEST-010",
+        motorcyclePlate: "UAA 010A",
+        motorcycleDescription: "Blue motorcycle"
+      });
+
+    expect(response.status).toBe(201);
+    expect(mocks.riderProfileCreate).toHaveBeenCalledWith({
+      data: {
+        userId: sampleUser.id,
+        approvalStatus: "PENDING",
+        licenceNumber: "DL-TEST-010",
+        motorcyclePlate: "UAA 010A",
+        motorcycleDescription: "Blue motorcycle"
+      }
+    });
+    expect(response.body.data.id).toBe(sampleUser.id);
+    expect(response.body.data.role).toBe("CUSTOMER");
+    expect(response.body.data.riderApprovalStatus).toBe("PENDING");
+  });
+
+  it("allows an approved rider to switch workspaces using a newly issued session", async () => {
+    const passwordHash = await argon2.hash(password);
+    const approvedUser = {
+      ...sampleUser,
+      passwordHash,
+      riderProfile: {
+        approvalStatus: "APPROVED" as const,
+        licenceNumber: "DL-TEST-001",
+        motorcyclePlate: "UAA 123A",
+        motorcycleDescription: "Black motorcycle"
+      }
+    };
+    mocks.userFindUnique.mockResolvedValue(approvedUser);
+    mocks.refreshCreate.mockResolvedValue({});
+
+    const loginResponse = await request(app)
+      .post("/api/v1/auth/login")
+      .send({ phone: sampleUser.phone, password });
+    const accessToken = loginResponse.body.data.accessToken as string;
+
+    const response = await request(app)
+      .post("/api/v1/auth/switch-workspace")
+      .set("Authorization", `Bearer ${accessToken}`)
+      .send({ role: "RIDER" });
+
+    expect(response.status).toBe(200);
+    expect(response.body.data.user.id).toBe(sampleUser.id);
+    expect(response.body.data.user.role).toBe("RIDER");
+    expect(response.body.data.user.availableRoles).toEqual(["CUSTOMER", "RIDER"]);
+    expect(mocks.refreshCreate).toHaveBeenLastCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ userId: sampleUser.id, activeRole: "RIDER" })
+    }));
+    expect(mocks.refreshUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        userId: sampleUser.id,
+        revokedAt: null,
+        tokenHash: expect.objectContaining({ not: expect.any(String) })
+      }),
+      data: expect.objectContaining({ revokedAt: expect.any(Date) })
+    }));
+  });
+
+  it("prevents a rider from leaving the rider workspace while active jobs remain", async () => {
+    const passwordHash = await argon2.hash(password);
+    const approvedUser = {
+      ...sampleUser,
+      passwordHash,
+      riderProfile: { approvalStatus: "APPROVED" as const }
+    };
+    mocks.userFindUnique.mockResolvedValue(approvedUser);
+    mocks.refreshCreate.mockResolvedValue({});
+    mocks.rideRequestCount.mockResolvedValue(1);
+    mocks.parcelRequestCount.mockResolvedValue(0);
+
+    const loginResponse = await request(app)
+      .post("/api/v1/auth/login")
+      .send({ phone: sampleUser.phone, password });
+    const customerToken = loginResponse.body.data.accessToken as string;
+
+    const riderSession = await request(app)
+      .post("/api/v1/auth/switch-workspace")
+      .set("Authorization", `Bearer ${customerToken}`)
+      .send({ role: "RIDER" });
+    expect(riderSession.status).toBe(200);
+
+    const response = await request(app)
+      .post("/api/v1/auth/switch-workspace")
+      .set("Authorization", `Bearer ${riderSession.body.data.accessToken}`)
+      .send({ role: "CUSTOMER" });
+
+    expect(response.status).toBe(409);
+    expect(response.body.error.code).toBe("ACTIVE_RIDER_JOBS");
+    expect(mocks.riderAvailabilityUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("does not grant rider workspace access before administrator approval", async () => {
+    const passwordHash = await argon2.hash(password);
+    mocks.userFindUnique.mockResolvedValue({
+      ...sampleUser,
+      passwordHash,
+      riderProfile: { approvalStatus: "PENDING" }
+    });
+    mocks.refreshCreate.mockResolvedValue({});
+
+    const loginResponse = await request(app)
+      .post("/api/v1/auth/login")
+      .send({ phone: sampleUser.phone, password });
+    const accessToken = loginResponse.body.data.accessToken as string;
+
+    const response = await request(app)
+      .post("/api/v1/auth/switch-workspace")
+      .set("Authorization", `Bearer ${accessToken}`)
+      .send({ role: "RIDER" });
+
+    expect(response.status).toBe(403);
+    expect(response.body.error.code).toBe("RIDER_NOT_APPROVED");
+    expect(mocks.refreshCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it("allows an authenticated user to update only their own profile details", async () => {
+    const passwordHash = await argon2.hash(password);
+    mocks.userFindUnique.mockResolvedValue({ ...sampleUser, passwordHash });
+    mocks.refreshCreate.mockResolvedValue({});
+
+    const loginResponse = await request(app)
+      .post("/api/v1/auth/login")
+      .send({ phone: sampleUser.phone, password });
+    const accessToken = loginResponse.body.data.accessToken as string;
+
+    mocks.userUpdate.mockResolvedValue({
+      ...sampleUser,
+      fullName: "Updated Customer",
+      email: null
+    });
+
+    const response = await request(app)
+      .patch("/api/v1/auth/me")
+      .set("Authorization", `Bearer ${accessToken}`)
+      .send({ fullName: "Updated Customer", email: "" });
+
+    expect(response.status).toBe(200);
+    expect(mocks.userUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: sampleUser.id },
+      data: { fullName: "Updated Customer", email: null },
+      include: { riderProfile: true }
+    }));
+    expect(response.body.data.fullName).toBe("Updated Customer");
+    expect(response.body.data).not.toHaveProperty("passwordHash");
+  });
+
+  it("requires the current password and rotates sessions when a password is changed", async () => {
+    const passwordHash = await argon2.hash(password);
+    mocks.userFindUnique
+      .mockResolvedValueOnce({ ...sampleUser, passwordHash })
+      .mockResolvedValueOnce({ ...sampleUser, passwordHash })
+      .mockResolvedValueOnce({ ...sampleUser, passwordHash: "updated-hash" });
+    mocks.userUpdate.mockResolvedValue({});
+    mocks.refreshUpdateMany.mockResolvedValue({ count: 1 });
+    mocks.refreshCreate.mockResolvedValue({});
+
+    const loginResponse = await request(app)
+      .post("/api/v1/auth/login")
+      .send({ phone: sampleUser.phone, password });
+    const accessToken = loginResponse.body.data.accessToken as string;
+
+    const response = await request(app)
+      .post("/api/v1/auth/change-password")
+      .set("Authorization", `Bearer ${accessToken}`)
+      .send({ currentPassword: password, newPassword: "NewSecurePassword-2026!" });
+
+    expect(response.status).toBe(200);
+    expect(response.body.data.accessToken).toEqual(expect.any(String));
+    expect(response.body.data.refreshToken).toEqual(expect.any(String));
+    expect(mocks.refreshUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { userId: sampleUser.id, revokedAt: null },
+      data: expect.objectContaining({ revokedAt: expect.any(Date) })
+    }));
+    const newPasswordHash = mocks.userUpdate.mock.calls[0]?.[0]?.data?.passwordHash as string;
+    expect(await argon2.verify(newPasswordHash, "NewSecurePassword-2026!")).toBe(true);
+  });
+
+  it("rejects a password change when the current password is incorrect", async () => {
+    const passwordHash = await argon2.hash(password);
+    mocks.userFindUnique.mockResolvedValue({ ...sampleUser, passwordHash });
+
+    const loginResponse = await request(app)
+      .post("/api/v1/auth/login")
+      .send({ phone: sampleUser.phone, password });
+    const accessToken = loginResponse.body.data.accessToken as string;
+
+    const response = await request(app)
+      .post("/api/v1/auth/change-password")
+      .set("Authorization", `Bearer ${accessToken}`)
+      .send({ currentPassword: "IncorrectPassword!", newPassword: "NewSecurePassword-2026!" });
+
+    expect(response.status).toBe(400);
+    expect(response.body.error.code).toBe("CURRENT_PASSWORD_INCORRECT");
+    expect(mocks.userUpdate).not.toHaveBeenCalled();
+  });
+
 });

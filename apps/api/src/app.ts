@@ -7,6 +7,7 @@ import { authRouter, authErrorHandler } from "./modules/auth/auth.routes.js";
 import { ridesRouter, ridesErrorHandler } from "./modules/rides/rides.routes.js";
 import { parcelsRouter, parcelsErrorHandler } from "./modules/parcels/parcels.routes.js";
 import { adminRouter, adminErrorHandler } from "./modules/admin/admin.routes.js";
+import { notificationsRouter } from "./modules/notifications/notifications.routes.js";
 
 export const app = express();
 app.disable("x-powered-by");
@@ -64,6 +65,7 @@ app.use("/api/v1/auth", authRouter);
 app.use("/api/v1/rides", ridesRouter);
 app.use("/api/v1/parcels", parcelsRouter);
 app.use("/api/v1/admin", adminRouter);
+app.use("/api/v1/notifications", notificationsRouter);
 app.use(authErrorHandler);
 app.use(ridesErrorHandler);
 app.use(parcelsErrorHandler);

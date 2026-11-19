@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   parcelHistoryCreate: vi.fn(),
   parcelPaymentUpdateMany: vi.fn(),
   auditLogCreate: vi.fn(),
+  notificationCreate: vi.fn(),
   parcelTrackingFindUnique: vi.fn(),
   parcelTrackingUpsert: vi.fn(),
   parcelTrackingUpdate: vi.fn(),
@@ -152,7 +153,8 @@ describe("Parcel delivery API", () => {
         parcelTrackingSession: { updateMany: mocks.parcelTrackingUpdateMany },
         parcelStatusHistory: { create: mocks.parcelHistoryCreate },
         parcelPayment: { updateMany: mocks.parcelPaymentUpdateMany },
-        auditLog: { create: mocks.auditLogCreate }
+        auditLog: { create: mocks.auditLogCreate },
+        notification: { create: mocks.notificationCreate }
       })
     );
   });
