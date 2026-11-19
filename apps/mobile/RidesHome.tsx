@@ -2158,7 +2158,7 @@ function CustomerParcelCard({
         <Text style={styles.rideStatus}>{labels[parcel.status] ?? parcel.status}</Text>
         <Text style={styles.rideFare}>{money(parcel.fareAmountUgx)}</Text>
       </View>
-      <Text style={styles.rideMeta}>{parcel.sizeCategory} item • {formatDistance(parcel.estimatedDistanceKm)} • {parcel.payment?.method === "MOBILE_MONEY" ? "Mobile Money" : "Cash"}</Text>
+      <Text style={styles.rideMeta}>{parcel.sizeCategory} item • {formatDistance(parcel.estimatedDistanceKm)} • {parcel.payment?.method === "MOBILE_MONEY" ? "Mobile Money" : "Cash"} • {parcel.payment?.status === "PAID" ? "Paid" : "Payment not yet recorded"}</Text>
       <Text style={styles.label}>ITEM</Text>
       <Text style={styles.routeAddress}>{parcel.parcelDescription}</Text>
       <View style={styles.routeRow}>
