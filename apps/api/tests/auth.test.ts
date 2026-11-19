@@ -283,6 +283,14 @@ describe("Authentication API", () => {
     expect(mocks.refreshCreate).toHaveBeenLastCalledWith(expect.objectContaining({
       data: expect.objectContaining({ userId: sampleUser.id, activeRole: "RIDER" })
     }));
+    expect(mocks.refreshUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        userId: sampleUser.id,
+        revokedAt: null,
+        tokenHash: expect.objectContaining({ not: expect.any(String) })
+      }),
+      data: expect.objectContaining({ revokedAt: expect.any(Date) })
+    }));
   });
 
   it("prevents a rider from leaving the rider workspace while active jobs remain", async () => {
