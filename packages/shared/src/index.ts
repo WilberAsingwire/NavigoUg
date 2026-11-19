@@ -71,6 +71,18 @@ export const ChangeOwnPasswordInputSchema = z.object({
 });
 export type ChangeOwnPasswordInput = z.infer<typeof ChangeOwnPasswordInputSchema>;
 
+export const ApplyRiderInputSchema = z.object({
+  licenceNumber: z.string().trim().min(3).max(80),
+  motorcyclePlate: z.string().trim().min(3).max(20),
+  motorcycleDescription: z.string().trim().min(3).max(160)
+}).strict();
+export type ApplyRiderInput = z.infer<typeof ApplyRiderInputSchema>;
+
+export const SwitchWorkspaceInputSchema = z.object({
+  role: z.enum(["CUSTOMER", "RIDER"])
+}).strict();
+export type SwitchWorkspaceInput = z.infer<typeof SwitchWorkspaceInputSchema>;
+
 export const RegisterCustomerInputSchema = z.object({
   fullName: z.string().trim().min(2).max(100),
   phone: z.string().trim().min(7).max(20),
