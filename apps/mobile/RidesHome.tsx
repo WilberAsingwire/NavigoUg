@@ -595,6 +595,7 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
   const [activeLocationField, setActiveLocationField] = useState<"pickup" | "destination" | null>(null);
   const [deviceLocation, setDeviceLocation] = useState<RideLocation | null>(null);
   const [locationStatus, setLocationStatus] = useState<"locating" | "ready" | "denied" | "unavailable">("locating");
+  const locationDetectionStarted = useRef(false);
   const [mapRegion, setMapRegion] = useState({
     latitude: 3.02,
     longitude: 30.92,
@@ -676,8 +677,11 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
   }, [pickup]); 
 
   useEffect(() => {
-    if (isCustomer) void detectPickupLocation(false);
-  }, [isCustomer, detectPickupLocation]);
+    if (isCustomer && !locationDetectionStarted.current) {
+      locationDetectionStarted.current = true;
+      void detectPickupLocation(false);
+    }
+  }, [isCustomer]);
 
   async function getFareEstimate() {
     setWorking(true);
