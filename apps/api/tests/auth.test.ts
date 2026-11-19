@@ -5,6 +5,8 @@ import request from "supertest";
 const mocks = vi.hoisted(() => ({
   userCreate: vi.fn(),
   userFindUnique: vi.fn(),
+  userUpdate: vi.fn(),
+  transaction: vi.fn(),
   refreshCreate: vi.fn(),
   refreshFindUnique: vi.fn(),
   refreshUpdateMany: vi.fn(),
@@ -15,14 +17,16 @@ vi.mock("../src/lib/prisma.js", () => ({
   prisma: {
     user: {
       create: mocks.userCreate,
-      findUnique: mocks.userFindUnique
+      findUnique: mocks.userFindUnique,
+      update: mocks.userUpdate
     },
     refreshToken: {
       create: mocks.refreshCreate,
       findUnique: mocks.refreshFindUnique,
       updateMany: mocks.refreshUpdateMany
     },
-    $queryRaw: mocks.queryRaw
+    $queryRaw: mocks.queryRaw,
+    $transaction: mocks.transaction
   }
 }));
 
@@ -42,6 +46,10 @@ const sampleUser = {
 describe("Authentication API", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.transaction.mockImplementation(async (callback: (transaction: unknown) => Promise<unknown>) => callback({
+      user: { update: mocks.userUpdate },
+      refreshToken: { updateMany: mocks.refreshUpdateMany }
+    }));
     process.env.JWT_ACCESS_SECRET = "local-test-secret-that-is-long-enough-123456";
     process.env.JWT_ACCESS_TTL_SECONDS = "900";
     process.env.REFRESH_TOKEN_TTL_DAYS = "30";
@@ -167,4 +175,84 @@ describe("Authentication API", () => {
     expect(response.body.error.code).toBe("INVALID_REFRESH_TOKEN");
     expect(mocks.refreshCreate).not.toHaveBeenCalled();
   });
+  it("allows an authenticated user to update only their own profile details", async () => {
+    const passwordHash = await argon2.hash(password);
+    mocks.userFindUnique.mockResolvedValue({ ...sampleUser, passwordHash });
+    mocks.refreshCreate.mockResolvedValue({});
+
+    const loginResponse = await request(app)
+      .post("/api/v1/auth/login")
+      .send({ phone: sampleUser.phone, password });
+    const accessToken = loginResponse.body.data.accessToken as string;
+
+    mocks.userUpdate.mockResolvedValue({
+      ...sampleUser,
+      fullName: "Updated Customer",
+      email: null
+    });
+
+    const response = await request(app)
+      .patch("/api/v1/auth/me")
+      .set("Authorization", `Bearer ${accessToken}`)
+      .send({ fullName: "Updated Customer", email: "" });
+
+    expect(response.status).toBe(200);
+    expect(mocks.userUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: sampleUser.id },
+      data: { fullName: "Updated Customer", email: null },
+      include: { riderProfile: true }
+    }));
+    expect(response.body.data.fullName).toBe("Updated Customer");
+    expect(response.body.data).not.toHaveProperty("passwordHash");
+  });
+
+  it("requires the current password and rotates sessions when a password is changed", async () => {
+    const passwordHash = await argon2.hash(password);
+    mocks.userFindUnique
+      .mockResolvedValueOnce({ ...sampleUser, passwordHash })
+      .mockResolvedValueOnce({ ...sampleUser, passwordHash: "updated-hash" });
+    mocks.userUpdate.mockResolvedValue({});
+    mocks.refreshUpdateMany.mockResolvedValue({ count: 1 });
+    mocks.refreshCreate.mockResolvedValue({});
+
+    const loginResponse = await request(app)
+      .post("/api/v1/auth/login")
+      .send({ phone: sampleUser.phone, password });
+    const accessToken = loginResponse.body.data.accessToken as string;
+
+    const response = await request(app)
+      .post("/api/v1/auth/change-password")
+      .set("Authorization", `Bearer ${accessToken}`)
+      .send({ currentPassword: password, newPassword: "NewSecurePassword-2026!" });
+
+    expect(response.status).toBe(200);
+    expect(response.body.data.accessToken).toEqual(expect.any(String));
+    expect(response.body.data.refreshToken).toEqual(expect.any(String));
+    expect(mocks.refreshUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { userId: sampleUser.id, revokedAt: null },
+      data: expect.objectContaining({ revokedAt: expect.any(Date) })
+    }));
+    const newPasswordHash = mocks.userUpdate.mock.calls[0]?.[0]?.data?.passwordHash as string;
+    expect(await argon2.verify(newPasswordHash, "NewSecurePassword-2026!")).toBe(true);
+  });
+
+  it("rejects a password change when the current password is incorrect", async () => {
+    const passwordHash = await argon2.hash(password);
+    mocks.userFindUnique.mockResolvedValue({ ...sampleUser, passwordHash });
+
+    const loginResponse = await request(app)
+      .post("/api/v1/auth/login")
+      .send({ phone: sampleUser.phone, password });
+    const accessToken = loginResponse.body.data.accessToken as string;
+
+    const response = await request(app)
+      .post("/api/v1/auth/change-password")
+      .set("Authorization", `Bearer ${accessToken}`)
+      .send({ currentPassword: "IncorrectPassword!", newPassword: "NewSecurePassword-2026!" });
+
+    expect(response.status).toBe(400);
+    expect(response.body.error.code).toBe("CURRENT_PASSWORD_INCORRECT");
+    expect(mocks.userUpdate).not.toHaveBeenCalled();
+  });
+
 });
