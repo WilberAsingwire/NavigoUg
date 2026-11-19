@@ -95,14 +95,15 @@ ridesRouter.get("/available", requireRole("RIDER"), async (request, response, ne
 });
 
 ridesRouter.post("/:rideId/accept", requireRole("RIDER"), async (request, response, next) => {
-  if (!validRideId(request.params.rideId)) {
+  const rideId = typeof request.params.rideId === "string" ? request.params.rideId : "";
+  if (!validRideId(rideId)) {
     validationError(response, "A valid ride request ID is required.");
     return;
   }
 
   try {
     response.status(200).json({
-      data: await acceptRide(request.auth!.userId, request.params.rideId)
+      data: await acceptRide(request.auth!.userId, rideId)
     });
   } catch (error) {
     next(error);
@@ -110,7 +111,8 @@ ridesRouter.post("/:rideId/accept", requireRole("RIDER"), async (request, respon
 });
 
 ridesRouter.patch("/:rideId/status", requireRole("RIDER"), async (request, response, next) => {
-  if (!validRideId(request.params.rideId)) {
+  const rideId = typeof request.params.rideId === "string" ? request.params.rideId : "";
+  if (!validRideId(rideId)) {
     validationError(response, "A valid ride request ID is required.");
     return;
   }
@@ -125,7 +127,7 @@ ridesRouter.patch("/:rideId/status", requireRole("RIDER"), async (request, respo
     response.status(200).json({
       data: await updateRideStatus(
         request.auth!.userId,
-        request.params.rideId,
+        rideId,
         parsed.data.status
       )
     });
@@ -135,14 +137,15 @@ ridesRouter.patch("/:rideId/status", requireRole("RIDER"), async (request, respo
 });
 
 ridesRouter.post("/:rideId/cancel", requireRole("CUSTOMER"), async (request, response, next) => {
-  if (!validRideId(request.params.rideId)) {
+  const rideId = typeof request.params.rideId === "string" ? request.params.rideId : "";
+  if (!validRideId(rideId)) {
     validationError(response, "A valid ride request ID is required.");
     return;
   }
 
   try {
     response.status(200).json({
-      data: await cancelCustomerRide(request.auth!.userId, request.params.rideId)
+      data: await cancelCustomerRide(request.auth!.userId, rideId)
     });
   } catch (error) {
     next(error);
