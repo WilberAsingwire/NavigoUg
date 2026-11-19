@@ -1570,7 +1570,7 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
                   <PrimaryButton label="Send another item" loading={false} onPress={() => { setCreatedParcel(null); setPickup(""); setDestination(""); setItemDescription(""); setRecipientName(""); setRecipientPhone(""); setSelectedPickupLocation(null); setSelectedDestinationLocation(null); setParcelQuote(null); }} />
                 )}
               </View>
-            ) : tab === "book" ? (
+            ) : (
               <View style={styles.card}>
                 <Text style={styles.cardTitle}>Plan your trip</Text>
                 <Text style={styles.label}>Pickup location</Text>
@@ -1684,10 +1684,12 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
 
                 {!quote ? (
                   <PrimaryButton label="Calculate fare" loading={working} onPress={getFareEstimate} disabled={working || !pickup.trim() || !destination.trim()} />
-                ) : null}
+                ) : (
                   <PrimaryButton label="Confirm ride request" loading={working} onPress={requestRide} disabled={working} />
                 )}
               </View>
+
+            )}
 
               </>
             ) : mainTab === "activity" ? (
@@ -1698,9 +1700,20 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
                   <TabButton label="Item deliveries" selected={customerActivityTab === "parcels"} onPress={() => setCustomerActivityTab("parcels")} />
                 </View>
                 {customerActivityTab === "parcels" ? (
-                  
+                  <>
+                    {sentParcels.length ? sentParcels.map((parcel) => (
+                  <CustomerParcelCard
+                    key={parcel.id}
+                    parcel={parcel}
+                    tracking={parcelTrackings[parcel.id] ?? null}
+                    busy={working}
+                    onCancel={["PENDING", "ACCEPTED", "ARRIVED_AT_PICKUP"].includes(parcel.status) ? () => performParcelAction(parcel.id, "cancel") : undefined}
+                  />
+                )) : <EmptyState title="No item deliveries yet" text="Items you send will appear here with their delivery progress." />}
+                  </>
                 ) : (
-                  {rides.length ? rides.map((ride) => (
+                  <>
+                    {rides.length ? rides.map((ride) => (
                   <RideCard
                     key={ride.id}
                     ride={ride}
@@ -1709,6 +1722,7 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
                     onCancel={() => performRideAction(ride.id, "cancel")}
                   />
                 )) : <EmptyState title="No rides yet" text="Your ride requests and trip history will appear here." />}
+                  </>
                 )}
                 {error ? <Notice tone="error" text={error} /> : null}
                 {message ? <Notice tone="success" text={message} /> : null}
