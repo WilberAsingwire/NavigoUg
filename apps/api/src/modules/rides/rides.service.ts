@@ -357,6 +357,73 @@ export async function updateRideStatus(
   });
 }
 
+export async function recordRidePayment(
+  riderId: string,
+  rideId: string,
+  transactionReference?: string
+) {
+  return prisma.$transaction(async (tx) => {
+    const ride = await tx.rideRequest.findUnique({
+      where: { id: rideId },
+      include: { payment: true }
+    });
+
+    if (!ride || ride.riderId !== riderId) {
+      throw new RideError(404, "RIDE_NOT_FOUND", "The assigned ride could not be found.");
+    }
+    if (ride.status !== "COMPLETED") {
+      throw new RideError(409, "PAYMENT_NOT_ELIGIBLE", "A ride payment can only be recorded after the trip is completed.");
+    }
+    if (!ride.payment) {
+      throw new RideError(409, "PAYMENT_RECORD_NOT_FOUND", "The payment record for this ride could not be found.");
+    }
+    if (ride.payment.status !== "UNPAID") {
+      throw new RideError(409, "PAYMENT_ALREADY_RECORDED", "This ride payment has already been recorded.");
+    }
+    if (ride.payment.method === "CASH" && transactionReference) {
+      throw new RideError(400, "INVALID_PAYMENT_REFERENCE", "A transaction reference can only be supplied for Mobile Money payments.");
+    }
+
+    const recordedAt = new Date();
+    const changed = await tx.ridePayment.updateMany({
+      where: { rideRequestId: rideId, status: "UNPAID" },
+      data: {
+        status: "PAID",
+        recordedById: riderId,
+        recordedAt,
+        transactionReference: transactionReference ?? null
+      }
+    });
+
+    if (changed.count !== 1) {
+      throw new RideError(409, "PAYMENT_ALREADY_RECORDED", "This ride payment was already recorded. Refresh to see its latest status.");
+    }
+
+    await tx.auditLog.create({
+      data: {
+        actorId: riderId,
+        action: "RIDE_PAYMENT_RECORDED",
+        targetType: "RIDE_PAYMENT",
+        targetId: rideId,
+        metadata: {
+          method: ride.payment.method,
+          amountUgx: ride.payment.amountUgx,
+          hasTransactionReference: Boolean(transactionReference)
+        }
+      }
+    });
+
+    const updated = await tx.rideRequest.findUnique({
+      where: { id: rideId },
+      include: rideInclude()
+    });
+    if (!updated) {
+      throw new RideError(404, "RIDE_NOT_FOUND", "The ride request could not be found.");
+    }
+    return updated;
+  });
+}
+
 export async function cancelCustomerRide(customerId: string, rideId: string) {
   const ride = await prisma.rideRequest.findUnique({ where: { id: rideId } });
   if (!ride || ride.customerId !== customerId) {
