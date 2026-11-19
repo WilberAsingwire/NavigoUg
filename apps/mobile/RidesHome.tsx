@@ -2086,6 +2086,15 @@ function ProfilePanel({ session, onSignOut, signingOut }: { session: Session; on
   );
 }
 
+function Detail({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={styles.profileDetailRow}>
+      <Text style={styles.profileDetailLabel}>{label}</Text>
+      <Text style={styles.profileDetailValue}>{value}</Text>
+    </View>
+  );
+}
+
 function BottomNavigation({ role, activeTab, onChange }: {
   role: "CUSTOMER" | "RIDER";
   activeTab: WorkspaceTab;
@@ -2674,6 +2683,9 @@ const styles = StyleSheet.create({
   profileAvatarText: { color: "#174A72", fontSize: 29, fontWeight: "900" },
   profileName: { color: "#142B3D", fontSize: 19, fontWeight: "900" },
   profileRole: { color: "#667085", fontSize: 12, marginTop: 5 },
+  profileDetailRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", gap: 14, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: "#F0F2F5" },
+  profileDetailLabel: { color: "#8793A2", fontSize: 11, flex: 1 },
+  profileDetailValue: { color: "#344054", fontSize: 11, fontWeight: "700", flex: 1, textAlign: "right" },
   profileInfoCard: { backgroundColor: "#F0F7FC", borderRadius: 14, borderWidth: 1, borderColor: "#D3E6F3", padding: 14 },
   profileInfoTitle: { color: "#174A72", fontSize: 13, fontWeight: "900" },
   profileInfoText: { color: "#526779", fontSize: 11, lineHeight: 17, marginTop: 6 },
