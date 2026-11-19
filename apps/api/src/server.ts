@@ -1,6 +1,7 @@
 import "dotenv/config";
 import { createServer } from "node:http";
 import { app } from "./app.js";
+import { ensureDefaultRideFareRules } from "./modules/rides/fare-rules.js";
 
 // Cloud hosts such as Render provide PORT; local development falls back to API_PORT.
 const port = Number(process.env.PORT ?? process.env.API_PORT ?? 4000);
@@ -12,8 +13,21 @@ if (!Number.isInteger(port) || port < 1 || port > 65535) {
 
 const server = createServer(app);
 
-server.listen(port, host, () => {
-  console.info(`NAVIGO API listening on http://${host}:${port}`);
+async function startServer(): Promise<void> {
+  // Seed the researched pilot tariff before accepting fare-quote requests.
+  await ensureDefaultRideFareRules();
+
+  server.listen(port, host, () => {
+    console.info(`NAVIGO API listening on http://${host}:${port}`);
+  });
+}
+
+void startServer().catch((error: unknown) => {
+  console.error(
+    "NAVIGO API startup failed while initializing the fare tariff.",
+    error instanceof Error ? error.message : "Unknown error"
+  );
+  process.exitCode = 1;
 });
 
 function shutdown(signal: string): void {
