@@ -11,6 +11,8 @@ const mocks = vi.hoisted(() => ({
   parcelFindFirst: vi.fn(),
   parcelUpdateMany: vi.fn(),
   parcelHistoryCreate: vi.fn(),
+  parcelPaymentUpdateMany: vi.fn(),
+  auditLogCreate: vi.fn(),
   parcelTrackingFindUnique: vi.fn(),
   parcelTrackingUpsert: vi.fn(),
   parcelTrackingUpdate: vi.fn(),
@@ -37,6 +39,8 @@ vi.mock("../src/lib/prisma.js", () => ({
       updateMany: mocks.parcelTrackingUpdateMany
     },
     parcelStatusHistory: { create: mocks.parcelHistoryCreate },
+    parcelPayment: { updateMany: mocks.parcelPaymentUpdateMany },
+    auditLog: { create: mocks.auditLogCreate },
     $transaction: mocks.transaction
   }
 }));
@@ -146,7 +150,9 @@ describe("Parcel delivery API", () => {
           updateMany: mocks.parcelUpdateMany
         },
         parcelTrackingSession: { updateMany: mocks.parcelTrackingUpdateMany },
-        parcelStatusHistory: { create: mocks.parcelHistoryCreate }
+        parcelStatusHistory: { create: mocks.parcelHistoryCreate },
+        parcelPayment: { updateMany: mocks.parcelPaymentUpdateMany },
+        auditLog: { create: mocks.auditLogCreate }
       })
     );
   });
@@ -279,4 +285,58 @@ describe("Parcel delivery API", () => {
     expect(response.body.data).not.toHaveProperty("deliveryCodeHash");
     expect(mocks.parcelHistoryCreate).toHaveBeenCalled();
   });
+  it("prevents customers from recording item-delivery payments", async () => {
+    const token = await accessToken("CUSTOMER");
+    const response = await request(app)
+      .post(`/api/v1/parcels/${fakeParcel.id}/payment/record`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({});
+
+    expect(response.status).toBe(403);
+    expect(mocks.parcelFindUnique).not.toHaveBeenCalled();
+  });
+
+  it("records payment only after delivery and stores the rider confirmation", async () => {
+    const payment = { id: "8d530def-28a0-4c1d-8c2e-6ffbaed03ec4", method: "MOBILE_MONEY", status: "UNPAID", amountUgx: 2500 };
+    const delivered = { ...fakeParcel, riderId: senderId, status: "DELIVERED", payment };
+    mocks.parcelFindUnique
+      .mockResolvedValueOnce(delivered)
+      .mockResolvedValueOnce({ ...delivered, payment: { ...payment, status: "PAID", transactionReference: "MM123456" } });
+    mocks.parcelPaymentUpdateMany.mockResolvedValue({ count: 1 });
+    mocks.auditLogCreate.mockResolvedValue({});
+    const token = await accessToken("RIDER");
+
+    const response = await request(app)
+      .post(`/api/v1/parcels/${fakeParcel.id}/payment/record`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ transactionReference: "MM123456" });
+
+    expect(response.status).toBe(200);
+    expect(response.body.data.payment.status).toBe("PAID");
+    expect(mocks.parcelPaymentUpdateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { parcelRequestId: fakeParcel.id, status: "UNPAID" },
+      data: expect.objectContaining({ status: "PAID", recordedById: senderId, transactionReference: "MM123456" })
+    }));
+    expect(mocks.auditLogCreate).toHaveBeenCalled();
+  });
+
+  it("does not allow parcel payment recording before the item is delivered", async () => {
+    mocks.parcelFindUnique.mockResolvedValue({
+      ...fakeParcel,
+      riderId: senderId,
+      status: "IN_TRANSIT",
+      payment: { method: "CASH", status: "UNPAID", amountUgx: 2500 }
+    });
+    const token = await accessToken("RIDER");
+
+    const response = await request(app)
+      .post(`/api/v1/parcels/${fakeParcel.id}/payment/record`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({});
+
+    expect(response.status).toBe(409);
+    expect(response.body.error.code).toBe("PAYMENT_NOT_ELIGIBLE");
+    expect(mocks.parcelPaymentUpdateMany).not.toHaveBeenCalled();
+  });
+
 });
