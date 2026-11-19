@@ -1,14 +1,17 @@
 import { Router } from "express";
 import rateLimit from "express-rate-limit";
 import {
+  ApplyRiderInputSchema,
   ChangeOwnPasswordInputSchema,
   LoginInputSchema,
   RefreshTokenInputSchema,
   UpdateOwnProfileInputSchema,
+  SwitchWorkspaceInputSchema,
   RegisterCustomerInputSchema,
   RegisterRiderInputSchema
 } from "@navigo/shared";
 import {
+  applyForRider,
   changeOwnPassword,
   getSafeCurrentUser,
   login,
@@ -16,6 +19,7 @@ import {
   registerCustomer,
   registerRider,
   revokeRefreshToken,
+  switchWorkspace,
   updateOwnProfile
 } from "./auth.service.js";
 import { requireAuth } from "./auth.middleware.js";
@@ -112,6 +116,28 @@ authRouter.post("/change-password", requireAuth, authLimiter, async (request, re
   }
   try {
     response.status(200).json({ data: await changeOwnPassword(request.auth!.userId, parsed.data) });
+  } catch (error) { next(error); }
+});
+
+authRouter.post("/apply-rider", requireAuth, async (request, response, next) => {
+  const parsed = validate(ApplyRiderInputSchema, request.body);
+  if (!parsed.success) {
+    response.status(400).json({ error: { code: "VALIDATION_ERROR", message: "Please complete all rider and motorcycle details.", details: parsed.issues } });
+    return;
+  }
+  try {
+    response.status(201).json({ data: await applyForRider(request.auth!.userId, parsed.data) });
+  } catch (error) { next(error); }
+});
+
+authRouter.post("/switch-workspace", requireAuth, async (request, response, next) => {
+  const parsed = validate(SwitchWorkspaceInputSchema, request.body);
+  if (!parsed.success) {
+    response.status(400).json({ error: { code: "VALIDATION_ERROR", message: "Choose a valid workspace." } });
+    return;
+  }
+  try {
+    response.status(200).json({ data: await switchWorkspace(request.auth!.userId, parsed.data.role) });
   } catch (error) { next(error); }
 });
 
