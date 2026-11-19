@@ -5,7 +5,7 @@ services:
     plan: free
     region: frankfurt
     branch: cloud-preview-setup
-    buildCommand: npm install && npm run build:api
+    buildCommand: npm install --include=dev && npm run build:api
     startCommand: npm run start -w @navigo/api
     healthCheckPath: /api/v1/health/ready
     envVars:
