@@ -433,6 +433,20 @@ async function verifyParcelCode(
       throw new ParcelError(409, "PARCEL_STATUS_CHANGED", "The parcel was updated elsewhere. Refresh and try again.");
     }
 
+    if (kind === "DELIVERY") {
+      await tx.parcelTrackingSession.updateMany({
+        where: { parcelRequestId: parcelId },
+        data: {
+          riderSharingEnabled: false,
+          endedAt: now,
+          riderLatitude: null,
+          riderLongitude: null,
+          riderAccuracyMeters: null,
+          riderLocationUpdatedAt: null
+        }
+      });
+    }
+
     await tx.parcelStatusHistory.create({
       data: {
         parcelRequestId: parcelId,
@@ -634,6 +648,18 @@ export async function cancelSenderParcel(senderId: string, parcelId: string) {
     if (changed.count !== 1) {
       throw new ParcelError(409, "PARCEL_STATUS_CHANGED", "The parcel was updated elsewhere. Refresh and try again.");
     }
+
+    await tx.parcelTrackingSession.updateMany({
+      where: { parcelRequestId: parcelId },
+      data: {
+        riderSharingEnabled: false,
+        endedAt: new Date(),
+        riderLatitude: null,
+        riderLongitude: null,
+        riderAccuracyMeters: null,
+        riderLocationUpdatedAt: null
+      }
+    });
 
     await tx.parcelStatusHistory.create({
       data: {
