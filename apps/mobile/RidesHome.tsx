@@ -1846,7 +1846,7 @@ function CustomerParcelCard({
       {parcel.history?.length ? (
         <View style={styles.historyNotes}>
           <Text style={styles.label}>LATEST UPDATE</Text>
-          <Text style={styles.rideMeta}>{parcel.history[parcel.history.length - 1].note || labels[parcel.status] || parcel.status}</Text>
+          <Text style={styles.rideMeta}>{parcel.history[parcel.history.length - 1]?.note || labels[parcel.status] || parcel.status}</Text>
         </View>
       ) : null}
       {onCancel ? <TouchableOpacity onPress={onCancel} disabled={busy} style={styles.cancelButton}><Text style={styles.cancelText}>Cancel item delivery</Text></TouchableOpacity> : null}
