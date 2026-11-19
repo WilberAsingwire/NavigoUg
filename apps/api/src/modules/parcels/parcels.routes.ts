@@ -4,7 +4,8 @@ import {
   CreateParcelInputSchema,
   ParcelCodeInputSchema,
   ParcelFareQuoteInputSchema,
-  ParcelStatusActionSchema
+  ParcelStatusActionSchema,
+  RecordPaymentInputSchema
 } from "@navigo/shared";
 import { requireAuth, requireRole } from "../auth/auth.middleware.js";
 import {
@@ -22,7 +23,8 @@ import {
   updateParcelRiderLocation,
   startParcelTracking,
   stopParcelTracking,
-  getParcelTracking
+  getParcelTracking,
+  recordParcelPayment
 } from "./parcels.service.js";
 
 export const parcelsRouter = Router();
@@ -260,6 +262,28 @@ parcelsRouter.get("/:parcelId/tracking", requireRole("CUSTOMER"), trackingLimite
   try {
     response.status(200).json({
       data: await getParcelTracking(request.auth!.userId, parcelId)
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+parcelsRouter.post("/:parcelId/payment/record", requireRole("RIDER"), async (request, response, next) => {
+  const parcelId = parcelIdFromRequest(request);
+  if (!validParcelId(parcelId)) {
+    validationError(response, "A valid item-delivery request ID is required.");
+    return;
+  }
+
+  const parsed = RecordPaymentInputSchema.safeParse(request.body ?? {});
+  if (!parsed.success) {
+    validationError(response, "Please provide a valid Mobile Money transaction reference.", parsed.error.issues);
+    return;
+  }
+
+  try {
+    response.status(200).json({
+      data: await recordParcelPayment(request.auth!.userId, parcelId, parsed.data.transactionReference)
     });
   } catch (error) {
     next(error);
