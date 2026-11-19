@@ -618,12 +618,12 @@ export async function getParcelTracking(senderId: string, parcelId: string) {
     status: parcel.status,
     pickup: { latitude: Number(parcel.pickupLatitude), longitude: Number(parcel.pickupLongitude) },
     destination: { latitude: Number(parcel.destinationLatitude), longitude: Number(parcel.destinationLongitude) },
-    rider: fresh && tracking?.riderLatitude !== null && tracking?.riderLongitude !== null
+    rider: fresh && tracking && tracking.riderLatitude !== null && tracking.riderLongitude !== null
       ? {
-          latitude: Number(tracking!.riderLatitude),
-          longitude: Number(tracking!.riderLongitude),
-          accuracyMeters: tracking!.riderAccuracyMeters,
-          updatedAt: tracking!.riderLocationUpdatedAt
+          latitude: Number(tracking.riderLatitude),
+          longitude: Number(tracking.riderLongitude),
+          accuracyMeters: tracking.riderAccuracyMeters,
+          updatedAt: tracking.riderLocationUpdatedAt
         }
       : null,
     sharingEnabled: Boolean(active && tracking?.riderSharingEnabled && !tracking?.endedAt)
