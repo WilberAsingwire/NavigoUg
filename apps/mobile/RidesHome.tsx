@@ -929,6 +929,12 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
   }, [isCustomer, mainTab]);
 
   useEffect(() => {
+    if (activeSession.user.role === "RIDER" && mainTab !== "home") {
+      setRiderMapReady(false);
+    }
+  }, [activeSession.user.role, mainTab]);
+
+  useEffect(() => {
     const showSubscription = Keyboard.addListener("keyboardDidShow", () => setKeyboardVisible(true));
     const hideSubscription = Keyboard.addListener("keyboardDidHide", () => setKeyboardVisible(false));
     return () => {
