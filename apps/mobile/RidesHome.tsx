@@ -181,6 +181,7 @@ type WorkspaceTab = "home" | "activity" | "requests" | "jobs" | "profile";
 type Props = {
   session: Session;
   onSignOut: () => void;
+  onSessionChange: (session: Session) => void;
   signingOut: boolean;
 };
 
@@ -629,8 +630,12 @@ async function geocodeAruaAddress(value: string): Promise<RideLocation> {
   };
 }
 
-export default function RidesHome({ session, onSignOut, signingOut }: Props) {
+export default function RidesHome({ session, onSignOut, onSessionChange, signingOut }: Props) {
   const [activeSession, setActiveSession] = useState(session);
+
+  useEffect(() => {
+    setActiveSession(session);
+  }, [session]);
   const [mainTab, setMainTab] = useState<WorkspaceTab>("home");
   const [appearance, setAppearance] = useState<UiAppearance>("LIGHT");
   const [textSize, setTextSize] = useState<UiTextSize>("STANDARD");
@@ -691,6 +696,7 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
       const renewedSession = payload.data;
       await SecureStore.setItemAsync("navigo.session", JSON.stringify(renewedSession));
       setActiveSession(renewedSession);
+      onSessionChange(renewedSession);
       return renewedSession.accessToken;
     })();
 
@@ -700,7 +706,7 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
     } finally {
       if (refreshInFlight.current === pending) refreshInFlight.current = null;
     }
-  }, [onSignOut]);
+  }, [onSignOut, onSessionChange]);
 
   const saveOwnProfile = useCallback(async (input: { fullName: string; email: string }) => {
     const result = await apiRequest<{ data: Session["user"] }>(
@@ -715,7 +721,8 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
     const updatedSession = { ...activeSession, user: result.data };
     await SecureStore.setItemAsync("navigo.session", JSON.stringify(updatedSession));
     setActiveSession(updatedSession);
-  }, [activeSession, refreshAccessToken]);
+    onSessionChange(updatedSession);
+  }, [activeSession, refreshAccessToken, onSessionChange]);
 
   const changeOwnPassword = useCallback(async (input: { currentPassword: string; newPassword: string }) => {
     const result = await apiRequest<{ data: Session }>(
@@ -729,7 +736,8 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
     );
     await SecureStore.setItemAsync("navigo.session", JSON.stringify(result.data));
     setActiveSession(result.data);
-  }, [activeSession.accessToken, refreshAccessToken]);
+    onSessionChange(result.data);
+  }, [activeSession.accessToken, refreshAccessToken, onSessionChange]);
 
   const switchWorkspace = useCallback(async (role: "CUSTOMER" | "RIDER") => {
     const result = await apiRequest<{ data: Session }>(
@@ -740,8 +748,9 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
     );
     await SecureStore.setItemAsync("navigo.session", JSON.stringify(result.data));
     setActiveSession(result.data);
+    onSessionChange(result.data);
     setMainTab("home");
-  }, [activeSession.accessToken, refreshAccessToken]);
+  }, [activeSession.accessToken, refreshAccessToken, onSessionChange]);
 
   const applyForRider = useCallback(async (input: {
     licenceNumber: string; motorcyclePlate: string; motorcycleDescription: string;
@@ -755,7 +764,8 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
     const updatedSession = { ...activeSession, user: result.data };
     await SecureStore.setItemAsync("navigo.session", JSON.stringify(updatedSession));
     setActiveSession(updatedSession);
-  }, [activeSession, refreshAccessToken]);
+    onSessionChange(updatedSession);
+  }, [activeSession, refreshAccessToken, onSessionChange]);
 
   const [tab, setTab] = useState<"book" | "parcel">("book");
   const [customerActivityTab, setCustomerActivityTab] = useState<"rides" | "parcels">("rides");
