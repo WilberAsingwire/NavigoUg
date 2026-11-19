@@ -1528,7 +1528,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      <StatusBar style="dark" />
+      <StatusBar style={appearance === "DARK" ? "light" : "dark"} />
       <ScrollView style={styles.mainScroll} contentContainerStyle={styles.page} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
         <View style={styles.topBar}>
           <View>
