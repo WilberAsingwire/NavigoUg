@@ -20,6 +20,7 @@ import {
   verifyParcelDelivery,
   verifyParcelPickup,
   updateParcelRiderLocation,
+  startParcelTracking,
   getParcelTracking
 } from "./parcels.service.js";
 
@@ -189,6 +190,21 @@ parcelsRouter.post("/:parcelId/verify-delivery", requireRole("RIDER"), async (re
   }
 });
 
+
+parcelsRouter.post("/:parcelId/tracking/start", requireRole("RIDER"), async (request, response, next) => {
+  const parcelId = parcelIdFromRequest(request);
+  if (!validParcelId(parcelId)) {
+    validationError(response, "A valid parcel request ID is required.");
+    return;
+  }
+  try {
+    response.status(200).json({
+      data: await startParcelTracking(request.auth!.userId, parcelId)
+    });
+  } catch (error) {
+    next(error);
+  }
+});
 
 parcelsRouter.post("/:parcelId/tracking/location", requireRole("RIDER"), async (request, response, next) => {
   const parcelId = parcelIdFromRequest(request);
