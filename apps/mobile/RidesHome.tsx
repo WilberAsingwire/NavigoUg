@@ -140,6 +140,12 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
   const [error, setError] = useState("");
 
   const loadDashboard = useCallback(async () => {
+    if (session.user.role === "ADMIN") {
+      setRides([]);
+      setAvailableRides([]);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setError("");
     try {
@@ -156,7 +162,7 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
     } finally {
       setLoading(false);
     }
-  }, [session.accessToken, isApprovedRider]);
+  }, [session.accessToken, session.user.role, isApprovedRider]);
 
   useEffect(() => {
     void loadDashboard();
