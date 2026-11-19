@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   refreshCreate: vi.fn(),
   refreshFindUnique: vi.fn(),
   refreshUpdateMany: vi.fn(),
+  riderProfileCreate: vi.fn(),
   queryRaw: vi.fn()
 }));
 
@@ -20,6 +21,7 @@ vi.mock("../src/lib/prisma.js", () => ({
       findUnique: mocks.userFindUnique,
       update: mocks.userUpdate
     },
+    riderProfile: { create: mocks.riderProfileCreate },
     refreshToken: {
       create: mocks.refreshCreate,
       findUnique: mocks.refreshFindUnique,
@@ -175,6 +177,108 @@ describe("Authentication API", () => {
     expect(response.body.error.code).toBe("INVALID_REFRESH_TOKEN");
     expect(mocks.refreshCreate).not.toHaveBeenCalled();
   });
+  it("allows a customer to apply for the rider workspace without creating a second user", async () => {
+    const passwordHash = await argon2.hash(password);
+    const pendingRiderProfile = {
+      approvalStatus: "PENDING" as const,
+      licenceNumber: "DL-TEST-010",
+      motorcyclePlate: "UAA 010A",
+      motorcycleDescription: "Blue motorcycle"
+    };
+    mocks.userFindUnique
+      .mockResolvedValueOnce({ ...sampleUser, passwordHash })
+      .mockResolvedValueOnce(sampleUser)
+      .mockResolvedValueOnce({ ...sampleUser, riderProfile: pendingRiderProfile });
+    mocks.riderProfileCreate.mockResolvedValue(pendingRiderProfile);
+    mocks.refreshCreate.mockResolvedValue({});
+
+    const loginResponse = await request(app)
+      .post("/api/v1/auth/login")
+      .send({ phone: sampleUser.phone, password });
+    const accessToken = loginResponse.body.data.accessToken as string;
+
+    const response = await request(app)
+      .post("/api/v1/auth/apply-rider")
+      .set("Authorization", `Bearer ${accessToken}`)
+      .send({
+        licenceNumber: "DL-TEST-010",
+        motorcyclePlate: "UAA 010A",
+        motorcycleDescription: "Blue motorcycle"
+      });
+
+    expect(response.status).toBe(201);
+    expect(mocks.riderProfileCreate).toHaveBeenCalledWith({
+      data: {
+        userId: sampleUser.id,
+        approvalStatus: "PENDING",
+        licenceNumber: "DL-TEST-010",
+        motorcyclePlate: "UAA 010A",
+        motorcycleDescription: "Blue motorcycle"
+      }
+    });
+    expect(response.body.data.id).toBe(sampleUser.id);
+    expect(response.body.data.role).toBe("CUSTOMER");
+    expect(response.body.data.riderApprovalStatus).toBe("PENDING");
+  });
+
+  it("allows an approved rider to switch workspaces using a newly issued session", async () => {
+    const passwordHash = await argon2.hash(password);
+    const approvedUser = {
+      ...sampleUser,
+      passwordHash,
+      riderProfile: {
+        approvalStatus: "APPROVED" as const,
+        licenceNumber: "DL-TEST-001",
+        motorcyclePlate: "UAA 123A",
+        motorcycleDescription: "Black motorcycle"
+      }
+    };
+    mocks.userFindUnique.mockResolvedValue(approvedUser);
+    mocks.refreshCreate.mockResolvedValue({});
+
+    const loginResponse = await request(app)
+      .post("/api/v1/auth/login")
+      .send({ phone: sampleUser.phone, password });
+    const accessToken = loginResponse.body.data.accessToken as string;
+
+    const response = await request(app)
+      .post("/api/v1/auth/switch-workspace")
+      .set("Authorization", `Bearer ${accessToken}`)
+      .send({ role: "RIDER" });
+
+    expect(response.status).toBe(200);
+    expect(response.body.data.user.id).toBe(sampleUser.id);
+    expect(response.body.data.user.role).toBe("RIDER");
+    expect(response.body.data.user.availableRoles).toEqual(["CUSTOMER", "RIDER"]);
+    expect(mocks.refreshCreate).toHaveBeenLastCalledWith(expect.objectContaining({
+      data: expect.objectContaining({ userId: sampleUser.id, activeRole: "RIDER" })
+    }));
+  });
+
+  it("does not grant rider workspace access before administrator approval", async () => {
+    const passwordHash = await argon2.hash(password);
+    mocks.userFindUnique.mockResolvedValue({
+      ...sampleUser,
+      passwordHash,
+      riderProfile: { approvalStatus: "PENDING" }
+    });
+    mocks.refreshCreate.mockResolvedValue({});
+
+    const loginResponse = await request(app)
+      .post("/api/v1/auth/login")
+      .send({ phone: sampleUser.phone, password });
+    const accessToken = loginResponse.body.data.accessToken as string;
+
+    const response = await request(app)
+      .post("/api/v1/auth/switch-workspace")
+      .set("Authorization", `Bearer ${accessToken}`)
+      .send({ role: "RIDER" });
+
+    expect(response.status).toBe(403);
+    expect(response.body.error.code).toBe("RIDER_NOT_APPROVED");
+    expect(mocks.refreshCreate).toHaveBeenCalledTimes(1);
+  });
+
   it("allows an authenticated user to update only their own profile details", async () => {
     const passwordHash = await argon2.hash(password);
     mocks.userFindUnique.mockResolvedValue({ ...sampleUser, passwordHash });
