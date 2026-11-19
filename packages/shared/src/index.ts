@@ -98,6 +98,44 @@ export const RideStatusUpdateInputSchema = z.object({
   status: z.enum(["ARRIVED_AT_PICKUP", "IN_PROGRESS", "COMPLETED"])
 });
 
+
+export const ParcelSizeCategorySchema = z.enum(["SMALL", "MEDIUM", "LARGE"]);
+export type ParcelSizeCategory = z.infer<typeof ParcelSizeCategorySchema>;
+
+export const ParcelLocationInputSchema = RideLocationInputSchema;
+
+export const ParcelFareQuoteInputSchema = z.object({
+  pickup: ParcelLocationInputSchema,
+  destination: ParcelLocationInputSchema,
+  sizeCategory: ParcelSizeCategorySchema
+}).refine(
+  (value) =>
+    value.pickup.latitude !== value.destination.latitude ||
+    value.pickup.longitude !== value.destination.longitude,
+  { message: "Pickup and destination must be different locations." }
+);
+
+export const CreateParcelInputSchema = ParcelFareQuoteInputSchema.extend({
+  recipientName: z.string().trim().min(2).max(100),
+  recipientPhone: z.string().trim().min(7).max(20),
+  parcelDescription: z.string().trim().min(3).max(300),
+  paymentMethod: PaymentMethodSchema.default("CASH")
+});
+
+export type ParcelFareQuoteInput = z.infer<typeof ParcelFareQuoteInputSchema>;
+export type CreateParcelInput = z.infer<typeof CreateParcelInputSchema>;
+
+export const ParcelCodeInputSchema = z.object({
+  code: z.string().trim().regex(/^\\d{6}$/, "Enter the 6-digit verification code.")
+});
+
+export const ParcelStatusActionSchema = z.enum([
+  "ARRIVED_AT_PICKUP",
+  "IN_TRANSIT",
+  "ARRIVED_AT_DESTINATION"
+]);
+export type ParcelStatusAction = z.infer<typeof ParcelStatusActionSchema>;
+
 export const RefreshTokenInputSchema = z.object({
   refreshToken: z.string().min(40).max(200)
 });
