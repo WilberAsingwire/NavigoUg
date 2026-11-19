@@ -11,6 +11,7 @@ import {
   View
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
+import MapView, { Marker, Polyline } from "react-native-maps";
 
 type Session = {
   accessToken: string;
@@ -55,7 +56,26 @@ type Quote = {
   fareAmountUgx: number;
   distanceKm: number;
   fareBasis: "LANDMARK_FARE" | "DISTANCE_RULE";
+  durationSeconds: number;
+  routeCoordinates: RideLocation[];
+  routingProvider: "GOOGLE_TWO_WHEELER" | "VALHALLA_MOTORCYCLE";
 };
+
+function routeMapRegion(coordinates: RideLocation[]) {
+  const latitudes = coordinates.map((point) => point.latitude);
+  const longitudes = coordinates.map((point) => point.longitude);
+  const minLatitude = Math.min(...latitudes);
+  const maxLatitude = Math.max(...latitudes);
+  const minLongitude = Math.min(...longitudes);
+  const maxLongitude = Math.max(...longitudes);
+
+  return {
+    latitude: (minLatitude + maxLatitude) / 2,
+    longitude: (minLongitude + maxLongitude) / 2,
+    latitudeDelta: Math.max(0.008, (maxLatitude - minLatitude) * 1.7),
+    longitudeDelta: Math.max(0.008, (maxLongitude - minLongitude) * 1.7)
+  };
+}
 
 type Props = {
   session: Session;
@@ -769,13 +789,41 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
                   <ChoiceButton label="Mobile Money" selected={paymentMethod === "MOBILE_MONEY"} onPress={() => setPaymentMethod("MOBILE_MONEY")} />
                 </View>
 
-                {quote && (
-                  <View style={styles.quoteCard}>
-                    <Text style={styles.quoteLabel}>ESTIMATED FARE</Text>
-                    <Text style={styles.quoteAmount}>{money(quote.fareAmountUgx)}</Text>
-                    <Text style={styles.quoteNote}>{quote.distanceKm.toFixed(2)} km straight-line distance estimate</Text>
-                    <Text style={styles.quoteNote}>Final travel distance may be longer by road.</Text>
-                  </View>
+                {quote && locations && (
+                  <>
+                    <View style={styles.routeMapFrame}>
+                      <MapView
+                        style={styles.routeMap}
+                        initialRegion={routeMapRegion(quote.routeCoordinates)}
+                        scrollEnabled={false}
+                        zoomEnabled={false}
+                        rotateEnabled={false}
+                        pitchEnabled={false}
+                        toolbarEnabled={false}
+                        showsCompass={false}
+                        showsScale={false}
+                        loadingEnabled
+                      >
+                        <Polyline
+                          coordinates={quote.routeCoordinates}
+                          strokeColor="#1F76A8"
+                          strokeWidth={5}
+                        />
+                        <Marker coordinate={locations.pickup} title="Pickup" pinColor="#21865B" />
+                        <Marker coordinate={locations.destination} title="Destination" pinColor="#C54848" />
+                      </MapView>
+                    </View>
+                    {quote.routingProvider === "VALHALLA_MOTORCYCLE" ? (
+                      <Text style={styles.attributionText}>Road route data © OpenStreetMap contributors</Text>
+                    ) : null}
+                    <View style={styles.quoteCard}>
+                      <Text style={styles.quoteLabel}>ESTIMATED FARE</Text>
+                      <Text style={styles.quoteAmount}>{money(quote.fareAmountUgx)}</Text>
+                      <Text style={styles.quoteNote}>{quote.distanceKm.toFixed(2)} km by motorcycle road route</Text>
+                      <Text style={styles.quoteNote}>About {Math.max(1, Math.ceil(quote.durationSeconds / 60))} minutes estimated travel time</Text>
+                      <Text style={styles.quoteNote}>Route and time are estimates. Road conditions and diversions may change the actual journey.</Text>
+                    </View>
+                  </>
                 )}
 
                 {error ? <Notice tone="error" text={error} /> : null}
@@ -1170,6 +1218,8 @@ const styles = StyleSheet.create({
   choiceButtonSelected: { borderColor: "#2B719F", backgroundColor: "#F0F7FC" },
   choiceText: { color: "#667085", fontSize: 12, fontWeight: "700" },
   choiceTextSelected: { color: "#174A72" },
+  routeMapFrame: { height: 190, borderRadius: 13, overflow: "hidden", marginTop: 10, borderWidth: 1, borderColor: "#DCE3EB" },
+  routeMap: { width: "100%", height: "100%" },
   quoteCard: { backgroundColor: "#F0F7FC", borderWidth: 1, borderColor: "#D3E6F3", borderRadius: 13, padding: 14, marginTop: 6, marginBottom: 13 },
   quoteLabel: { color: "#497A9B", fontSize: 9, fontWeight: "800", letterSpacing: 1.1 },
   quoteAmount: { color: "#174A72", fontSize: 25, fontWeight: "900", marginTop: 4 },
