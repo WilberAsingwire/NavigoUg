@@ -245,6 +245,15 @@ export async function createRide(customerId: string, input: CreateRideInput) {
         note: "Ride request created"
       }
     });
+    await tx.notification.create({
+      data: {
+        userId: customerId,
+        title: "Ride request received",
+        body: "Your ride request has been created. We will update you when a rider accepts it.",
+        requestType: "RIDE",
+        requestId: ride.id
+      }
+    });
 
     return { ...ride, estimatedDistanceKm: fare.distanceKm };
   });
@@ -421,6 +430,15 @@ export async function acceptRide(riderId: string, rideId: string) {
     if (!ride) {
       throw new RideError(404, "RIDE_NOT_FOUND", "The ride request could not be found.");
     }
+    await tx.notification.create({
+      data: {
+        userId: ride.customerId,
+        title: "Your rider has accepted",
+        body: "A NAVIGO rider has accepted your ride request and is preparing to come to your pickup point.",
+        requestType: "RIDE",
+        requestId: ride.id
+      }
+    });
     return ride;
   });
 }
