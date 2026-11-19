@@ -250,7 +250,11 @@ export async function refreshSession(refreshToken: string) {
   };
 }
 
-export async function switchWorkspace(userId: string, role: "CUSTOMER" | "RIDER") {
+export async function switchWorkspace(
+  userId: string,
+  currentRole: SessionUser["role"],
+  role: "CUSTOMER" | "RIDER"
+) {
   const user = await prisma.user.findUnique({
     where: { id: userId },
     include: { riderProfile: true }
@@ -264,6 +268,32 @@ export async function switchWorkspace(userId: string, role: "CUSTOMER" | "RIDER"
   if (role === "RIDER" && user.riderProfile?.approvalStatus !== "APPROVED") {
     throw new AuthError(403, "RIDER_NOT_APPROVED", "The rider workspace becomes available after NAVIGO approves your rider application.");
   }
+
+  if (currentRole === "RIDER" && role === "CUSTOMER") {
+    const [activeRides, activeParcels] = await Promise.all([
+      prisma.rideRequest.count({
+        where: { riderId: userId, status: { in: ["ACCEPTED", "ARRIVED_AT_PICKUP", "IN_PROGRESS"] } }
+      }),
+      prisma.parcelRequest.count({
+        where: { riderId: userId, status: { in: ["ACCEPTED", "ARRIVED_AT_PICKUP", "COLLECTED", "IN_TRANSIT", "ARRIVED_AT_DESTINATION"] } }
+      })
+    ]);
+    if (activeRides + activeParcels > 0) {
+      throw new AuthError(409, "ACTIVE_RIDER_JOBS", "Complete or resolve your active ride and item deliveries before switching to the customer workspace.");
+    }
+
+    await prisma.riderAvailability.updateMany({
+      where: { riderId: userId },
+      data: {
+        isOnline: false,
+        latitude: null,
+        longitude: null,
+        accuracyMeters: null,
+        lastSeenAt: null
+      }
+    });
+  }
+
   return buildSession(user, role);
 }
 
