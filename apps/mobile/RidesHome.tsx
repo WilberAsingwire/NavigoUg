@@ -26,6 +26,7 @@ type Session = {
     phone: string;
     email?: string | null;
     role: "CUSTOMER" | "RIDER" | "ADMIN";
+    availableRoles?: Array<"CUSTOMER" | "RIDER" | "ADMIN">;
     riderProfile?: { licenceNumber: string | null; motorcyclePlate: string | null; motorcycleDescription: string | null } | null;
     riderApprovalStatus: "PENDING" | "APPROVED" | "REJECTED" | "SUSPENDED" | null;
   };
@@ -624,9 +625,9 @@ async function geocodeAruaAddress(value: string): Promise<RideLocation> {
 }
 
 export default function RidesHome({ session, onSignOut, signingOut }: Props) {
-  const isCustomer = session.user.role === "CUSTOMER";
-  const isApprovedRider = session.user.role === "RIDER" && session.user.riderApprovalStatus === "APPROVED";
   const [activeSession, setActiveSession] = useState(session);
+  const isCustomer = activeSession.user.role === "CUSTOMER";
+  const isApprovedRider = activeSession.user.role === "RIDER" && activeSession.user.riderApprovalStatus === "APPROVED";
   const refreshTokenRef = useRef(session.refreshToken);
   refreshTokenRef.current = activeSession.refreshToken;
   const refreshInFlight = useRef<Promise<string> | null>(null);
@@ -694,6 +695,34 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
     setActiveSession(result.data);
   }, [activeSession.accessToken, refreshAccessToken]);
 
+  const switchWorkspace = useCallback(async (role: "CUSTOMER" | "RIDER") => {
+    const result = await apiRequest<{ data: Session }>(
+      "/api/v1/auth/switch-workspace",
+      activeSession.accessToken,
+      { method: "POST", body: JSON.stringify({ role }) },
+      refreshAccessToken
+    );
+    await SecureStore.setItemAsync("navigo.session", JSON.stringify(result.data));
+    setActiveSession(result.data);
+    setMainTab("home");
+    setError("");
+    setMessage("");
+  }, [activeSession.accessToken, refreshAccessToken]);
+
+  const applyForRider = useCallback(async (input: {
+    licenceNumber: string; motorcyclePlate: string; motorcycleDescription: string;
+  }) => {
+    const result = await apiRequest<{ data: Session["user"] }>(
+      "/api/v1/auth/apply-rider",
+      activeSession.accessToken,
+      { method: "POST", body: JSON.stringify(input) },
+      refreshAccessToken
+    );
+    const updatedSession = { ...activeSession, user: result.data };
+    await SecureStore.setItemAsync("navigo.session", JSON.stringify(updatedSession));
+    setActiveSession(updatedSession);
+  }, [activeSession, refreshAccessToken]);
+
   const [tab, setTab] = useState<"book" | "parcel">("book");
   const [mainTab, setMainTab] = useState<WorkspaceTab>("home");
   const [customerActivityTab, setCustomerActivityTab] = useState<"rides" | "parcels">("rides");
@@ -758,7 +787,7 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
   const loadDashboard = useCallback(async () => {
     setLoading(true);
     setError("");
-    if (session.user.role === "ADMIN") {
+    if (activeSession.user.role === "ADMIN") {
       try {
         const riderQuery = adminRiderFilter === "ALL" ? "" : `?status=${adminRiderFilter}`;
         const [riderResult, fareResult] = await Promise.all([
@@ -796,7 +825,7 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
         setAvailableParcels(parcelQueue.data ?? []);
         setAssignedParcels(myParcels.data ?? []);
         setSentParcels([]);
-      } else if (session.user.role === "CUSTOMER") {
+      } else if (activeSession.user.role === "CUSTOMER") {
         const mine = await apiRequest<{ data: RiderParcel[] }>("/api/v1/parcels/mine", activeSession.accessToken, undefined, refreshAccessToken);
         setSentParcels(mine.data ?? []);
         setAvailableParcels([]);
@@ -812,7 +841,7 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
     } finally {
       setLoading(false);
     }
-  }, [activeSession.accessToken, session.user.role, isApprovedRider, riderOnline, adminRiderFilter, refreshAccessToken]);
+  }, [activeSession.accessToken, activeSession.user.role, isApprovedRider, riderOnline, adminRiderFilter, refreshAccessToken]);
 
   const refreshAvailableRides = useCallback(async () => {
     if (!isApprovedRider || !riderOnline) return;
@@ -1464,7 +1493,7 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
             <Text style={styles.greeting}>Hello, {session.user.fullName.split(" ")[0]}</Text>
             <Text style={styles.muted}>{isCustomer ? "Your ride starts here" : "Your rider workspace"}</Text>
           </View>
-{session.user.role === "ADMIN" ? (
+{activeSession.user.role === "ADMIN" ? (
             <TouchableOpacity style={styles.signOut} onPress={onSignOut} disabled={signingOut}>
               {signingOut ? <ActivityIndicator color="#174A72" /> : <Text style={styles.signOutText}>Sign out</Text>}
             </TouchableOpacity>
@@ -1757,21 +1786,21 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
                 {message ? <Notice tone="success" text={message} /> : null}
               </View>
             ) : (
-              <ProfilePanel session={activeSession} onSignOut={onSignOut} signingOut={signingOut} onSaveProfile={saveOwnProfile} onChangePassword={changeOwnPassword} />
+              <ProfilePanel session={activeSession} onSignOut={onSignOut} signingOut={signingOut} onSaveProfile={saveOwnProfile} onChangePassword={changeOwnPassword} onSwitchWorkspace={switchWorkspace} onApplyRider={applyForRider} refreshAccessToken={refreshAccessToken} />
             )}
           </>
-        ) : session.user.role === "RIDER" ? (
+        ) : activeSession.user.role === "RIDER" ? (
           <>
             {mainTab === "profile" ? (
               <ProfilePanel session={activeSession} onSignOut={onSignOut} signingOut={signingOut} onSaveProfile={saveOwnProfile} onChangePassword={changeOwnPassword} />
-            ) : session.user.riderApprovalStatus !== "APPROVED" ? (
+            ) : activeSession.user.riderApprovalStatus !== "APPROVED" ? (
               <View style={styles.card}>
                 <Text style={styles.cardTitle}>Rider application status</Text>
                 <View style={styles.statusPill}>
-                  <Text style={styles.statusPillText}>{session.user.riderApprovalStatus ?? "NOT SET"}</Text>
+                  <Text style={styles.statusPillText}>{activeSession.user.riderApprovalStatus ?? "NOT SET"}</Text>
                 </View>
                 <Text style={styles.bodyText}>
-                  {session.user.riderApprovalStatus === "PENDING"
+                  {activeSession.user.riderApprovalStatus === "PENDING"
                     ? "Thank you for applying. Your details are waiting for administrator review. You can access ride requests after your account is approved."
                     : "Your rider account is not approved for accepting bookings. Please contact NAVIGO support for guidance."}
                 </Text>
@@ -1895,7 +1924,7 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
             {error ? <Notice tone="error" text={error} /> : null}
             {message ? <Notice tone="success" text={message} /> : null}
           </>
-        ) : session.user.role === "ADMIN" ? (
+        ) : activeSession.user.role === "ADMIN" ? (
           <>
             <View style={styles.heroCard}>
               <Text style={styles.heroEyebrow}>NAVIGO MANAGEMENT</Text>
@@ -2064,31 +2093,50 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
         )}
         <Text style={styles.footer}>NAVIGO • Arua, Uganda</Text>
       </ScrollView>
-      {session.user.role === "CUSTOMER" || session.user.role === "RIDER" ? (
-        <BottomNavigation role={session.user.role} activeTab={mainTab} onChange={(nextTab) => {
+      {activeSession.user.role === "CUSTOMER" || activeSession.user.role === "RIDER" ? (
+        <BottomNavigation role={activeSession.user.role} activeTab={mainTab} onChange={(nextTab) => {
           setMainTab(nextTab);
-          if (nextTab === "home" && session.user.role === "CUSTOMER") setTab("book");
+          if (nextTab === "home" && activeSession.user.role === "CUSTOMER") setTab("book");
         }} />
       ) : null}
     </SafeAreaView>
   );
 }
 
+type ProfileNotification = {
+  id: string;
+  title: string;
+  body: string;
+  requestType: "RIDE" | "PARCEL" | null;
+  requestId: string | null;
+  readAt: string | null;
+  createdAt: string;
+};
+
+type ProfilePage = "home" | "account" | "preferences" | "notifications" | "workspace" | "support" | "privacy";
+
 function ProfilePanel({
   session,
   onSignOut,
   signingOut,
   onSaveProfile,
-  onChangePassword
+  onChangePassword,
+  onSwitchWorkspace,
+  onApplyRider,
+  refreshAccessToken
 }: {
   session: Session;
   onSignOut: () => void;
   signingOut: boolean;
   onSaveProfile: (input: { fullName: string; email: string }) => Promise<void>;
   onChangePassword: (input: { currentPassword: string; newPassword: string }) => Promise<void>;
+  onSwitchWorkspace: (role: "CUSTOMER" | "RIDER") => Promise<void>;
+  onApplyRider: (input: { licenceNumber: string; motorcyclePlate: string; motorcycleDescription: string }) => Promise<void>;
+  refreshAccessToken: () => Promise<string>;
 }) {
   const roleLabel = session.user.role === "CUSTOMER" ? "Customer" : session.user.role === "RIDER" ? "Rider" : "Administrator";
   const riderStatus = session.user.riderApprovalStatus ?? "NOT SET";
+  const [page, setPage] = useState<ProfilePage>("home");
   const [editing, setEditing] = useState(false);
   const [fullName, setFullName] = useState(session.user.fullName);
   const [email, setEmail] = useState(session.user.email ?? "");
@@ -2096,6 +2144,12 @@ function ProfilePanel({
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [licenceNumber, setLicenceNumber] = useState("");
+  const [motorcyclePlate, setMotorcyclePlate] = useState("");
+  const [motorcycleDescription, setMotorcycleDescription] = useState("");
+  const [notifications, setNotifications] = useState<ProfileNotification[]>([]);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [notificationsLoading, setNotificationsLoading] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -2104,6 +2158,28 @@ function ProfilePanel({
     setFullName(session.user.fullName);
     setEmail(session.user.email ?? "");
   }, [session.user.fullName, session.user.email]);
+
+  useEffect(() => {
+    if (page !== "notifications") return;
+    let active = true;
+    setNotificationsLoading(true);
+    apiRequest<{ data: { items: ProfileNotification[]; unreadCount: number } }>(
+      "/api/v1/notifications",
+      session.accessToken,
+      {},
+      refreshAccessToken
+    ).then((result) => {
+      if (!active) return;
+      setNotifications(result.data.items);
+      setUnreadCount(result.data.unreadCount);
+      setError("");
+    }).catch((cause) => {
+      if (active) setError(cause instanceof Error ? cause.message : "Notifications could not be loaded.");
+    }).finally(() => {
+      if (active) setNotificationsLoading(false);
+    });
+    return () => { active = false; };
+  }, [page, session.accessToken, refreshAccessToken]);
 
   async function saveProfile() {
     setBusy(true);
@@ -2146,87 +2222,352 @@ function ProfilePanel({
     }
   }
 
+  async function submitRiderApplication() {
+    setError("");
+    setSuccess("");
+    if (!licenceNumber.trim() || !motorcyclePlate.trim() || !motorcycleDescription.trim()) {
+      setError("Complete your licence and motorcycle details before submitting.");
+      return;
+    }
+    setBusy(true);
+    try {
+      await onApplyRider({
+        licenceNumber: licenceNumber.trim(),
+        motorcyclePlate: motorcyclePlate.trim().toUpperCase(),
+        motorcycleDescription: motorcycleDescription.trim()
+      });
+      setSuccess("Your rider application has been submitted and is waiting for NAVIGO review.");
+      setLicenceNumber("");
+      setMotorcyclePlate("");
+      setMotorcycleDescription("");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Your rider application could not be submitted.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function changeWorkspace(role: "CUSTOMER" | "RIDER") {
+    setError("");
+    setBusy(true);
+    try {
+      await onSwitchWorkspace(role);
+      setPage("home");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "The workspace could not be changed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function markNotificationRead(notificationId: string) {
+    try {
+      await apiRequest<{ data: { id: string; read: boolean } }>(
+        `/api/v1/notifications/${notificationId}/read`,
+        session.accessToken,
+        { method: "PATCH" },
+        refreshAccessToken
+      );
+      setNotifications((current) => current.map((item) => item.id === notificationId
+        ? { ...item, readAt: new Date().toISOString() }
+        : item));
+      setUnreadCount((count) => Math.max(0, count - 1));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "This notification could not be updated.");
+    }
+  }
+
+  async function markAllNotificationsRead() {
+    try {
+      await apiRequest<{ data: { updatedCount: number } }>(
+        "/api/v1/notifications/read-all",
+        session.accessToken,
+        { method: "POST" },
+        refreshAccessToken
+      );
+      const now = new Date().toISOString();
+      setNotifications((current) => current.map((item) => ({ ...item, readAt: item.readAt ?? now })));
+      setUnreadCount(0);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Notifications could not be updated.");
+    }
+  }
+
+  function menuItem(title: string, description: string, destination: ProfilePage, badgeText?: string) {
+    return (
+      <TouchableOpacity
+        key={title}
+        style={styles.profileMenuItem}
+        accessibilityRole="button"
+        onPress={() => { setError(""); setSuccess(""); setPage(destination); }}
+      >
+        <View style={styles.profileMenuCopy}>
+          <Text style={styles.profileMenuTitle}>{title}</Text>
+          <Text style={styles.profileMenuDescription}>{description}</Text>
+        </View>
+        {badgeText ? <Text style={styles.profileMenuBadge}>{badgeText}</Text> : null}
+        <Text style={styles.profileMenuArrow}>›</Text>
+      </TouchableOpacity>
+    );
+  }
+
+  const pageTitle: Record<ProfilePage, string> = {
+    home: "Profile",
+    account: "My account",
+    preferences: "Preferences",
+    notifications: "Notifications",
+    workspace: "NAVIGO workspace",
+    support: "Help and support",
+    privacy: "Privacy and about"
+  };
+
   return (
     <View style={styles.profilePage}>
-      <View style={styles.profileHero}>
-        <View style={styles.profileAvatar}>
-          <Text style={styles.profileAvatarText}>{session.user.fullName.trim().charAt(0).toUpperCase() || "N"}</Text>
-        </View>
-        <Text style={styles.profileName}>{session.user.fullName}</Text>
-        <Text style={styles.profileRole}>{roleLabel} account</Text>
-      </View>
+      {page === "home" ? (
+        <>
+          <View style={styles.profileHero}>
+            <View style={styles.profileAvatar}>
+              <Text style={styles.profileAvatarText}>{session.user.fullName.trim().charAt(0).toUpperCase() || "N"}</Text>
+            </View>
+            <Text style={styles.profileName}>{session.user.fullName}</Text>
+            <Text style={styles.profileRole}>{roleLabel} workspace</Text>
+            <Text style={styles.profileHint}>Manage your account, settings and NAVIGO services.</Text>
+          </View>
 
-      <View style={styles.card}>
-        <View style={styles.profileSectionHeader}>
-          <Text style={styles.cardTitle}>Personal information</Text>
-          <TouchableOpacity onPress={() => { setEditing((value) => !value); setError(""); setSuccess(""); }}>
-            <Text style={styles.profileActionText}>{editing ? "Cancel" : "Edit"}</Text>
+          <View style={styles.card}>
+            <Text style={styles.profileMenuGroupTitle}>ACCOUNT</Text>
+            {menuItem("Personal information and security", "Update your details and password", "account")}
+            {menuItem("NAVIGO workspace", "Switch between customer and rider services", "workspace")}
+          </View>
+          <View style={styles.card}>
+            <Text style={styles.profileMenuGroupTitle}>APP SETTINGS</Text>
+            {menuItem("Preferences and accessibility", "Appearance, text size and notifications", "preferences")}
+            {menuItem("Notifications", "Ride and item-delivery updates", "notifications", unreadCount > 0 ? String(unreadCount) : undefined)}
+          </View>
+          <View style={styles.card}>
+            <Text style={styles.profileMenuGroupTitle}>HELP AND INFORMATION</Text>
+            {menuItem("Help and support", "Answers to common questions", "support")}
+            {menuItem("Privacy and about NAVIGO", "Permissions, data use and app information", "privacy")}
+          </View>
+          {error ? <Notice tone="error" text={error} /> : null}
+          {success ? <Notice tone="success" text={success} /> : null}
+          <TouchableOpacity style={styles.profileSignOut} onPress={onSignOut} disabled={signingOut || busy}>
+            {signingOut ? <ActivityIndicator color="#B42318" /> : <Text style={styles.profileSignOutText}>Sign out of NAVIGO</Text>}
           </TouchableOpacity>
-        </View>
-        {editing ? (
-          <>
-            <Text style={styles.label}>Full name</Text>
-            <TextInput style={styles.addressInput} value={fullName} onChangeText={setFullName} placeholder="Your full name" placeholderTextColor="#98A2B3" autoCapitalize="words" />
-            <Text style={styles.label}>Email address</Text>
-            <TextInput style={styles.addressInput} value={email} onChangeText={setEmail} placeholder="name@example.com (optional)" placeholderTextColor="#98A2B3" keyboardType="email-address" autoCapitalize="none" />
-            <Text style={styles.profileHint}>Your phone number is used to sign in and identify your account, so it cannot be changed here without verification.</Text>
-            <PrimaryButton label="Save profile" loading={busy} onPress={saveProfile} disabled={busy || fullName.trim().length < 2} />
-          </>
-        ) : (
-          <>
-            <Detail label="Full name" value={session.user.fullName} />
-            <Detail label="Phone number" value={session.user.phone} />
-            <Detail label="Email address" value={session.user.email || "Not added"} />
-            <Detail label="Account type" value={roleLabel} />
-          </>
-        )}
-      </View>
-
-      {session.user.role === "RIDER" ? (
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>Rider account</Text>
-          <Detail label="Application status" value={riderStatus.replace(/_/g, " ")} />
-          <Detail label="Driving licence" value={session.user.riderProfile?.licenceNumber || "Not available"} />
-          <Detail label="Motorcycle" value={session.user.riderProfile?.motorcycleDescription || "Not available"} />
-          <Detail label="Number plate" value={session.user.riderProfile?.motorcyclePlate || "Not available"} />
-          <Text style={styles.profileHint}>Changes to licence and motorcycle registration details require NAVIGO review so that approved rider records remain trustworthy.</Text>
-        </View>
-      ) : null}
-
-      <View style={styles.card}>
-        <View style={styles.profileSectionHeader}>
-          <Text style={styles.cardTitle}>Account security</Text>
-          <TouchableOpacity onPress={() => { setShowPasswordForm((value) => !value); setError(""); setSuccess(""); }}>
-            <Text style={styles.profileActionText}>{showPasswordForm ? "Close" : "Change password"}</Text>
+        </>
+      ) : (
+        <>
+          <TouchableOpacity style={styles.profileBack} onPress={() => { setPage("home"); setError(""); setSuccess(""); }}>
+            <Text style={styles.profileBackText}>‹  Profile</Text>
           </TouchableOpacity>
-        </View>
-        {showPasswordForm ? (
-          <>
-            <Text style={styles.label}>Current password</Text>
-            <TextInput style={styles.addressInput} value={currentPassword} onChangeText={setCurrentPassword} secureTextEntry placeholder="Enter current password" placeholderTextColor="#98A2B3" />
-            <Text style={styles.label}>New password</Text>
-            <TextInput style={styles.addressInput} value={newPassword} onChangeText={setNewPassword} secureTextEntry placeholder="At least 8 characters" placeholderTextColor="#98A2B3" />
-            <Text style={styles.label}>Confirm new password</Text>
-            <TextInput style={styles.addressInput} value={confirmPassword} onChangeText={setConfirmPassword} secureTextEntry placeholder="Enter the new password again" placeholderTextColor="#98A2B3" />
-            <PrimaryButton label="Update password" loading={busy} onPress={savePassword} disabled={busy || !currentPassword || !newPassword || !confirmPassword} />
-            <Text style={styles.profileHint}>For your security, other devices will need to sign in again when their current access token expires.</Text>
-          </>
-        ) : (
-          <Text style={styles.profileInfoText}>Keep your password private and change it whenever you think it may have been exposed.</Text>
-        )}
-      </View>
+          <Text style={styles.profileSubTitle}>{pageTitle[page]}</Text>
 
-      <View style={styles.profileInfoCard}>
-        <Text style={styles.profileInfoTitle}>Privacy and permissions</Text>
-        <Text style={styles.profileInfoText}>Location permission is managed in your phone's app settings. Rider location sharing is active only while you are online and using NAVIGO.</Text>
-      </View>
+          {page === "account" ? (
+            <>
+              <View style={styles.card}>
+                <View style={styles.profileSectionHeader}>
+                  <Text style={styles.cardTitle}>Personal information</Text>
+                  <TouchableOpacity onPress={() => { setEditing((value) => !value); setError(""); setSuccess(""); }}>
+                    <Text style={styles.profileActionText}>{editing ? "Cancel" : "Edit"}</Text>
+                  </TouchableOpacity>
+                </View>
+                {editing ? (
+                  <>
+                    <Text style={styles.label}>Full name</Text>
+                    <TextInput style={styles.addressInput} value={fullName} onChangeText={setFullName} placeholder="Your full name" placeholderTextColor="#98A2B3" autoCapitalize="words" />
+                    <Text style={styles.label}>Email address</Text>
+                    <TextInput style={styles.addressInput} value={email} onChangeText={setEmail} placeholder="name@example.com (optional)" placeholderTextColor="#98A2B3" keyboardType="email-address" autoCapitalize="none" />
+                    <Text style={styles.profileHint}>Your phone number is used to sign in and identify your account, so it cannot be changed here without verification.</Text>
+                    <PrimaryButton label="Save profile" loading={busy} onPress={saveProfile} disabled={busy || fullName.trim().length < 2} />
+                  </>
+                ) : (
+                  <>
+                    <Detail label="Full name" value={session.user.fullName} />
+                    <Detail label="Phone number" value={session.user.phone} />
+                    <Detail label="Email address" value={session.user.email || "Not added"} />
+                    <Detail label="Account type" value={roleLabel} />
+                  </>
+                )}
+              </View>
 
-      {error ? <Notice tone="error" text={error} /> : null}
-      {success ? <Notice tone="success" text={success} /> : null}
+              {session.user.riderProfile ? (
+                <View style={styles.card}>
+                  <Text style={styles.cardTitle}>Rider application</Text>
+                  <Detail label="Application status" value={riderStatus.replace(/_/g, " ")} />
+                  <Detail label="Driving licence" value={session.user.riderProfile.licenceNumber || "Not available"} />
+                  <Detail label="Motorcycle" value={session.user.riderProfile.motorcycleDescription || "Not available"} />
+                  <Detail label="Number plate" value={session.user.riderProfile.motorcyclePlate || "Not available"} />
+                  <Text style={styles.profileHint}>Licence and motorcycle changes require NAVIGO review.</Text>
+                </View>
+              ) : null}
 
-      <TouchableOpacity style={styles.profileSignOut} onPress={onSignOut} disabled={signingOut || busy}>
-        {signingOut ? <ActivityIndicator color="#B42318" /> : <Text style={styles.profileSignOutText}>Sign out of NAVIGO</Text>}
-      </TouchableOpacity>
+              <View style={styles.card}>
+                <View style={styles.profileSectionHeader}>
+                  <Text style={styles.cardTitle}>Account security</Text>
+                  <TouchableOpacity onPress={() => { setShowPasswordForm((value) => !value); setError(""); setSuccess(""); }}>
+                    <Text style={styles.profileActionText}>{showPasswordForm ? "Close" : "Change password"}</Text>
+                  </TouchableOpacity>
+                </View>
+                {showPasswordForm ? (
+                  <>
+                    <Text style={styles.label}>Current password</Text>
+                    <TextInput style={styles.addressInput} value={currentPassword} onChangeText={setCurrentPassword} secureTextEntry placeholder="Enter current password" placeholderTextColor="#98A2B3" />
+                    <Text style={styles.label}>New password</Text>
+                    <TextInput style={styles.addressInput} value={newPassword} onChangeText={setNewPassword} secureTextEntry placeholder="At least 8 characters" placeholderTextColor="#98A2B3" />
+                    <Text style={styles.label}>Confirm new password</Text>
+                    <TextInput style={styles.addressInput} value={confirmPassword} onChangeText={setConfirmPassword} secureTextEntry placeholder="Enter the new password again" placeholderTextColor="#98A2B3" />
+                    <PrimaryButton label="Update password" loading={busy} onPress={savePassword} disabled={busy || !currentPassword || !newPassword || !confirmPassword} />
+                    <Text style={styles.profileHint}>For your security, other devices will need to sign in again when their current access token expires.</Text>
+                  </>
+                ) : (
+                  <Text style={styles.profileInfoText}>Keep your password private and change it whenever you think it may have been exposed.</Text>
+                )}
+              </View>
+            </>
+          ) : null}
+
+          {page === "workspace" ? (
+            <>
+              <View style={styles.card}>
+                <Text style={styles.cardTitle}>Your current workspace</Text>
+                <Detail label="Active workspace" value={roleLabel} />
+                <Text style={styles.profileInfoText}>Your customer and rider activities remain linked to this same NAVIGO account.</Text>
+                {session.user.role === "CUSTOMER" && session.user.riderApprovalStatus === "APPROVED" ? (
+                  <PrimaryButton label="Switch to Rider workspace" loading={busy} onPress={() => changeWorkspace("RIDER")} disabled={busy} />
+                ) : null}
+                {session.user.role === "RIDER" ? (
+                  <PrimaryButton label="Switch to Customer workspace" loading={busy} onPress={() => changeWorkspace("CUSTOMER")} disabled={busy} />
+                ) : null}
+              </View>
+              {!session.user.riderProfile && session.user.role !== "ADMIN" ? (
+                <View style={styles.card}>
+                  <Text style={styles.cardTitle}>Become a NAVIGO rider</Text>
+                  <Text style={styles.profileInfoText}>Apply using your driving licence and motorcycle details. You can use your customer account while NAVIGO reviews your application.</Text>
+                  <Text style={styles.label}>Driving licence number</Text>
+                  <TextInput style={styles.addressInput} value={licenceNumber} onChangeText={setLicenceNumber} placeholder="Enter licence number" placeholderTextColor="#98A2B3" autoCapitalize="characters" />
+                  <Text style={styles.label}>Motorcycle number plate</Text>
+                  <TextInput style={styles.addressInput} value={motorcyclePlate} onChangeText={setMotorcyclePlate} placeholder="e.g. UXX 123X" placeholderTextColor="#98A2B3" autoCapitalize="characters" />
+                  <Text style={styles.label}>Motorcycle description</Text>
+                  <TextInput style={styles.addressInput} value={motorcycleDescription} onChangeText={setMotorcycleDescription} placeholder="Make, model and colour" placeholderTextColor="#98A2B3" />
+                  <PrimaryButton label="Submit rider application" loading={busy} onPress={submitRiderApplication} disabled={busy} />
+                </View>
+              ) : null}
+              {session.user.riderProfile && session.user.riderApprovalStatus !== "APPROVED" ? (
+                <View style={styles.profileInfoCard}>
+                  <Text style={styles.profileInfoTitle}>Rider application {riderStatus.toLowerCase()}</Text>
+                  <Text style={styles.profileInfoText}>
+                    {session.user.riderApprovalStatus === "PENDING"
+                      ? "NAVIGO is reviewing your details. Rider workspace access will become available after approval."
+                      : "Your rider application is not approved. Contact NAVIGO support for guidance before submitting another application."}
+                  </Text>
+                </View>
+              ) : null}
+            </>
+          ) : null}
+
+          {page === "preferences" ? (
+            <>
+              <View style={styles.card}>
+                <Text style={styles.cardTitle}>Appearance</Text>
+                <Detail label="Current app appearance" value="Light" />
+                <Text style={styles.profileInfoText}>A full in-app light/dark theme selector is not enabled yet. NAVIGO currently uses its standard light appearance throughout the app.</Text>
+              </View>
+              <View style={styles.card}>
+                <Text style={styles.cardTitle}>Text size and accessibility</Text>
+                <Text style={styles.profileInfoText}>NAVIGO supports your phone's system font scaling. Change Font size or Display size in your device accessibility or display settings to adjust text throughout the app.</Text>
+              </View>
+              <View style={styles.card}>
+                <Text style={styles.cardTitle}>Notifications</Text>
+                <Detail label="In-app notifications" value="Enabled" />
+                <Detail label="Push notifications" value="Not configured on this build" />
+                <Text style={styles.profileHint}>You can review ride and item-delivery updates in the Notifications section. Push alerts will require device registration and notification-service configuration.</Text>
+              </View>
+            </>
+          ) : null}
+
+          {page === "notifications" ? (
+            <View style={styles.card}>
+              <View style={styles.profileSectionHeader}>
+                <Text style={styles.cardTitle}>Recent updates</Text>
+                {unreadCount > 0 ? (
+                  <TouchableOpacity onPress={markAllNotificationsRead}>
+                    <Text style={styles.profileActionText}>Mark all read</Text>
+                  </TouchableOpacity>
+                ) : null}
+              </View>
+              {notificationsLoading ? (
+                <ActivityIndicator color="#174A72" style={{ marginVertical: 22 }} />
+              ) : notifications.length ? notifications.map((item) => (
+                <TouchableOpacity
+                  key={item.id}
+                  style={[styles.notificationItem, !item.readAt && styles.notificationItemUnread]}
+                  onPress={() => !item.readAt && markNotificationRead(item.id)}
+                  accessibilityRole="button"
+                >
+                  <View style={styles.notificationHeader}>
+                    <Text style={styles.notificationTitle}>{item.title}</Text>
+                    {!item.readAt ? <View style={styles.notificationUnreadDot} /> : null}
+                  </View>
+                  <Text style={styles.profileInfoText}>{item.body}</Text>
+                  <Text style={styles.notificationMeta}>
+                    {item.requestType === "RIDE" ? "Ride" : item.requestType === "PARCEL" ? "Item delivery" : "NAVIGO"}
+                    {"  •  "}{new Date(item.createdAt).toLocaleString()}
+                  </Text>
+                </TouchableOpacity>
+              )) : (
+                <EmptyState title="You're all caught up" text="Ride and item-delivery updates will appear here." />
+              )}
+            </View>
+          ) : null}
+
+          {page === "support" ? (
+            <>
+              <View style={styles.card}>
+                <Text style={styles.cardTitle}>Ride bookings</Text>
+                <Text style={styles.profileInfoText}>After you submit a ride request, NAVIGO looks for an available nearby rider. You can track the request and cancel it while cancellation is available in the app.</Text>
+              </View>
+              <View style={styles.card}>
+                <Text style={styles.cardTitle}>Item deliveries</Text>
+                <Text style={styles.profileInfoText}>Keep your pickup and delivery verification codes safe. Give each code only to the assigned rider at the matching collection or delivery step.</Text>
+              </View>
+              <View style={styles.card}>
+                <Text style={styles.cardTitle}>Payments</Text>
+                <Text style={styles.profileInfoText}>Pay the rider directly using the payment method selected for the request. NAVIGO does not collect or hold customer payments in this version.</Text>
+              </View>
+              <View style={styles.profileInfoCard}>
+                <Text style={styles.profileInfoTitle}>Need more help?</Text>
+                <Text style={styles.profileInfoText}>Official NAVIGO support phone and email details have not yet been configured in this build, so no unverified contact details are shown here.</Text>
+              </View>
+            </>
+          ) : null}
+
+          {page === "privacy" ? (
+            <>
+              <View style={styles.card}>
+                <Text style={styles.cardTitle}>Location and permissions</Text>
+                <Text style={styles.profileInfoText}>Location is used to set pickup points, calculate routes and match nearby riders. Rider availability location is shared while the rider is online and using NAVIGO.</Text>
+              </View>
+              <View style={styles.card}>
+                <Text style={styles.cardTitle}>Account information</Text>
+                <Text style={styles.profileInfoText}>Your name, phone number and optional email identify your account. Keep your password private and never share it with a rider or another user.</Text>
+              </View>
+              <View style={styles.card}>
+                <Text style={styles.cardTitle}>About NAVIGO</Text>
+                <Detail label="App" value="NAVIGO" />
+                <Detail label="Version" value="1.0.0" />
+                <Detail label="Pilot area" value="Arua, Uganda" />
+              </View>
+              <View style={styles.profileInfoCard}>
+                <Text style={styles.profileInfoTitle}>Legal documents</Text>
+                <Text style={styles.profileInfoText}>The final published Terms of Service and full Privacy Policy must be added before public launch. This screen is an in-app data-use summary, not a replacement for those documents.</Text>
+              </View>
+            </>
+          ) : null}
+
+          {error ? <Notice tone="error" text={error} /> : null}
+          {success ? <Notice tone="success" text={success} /> : null}
+        </>
+      )}
     </View>
   );
 }
@@ -2829,6 +3170,22 @@ const styles = StyleSheet.create({
   profileName: { color: "#142B3D", fontSize: 19, fontWeight: "900" },
   profileRole: { color: "#667085", fontSize: 12, marginTop: 5 },
   profileSectionHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 10 },
+  profileMenuGroupTitle: { color: "#98A2B3", fontSize: 9, fontWeight: "900", letterSpacing: 1.2, marginBottom: 2 },
+  profileMenuItem: { minHeight: 62, flexDirection: "row", alignItems: "center", gap: 10, paddingVertical: 11, borderTopWidth: 1, borderTopColor: "#F0F2F5" },
+  profileMenuCopy: { flex: 1 },
+  profileMenuTitle: { color: "#243B4D", fontSize: 12, fontWeight: "800" },
+  profileMenuDescription: { color: "#8793A2", fontSize: 10, lineHeight: 15, marginTop: 3 },
+  profileMenuBadge: { color: "#FFFFFF", backgroundColor: "#236B9A", overflow: "hidden", borderRadius: 9, paddingHorizontal: 7, paddingVertical: 3, fontSize: 9, fontWeight: "900" },
+  profileMenuArrow: { color: "#98A2B3", fontSize: 23, fontWeight: "400" },
+  profileBack: { alignSelf: "flex-start", paddingVertical: 5, paddingRight: 12 },
+  profileBackText: { color: "#236B9A", fontSize: 12, fontWeight: "800" },
+  profileSubTitle: { color: "#142B3D", fontSize: 20, fontWeight: "900", marginBottom: 2 },
+  notificationItem: { paddingVertical: 13, borderTopWidth: 1, borderTopColor: "#F0F2F5" },
+  notificationItemUnread: { backgroundColor: "#F7FAFC", marginHorizontal: -4, paddingHorizontal: 4, borderRadius: 8 },
+  notificationHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 8 },
+  notificationTitle: { color: "#243B4D", fontSize: 12, fontWeight: "800", flex: 1 },
+  notificationUnreadDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: "#236B9A" },
+  notificationMeta: { color: "#98A2B3", fontSize: 9, marginTop: 7 },
   profileActionText: { color: "#236B9A", fontSize: 12, fontWeight: "800" },
   profileHint: { color: "#8793A2", fontSize: 10, lineHeight: 15, marginTop: 7 },
 
