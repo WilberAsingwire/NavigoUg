@@ -1,0 +1,14 @@
+name: NAVIGO Android Preview
+
+on:
+  push:
+    branches:
+      - cloud-preview-setup
+
+jobs:
+  build_android:
+    name: Build standalone Android preview
+    type: build
+    params:
+      platform: android
+      profile: preview
