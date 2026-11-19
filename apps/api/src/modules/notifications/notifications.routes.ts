@@ -9,7 +9,7 @@ import {
   unregisterDeviceToken
 } from "./notifications.service.js";
 
-const expoPushTokenPattern = /^(ExpoPushToken|ExponentPushToken)\\[[^\\]\\r\\n]+\\]$/;
+const expoPushTokenPattern = /^(ExpoPushToken|ExponentPushToken)\[[A-Za-z0-9_-]+\]$/;
 const deviceTokenSchema = z.object({
   pushToken: z.string().trim().min(1).max(255).regex(expoPushTokenPattern),
   platform: z.literal("ANDROID")
