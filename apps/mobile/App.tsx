@@ -144,6 +144,31 @@ export default function App() {
     }
   }
 
+  async function disablePushNotifications(): Promise<boolean> {
+    if (!session) return false;
+    setPushNotificationsBusy(true);
+    try {
+      const savedToken = await SecureStore.getItemAsync(PUSH_TOKEN_KEY);
+      if (savedToken) {
+        await apiRequest("/api/v1/notifications/device-token", {
+          method: "DELETE",
+          headers: { Authorization: "Bearer " + session.accessToken },
+          body: JSON.stringify({ pushToken: savedToken })
+        });
+      }
+      await SecureStore.deleteItemAsync(PUSH_TOKEN_KEY);
+      setPushNotificationsEnabled(false);
+      Alert.alert("Push alerts disabled", "NAVIGO will keep your in-app notification inbox available.");
+      return true;
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : "Push alerts could not be disabled.";
+      Alert.alert("Could not disable push alerts", message);
+      return false;
+    } finally {
+      setPushNotificationsBusy(false);
+    }
+  }
+
   useEffect(() => {
     let active = true;
     if (!session) {
@@ -158,6 +183,18 @@ export default function App() {
       const permission = await Notifications.getPermissionsAsync();
       if (!permission.granted || !active) {
         setPushNotificationsEnabled(false);
+        if (active) {
+          try {
+            await apiRequest("/api/v1/notifications/device-token", {
+              method: "DELETE",
+              headers: { Authorization: "Bearer " + session.accessToken },
+              body: JSON.stringify({ pushToken: savedToken })
+            });
+            await SecureStore.deleteItemAsync(PUSH_TOKEN_KEY);
+          } catch {
+            // Keep the saved token so a later session can retry unregistration.
+          }
+        }
         return;
       }
 
@@ -354,6 +391,7 @@ export default function App() {
         onSessionChange={setSession}
         signingOut={busy}
         onEnablePushNotifications={enablePushNotifications}
+        onDisablePushNotifications={disablePushNotifications}
         pushNotificationsEnabled={pushNotificationsEnabled}
         pushNotificationsBusy={pushNotificationsBusy}
       />
