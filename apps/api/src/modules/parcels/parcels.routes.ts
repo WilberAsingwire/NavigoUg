@@ -29,7 +29,14 @@ export const parcelsRouter = Router();
 
 const parcelsLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  limit: 60,
+  limit: 300,
+  standardHeaders: "draft-8",
+  legacyHeaders: false
+});
+
+const trackingLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  limit: 180,
   standardHeaders: "draft-8",
   legacyHeaders: false
 });
@@ -192,7 +199,7 @@ parcelsRouter.post("/:parcelId/verify-delivery", requireRole("RIDER"), async (re
 });
 
 
-parcelsRouter.post("/:parcelId/tracking/start", requireRole("RIDER"), async (request, response, next) => {
+parcelsRouter.post("/:parcelId/tracking/start", requireRole("RIDER"), trackingLimiter, async (request, response, next) => {
   const parcelId = parcelIdFromRequest(request);
   if (!validParcelId(parcelId)) {
     validationError(response, "A valid parcel request ID is required.");
@@ -207,7 +214,7 @@ parcelsRouter.post("/:parcelId/tracking/start", requireRole("RIDER"), async (req
   }
 });
 
-parcelsRouter.post("/:parcelId/tracking/location", requireRole("RIDER"), async (request, response, next) => {
+parcelsRouter.post("/:parcelId/tracking/location", requireRole("RIDER"), trackingLimiter, async (request, response, next) => {
   const parcelId = parcelIdFromRequest(request);
   if (!validParcelId(parcelId)) {
     validationError(response, "A valid parcel request ID is required.");
@@ -227,7 +234,7 @@ parcelsRouter.post("/:parcelId/tracking/location", requireRole("RIDER"), async (
   }
 });
 
-parcelsRouter.post("/:parcelId/tracking/stop", requireRole("RIDER"), async (request, response, next) => {
+parcelsRouter.post("/:parcelId/tracking/stop", requireRole("RIDER"), trackingLimiter, async (request, response, next) => {
   const parcelId = parcelIdFromRequest(request);
   if (!validParcelId(parcelId)) {
     validationError(response, "A valid parcel request ID is required.");
@@ -242,7 +249,7 @@ parcelsRouter.post("/:parcelId/tracking/stop", requireRole("RIDER"), async (requ
   }
 });
 
-parcelsRouter.get("/:parcelId/tracking", requireRole("CUSTOMER"), async (request, response, next) => {
+parcelsRouter.get("/:parcelId/tracking", requireRole("CUSTOMER"), trackingLimiter, async (request, response, next) => {
   const parcelId = parcelIdFromRequest(request);
   if (!validParcelId(parcelId)) {
     validationError(response, "A valid parcel request ID is required.");
