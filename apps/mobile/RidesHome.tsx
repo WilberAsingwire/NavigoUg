@@ -49,6 +49,10 @@ type Ride = {
   estimatedDistanceKm: number | string | null;
   createdAt: string;
   pickupDistanceKm?: number | null;
+  pickupLatitude?: number | string;
+  pickupLongitude?: number | string;
+  destinationLatitude?: number | string;
+  destinationLongitude?: number | string;
   riderArrivalEstimateMinutes?: number | null;
   riderArrivalEstimateUpdatedAt?: string | null;
   customer?: { fullName: string } | null;
@@ -79,6 +83,14 @@ type Quote = {
   routeCoordinates: RouteCoordinate[];
   routingProvider: "GOOGLE_TWO_WHEELER" | "VALHALLA_MOTORCYCLE";
 };
+
+function coordinateFromValues(latitude: number | string | undefined, longitude: number | string | undefined): RouteCoordinate | null {
+  if (latitude === undefined || longitude === undefined) return null;
+  const parsedLatitude = Number(latitude);
+  const parsedLongitude = Number(longitude);
+  if (!Number.isFinite(parsedLatitude) || !Number.isFinite(parsedLongitude) || parsedLatitude < -90 || parsedLatitude > 90 || parsedLongitude < -180 || parsedLongitude > 180) return null;
+  return { latitude: parsedLatitude, longitude: parsedLongitude };
+}
 
 function routeMapRegion(coordinates: RouteCoordinate[]) {
   const latitudes = coordinates.map((point) => point.latitude);
@@ -122,6 +134,10 @@ type RiderParcel = {
   recipientPhone: string;
   parcelDescription: string;
   sizeCategory: ParcelSize;
+  pickupLatitude?: number | string;
+  pickupLongitude?: number | string;
+  destinationLatitude?: number | string;
+  destinationLongitude?: number | string;
   fareAmountUgx: number;
   estimatedDistanceKm: number | string | null;
   createdAt: string;
