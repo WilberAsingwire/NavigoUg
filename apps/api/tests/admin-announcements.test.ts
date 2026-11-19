@@ -27,6 +27,9 @@ vi.mock("../src/modules/notifications/notifications.service.js", () => ({
   listUserNotifications: vi.fn(),
   markAllUserNotificationsRead: vi.fn(),
   markUserNotificationRead: vi.fn(),
+  registerDeviceToken: vi.fn(),
+  unregisterDeviceToken: vi.fn(),
+  sendPushNotificationToUser: vi.fn(),
   sendPushNotificationToUsers: mocks.sendPushNotificationToUsers
 }));
 
