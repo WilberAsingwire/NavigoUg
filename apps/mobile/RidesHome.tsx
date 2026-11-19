@@ -869,7 +869,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
   });
   const mapSheetCollapsedHeight = 168;
   const mapSheetExpandedHeight = Math.min(Dimensions.get("window").height * 0.72, 590);
-  const [mapSheetExpanded, setMapSheetExpanded] = useState(false);
+  const [mapSheetExpanded, setMapSheetExpanded] = useState(true);
   const mapSheetHeight = useRef(new Animated.Value(mapSheetCollapsedHeight)).current;
   const mapSheetPanResponder = useRef(PanResponder.create({
     onStartShouldSetPanResponder: () => false,
@@ -1665,7 +1665,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
           <>
             {mainTab === "home" ? (
               <>
-            <View style={styles.customerMapFrame}>
+            <View style={[styles.customerMapFrame, { height: pickup.trim() && destination.trim() ? Math.min(Dimensions.get("window").height * 0.46, 390) : 230 }]}>
               <MapView
                 ref={customerMapRef}
                 style={styles.customerMap}
@@ -1724,6 +1724,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                   <Text style={styles.locationRetryText}>{locationStatus === "locating" ? "Locating..." : "Use my location"}</Text>
                 </TouchableOpacity>
               ) : null}
+            </View>
             <Animated.View style={[styles.customerMapSheet, { height: mapSheetHeight }]}>
               <View style={styles.mapSheetDragArea} {...mapSheetPanResponder.panHandlers}>
                 <View style={styles.mapSheetGrip} />
@@ -1942,7 +1943,6 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
             )}
               </ScrollView>
             </Animated.View>
-            </View>
               </>
             ) : mainTab === "activity" ? (
               <View style={styles.section}>
@@ -3492,7 +3492,7 @@ const baseStyles = StyleSheet.create({
   quickAccessText: { color: "#667085", fontSize: 10, lineHeight: 15, marginTop: 5 },
   mapHomePage: { flexGrow: 1, paddingHorizontal: 0, paddingTop: 0, paddingBottom: 0 },
   customerMapFrame: { height: Dimensions.get("window").height - 88, borderRadius: 0, overflow: "hidden", marginBottom: 0, marginHorizontal: 0, marginTop: 0, borderWidth: 0, backgroundColor: "#E9F0F5", position: "relative" },
-  customerMapSheet: { position: "absolute", left: 0, right: 0, bottom: 0, backgroundColor: "#FFFFFF", borderTopLeftRadius: 23, borderTopRightRadius: 23, overflow: "hidden", elevation: 18, shadowColor: "#102A43", shadowOpacity: 0.17, shadowRadius: 14 },
+  customerMapSheet: { position: "relative", backgroundColor: "#FFFFFF", borderRadius: 18, overflow: "hidden", elevation: 3, shadowColor: "#102A43", shadowOpacity: 0.08, shadowRadius: 8, marginTop: 12, marginHorizontal: 12, marginBottom: 16 },
   mapSheetDragArea: { paddingTop: 10, paddingHorizontal: 16, paddingBottom: 10 },
   mapSheetGrip: { alignSelf: "center", width: 42, height: 5, borderRadius: 3, backgroundColor: "#C8D0D8", marginBottom: 11 },
   mapSheetWhereTo: { minHeight: 54, borderRadius: 14, backgroundColor: "#F4F6F8", paddingHorizontal: 15, paddingVertical: 9, justifyContent: "center" },
