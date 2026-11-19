@@ -6,6 +6,7 @@ import type {
   ParcelStatusAction
 } from "@navigo/shared";
 import { prisma } from "../../lib/prisma.js";
+import { sendPushNotificationToUser } from "../notifications/notifications.service.js";
 import { MotorcycleRoutingError, getMotorcycleRoute } from "../rides/routing.service.js";
 
 const MAX_CODE_ATTEMPTS = 5;
@@ -199,7 +200,7 @@ export async function createParcel(senderId: string, input: CreateParcelInput) {
         note: "Parcel delivery request created"
       }
     });
-    await tx.notification.create({
+    const notification = await tx.notification.create({
       data: {
         userId: senderId,
         title: "Item delivery request received",
@@ -208,14 +209,19 @@ export async function createParcel(senderId: string, input: CreateParcelInput) {
         requestId: parcel.id
       }
     });
+    return { parcel, notificationId: notification.id };
+  });
 
-    return parcel;
+  await sendPushNotificationToUser(senderId, {
+    title: "Item delivery request received",
+    body: "Your item delivery request has been created. We will update you when a rider accepts it.",
+    data: { notificationId: created.notificationId, requestType: "PARCEL", requestId: created.parcel.id }
   });
 
   // Verification codes are returned once to the sender at creation only.
   // Only Argon2 hashes are persisted; list and rider endpoints never expose them.
   return {
-    ...withoutVerificationSecrets(created),
+    ...withoutVerificationSecrets(created.parcel),
     pickupCode,
     deliveryCode,
     estimatedDistanceKm: fare.distanceKm,
@@ -280,7 +286,7 @@ export async function listAvailableParcels(riderId: string) {
 export async function acceptParcel(riderId: string, parcelId: string) {
   await assertApprovedRider(riderId);
 
-  return prisma.$transaction(async (tx) => {
+  const accepted = await prisma.$transaction(async (tx) => {
     const claimed = await tx.parcelRequest.updateMany({
       where: { id: parcelId, status: "PENDING", riderId: null },
       data: { riderId, status: "ACCEPTED", acceptedAt: new Date() }
@@ -311,7 +317,7 @@ export async function acceptParcel(riderId: string, parcelId: string) {
     if (!parcel) {
       throw new ParcelError(404, "PARCEL_NOT_FOUND", "The parcel request could not be found.");
     }
-    await tx.notification.create({
+    const notification = await tx.notification.create({
       data: {
         userId: parcel.senderId,
         title: "Your delivery has been accepted",
@@ -320,8 +326,15 @@ export async function acceptParcel(riderId: string, parcelId: string) {
         requestId: parcel.id
       }
     });
-    return withoutVerificationSecrets(parcel);
+    return { parcel: withoutVerificationSecrets(parcel), notificationId: notification.id };
   });
+
+  await sendPushNotificationToUser(accepted.parcel.senderId, {
+    title: "Your delivery has been accepted",
+    body: "A NAVIGO rider has accepted your item delivery request.",
+    data: { notificationId: accepted.notificationId, requestType: "PARCEL", requestId: accepted.parcel.id }
+  });
+  return accepted.parcel;
 }
 
 async function updateAssignedParcel(
@@ -348,8 +361,23 @@ async function updateAssignedParcel(
   }
 
   const updates = { status: nextStatus };
+  const notificationCopy: Record<ParcelStatusAction, { title: string; body: string }> = {
+    ARRIVED_AT_PICKUP: {
+      title: "Your rider has arrived",
+      body: "Your NAVIGO rider is at the parcel pickup point."
+    },
+    IN_TRANSIT: {
+      title: "Your item is on the way",
+      body: "Your parcel has been collected and is on its way to the recipient."
+    },
+    ARRIVED_AT_DESTINATION: {
+      title: "Your rider reached the recipient",
+      body: "Your NAVIGO rider has arrived at the delivery location."
+    }
+  };
 
-  return prisma.$transaction(async (tx) => {
+  const notificationCopyForStatus = notificationCopy[nextStatus];
+  const outcome = await prisma.$transaction(async (tx) => {
     const changed = await tx.parcelRequest.updateMany({
       where: { id: parcelId, riderId, status: parcel.status },
       data: updates
@@ -367,12 +395,31 @@ async function updateAssignedParcel(
       }
     });
 
+    const notification = await tx.notification.create({
+      data: {
+        userId: parcel.senderId,
+        title: notificationCopyForStatus.title,
+        body: notificationCopyForStatus.body,
+        requestType: "PARCEL",
+        requestId: parcelId
+      }
+    });
     const updated = await tx.parcelRequest.findUnique({
       where: { id: parcelId },
       include: parcelInclude()
     });
-    return updated ? withoutVerificationSecrets(updated) : null;
+    return {
+      result: updated ? withoutVerificationSecrets(updated) : null,
+      notificationId: notification.id
+    };
   });
+
+  await sendPushNotificationToUser(parcel.senderId, {
+    title: notificationCopyForStatus.title,
+    body: notificationCopyForStatus.body,
+    data: { notificationId: outcome.notificationId, requestType: "PARCEL", requestId: parcelId }
+  });
+  return outcome.result;
 }
 
 export async function updateParcelStatus(
@@ -475,11 +522,40 @@ async function verifyParcelCode(
       }
     });
 
+    const notificationCopy = kind === "PICKUP"
+      ? {
+          title: "Your item has been collected",
+          body: "Your NAVIGO rider has collected the item and started preparing the delivery."
+        }
+      : {
+          title: "Your item has been delivered",
+          body: "Delivery has been confirmed by the recipient using the one-time delivery code."
+        };
+    const notification = await tx.notification.create({
+      data: {
+        userId: parcel.senderId,
+        title: notificationCopy.title,
+        body: notificationCopy.body,
+        requestType: "PARCEL",
+        requestId: parcelId
+      }
+    });
     const updated = await tx.parcelRequest.findUnique({
       where: { id: parcelId },
       include: parcelInclude()
     });
-    return updated ? withoutVerificationSecrets(updated) : null;
+    return {
+      result: updated ? withoutVerificationSecrets(updated) : null,
+      notificationId: notification.id,
+      notificationCopy
+    };
+  }).then(async (outcome) => {
+    await sendPushNotificationToUser(parcel.senderId, {
+      title: outcome.notificationCopy.title,
+      body: outcome.notificationCopy.body,
+      data: { notificationId: outcome.notificationId, requestType: "PARCEL", requestId: parcelId }
+    });
+    return outcome.result;
   });
 }
 
