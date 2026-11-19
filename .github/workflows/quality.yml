@@ -2,9 +2,9 @@ name: NAVIGO quality checks
 
 on:
   push:
-    branches: [main, cloud-preview-setup, ux/role-based-navigation]
+    branches: [main, cloud-preview-setup, ux/role-based-navigation, ux/profile-settings-hub]
   pull_request:
-    branches: [main]
+    branches: [main, ux/role-based-navigation]
 
 concurrency:
   group: navigou-quality-${{ github.ref }}
