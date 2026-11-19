@@ -1,5 +1,6 @@
 import type { CreateRideInput, RideFareQuoteInput } from "@navigo/shared";
 import { prisma } from "../../lib/prisma.js";
+import { DEFAULT_RIDE_FARE_RULES } from "./fare-rules.js";
 
 const EARTH_RADIUS_KM = 6371.0088;
 
@@ -98,7 +99,15 @@ async function calculateFare(input: RideFareQuoteInput): Promise<FareQuote> {
     return roundedDistance >= minimum && (maximum === null || roundedDistance <= maximum);
   });
 
-  if (!matchedRule) {
+  // Use the researched pilot schedule for any distance band not explicitly
+  // configured in the database. Active database rules always take priority.
+  const defaultRule = DEFAULT_RIDE_FARE_RULES.find((rule) =>
+    roundedDistance >= rule.minDistanceKm &&
+    roundedDistance <= rule.maxDistanceKm
+  );
+  const selectedFare = matchedRule?.fareUgx ?? defaultRule?.fareUgx;
+
+  if (selectedFare === undefined) {
     throw new RideError(
       422,
       "FARE_NOT_CONFIGURED",
@@ -108,7 +117,7 @@ async function calculateFare(input: RideFareQuoteInput): Promise<FareQuote> {
 
   return {
     distanceKm: roundedDistance,
-    fareAmountUgx: matchedRule.fareUgx,
+    fareAmountUgx: selectedFare,
     fareBasis: "DISTANCE_RULE"
   };
 }
