@@ -626,6 +626,7 @@ async function geocodeAruaAddress(value: string): Promise<RideLocation> {
 
 export default function RidesHome({ session, onSignOut, signingOut }: Props) {
   const [activeSession, setActiveSession] = useState(session);
+  const [mainTab, setMainTab] = useState<WorkspaceTab>("home");
   const isCustomer = activeSession.user.role === "CUSTOMER";
   const isApprovedRider = activeSession.user.role === "RIDER" && activeSession.user.riderApprovalStatus === "APPROVED";
   const refreshTokenRef = useRef(session.refreshToken);
@@ -705,8 +706,6 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
     await SecureStore.setItemAsync("navigo.session", JSON.stringify(result.data));
     setActiveSession(result.data);
     setMainTab("home");
-    setError("");
-    setMessage("");
   }, [activeSession.accessToken, refreshAccessToken]);
 
   const applyForRider = useCallback(async (input: {
@@ -724,7 +723,6 @@ export default function RidesHome({ session, onSignOut, signingOut }: Props) {
   }, [activeSession, refreshAccessToken]);
 
   const [tab, setTab] = useState<"book" | "parcel">("book");
-  const [mainTab, setMainTab] = useState<WorkspaceTab>("home");
   const [customerActivityTab, setCustomerActivityTab] = useState<"rides" | "parcels">("rides");
   const [riderRequestTab, setRiderRequestTab] = useState<"rides" | "parcels">("rides");
   const [riderJobTab, setRiderJobTab] = useState<"rides" | "parcels">("rides");
