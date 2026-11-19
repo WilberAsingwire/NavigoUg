@@ -81,28 +81,29 @@ const NEXT_RIDER_STATUS: Record<string, "ARRIVED_AT_PICKUP" | "IN_PROGRESS" | "C
   IN_PROGRESS: "COMPLETED"
 };
 
-const ARUA_LOCATION_SUGGESTIONS = [
-  "Muni Site",
-  "Muni University",
-  "Muni Girls",
-  "Arua Central Market",
-  "Old Bus Park, Arua",
-  "Arua Regional Referral Hospital",
-  "Arua Hill",
-  "Arua Hill Stadium",
-  "West Nile Golf Course",
-  "Mvara, Arua",
-  "Ediofe, Arua",
-  "Onduparaka, Arua",
-  "Awindiri, Arua",
-  "Oli, Arua",
-  "Manibe, Arua",
-  "Anyafio, Arua",
-  "Arua Airport"
+const ARUA_LOCATION_SUGGESTIONS: LocationSuggestion[] = [
+  { label: "Muni Site", category: "Local place" },
+  { label: "Muni University", category: "University" },
+  { label: "Muni Girls", category: "School" },
+  { label: "Arua Central Market", category: "Market" },
+  { label: "Old Bus Park, Arua", category: "Transport station" },
+  { label: "Arua Regional Referral Hospital", category: "Hospital" },
+  { label: "Arua Hill", category: "Hill / neighbourhood" },
+  { label: "Arua Hill Stadium", category: "Sports venue" },
+  { label: "West Nile Golf Course", category: "Recreation" },
+  { label: "Mvara, Arua", category: "Neighbourhood" },
+  { label: "Ediofe, Arua", category: "Neighbourhood" },
+  { label: "Onduparaka, Arua", category: "Neighbourhood" },
+  { label: "Awindiri, Arua", category: "Neighbourhood" },
+  { label: "Oli, Arua", category: "Neighbourhood" },
+  { label: "Manibe, Arua", category: "Neighbourhood" },
+  { label: "Anyafio, Arua", category: "Neighbourhood" },
+  { label: "Arua Airport", category: "Airport" }
 ];
 
 type LocationSuggestion = {
   label: string;
+  category: string;
   latitude?: number;
   longitude?: number;
 };
@@ -117,6 +118,8 @@ type PhotonFeature = {
     county?: string;
     state?: string;
     country?: string;
+    osm_key?: string;
+    osm_value?: string;
   };
 };
 
@@ -157,6 +160,85 @@ function formatDistance(value: number | string | null): string {
   if (value === null) return "Distance estimate unavailable";
   const parsed = Number(value);
   return Number.isFinite(parsed) ? `${parsed.toFixed(2)} km estimated` : "Distance estimate unavailable";
+}
+
+function describeMapFeature(key?: string, value?: string): string {
+  const tag = (value ?? "").toLowerCase();
+  const normalizedKey = (key ?? "").toLowerCase();
+
+  if (normalizedKey === "waterway") {
+    const labels: Record<string, string> = {
+      river: "River",
+      stream: "Stream",
+      canal: "Canal",
+      drain: "Drainage channel",
+      ditch: "Ditch",
+      waterfall: "Waterfall",
+      dam: "Dam",
+      weir: "Weir"
+    };
+    return labels[tag] ?? "Waterway";
+  }
+
+  if (normalizedKey === "natural") {
+    const labels: Record<string, string> = {
+      peak: "Hill / peak",
+      ridge: "Ridge",
+      saddle: "Mountain pass",
+      volcano: "Volcano",
+      valley: "Valley",
+      cliff: "Cliff",
+      spring: "Spring",
+      water: "Water body",
+      wetland: "Wetland",
+      bay: "Bay",
+      beach: "Beach",
+      wood: "Woodland",
+      scrub: "Scrubland",
+      heath: "Heath",
+      grassland: "Grassland"
+    };
+    return labels[tag] ?? "Natural feature";
+  }
+
+  if (normalizedKey === "place") {
+    const labels: Record<string, string> = {
+      city: "City",
+      town: "Town",
+      village: "Village",
+      suburb: "Suburb",
+      neighbourhood: "Neighbourhood",
+      quarter: "Neighbourhood",
+      hamlet: "Hamlet",
+      locality: "Locality",
+      district: "District"
+    };
+    return labels[tag] ?? "Area";
+  }
+
+  if (normalizedKey === "highway") {
+    if (tag === "bus_stop") return "Bus stop";
+    if (tag === "path" || tag === "footway" || tag === "pedestrian") return "Path / footway";
+    if (tag === "track") return "Track";
+    if (tag === "steps") return "Steps";
+    if (tag === "crossing") return "Road crossing";
+    return "Road";
+  }
+
+  if (normalizedKey === "bridge" || (normalizedKey === "man_made" && tag === "bridge")) return "Bridge";
+  if (normalizedKey === "ford") return "River crossing / ford";
+  if (normalizedKey === "railway") return "Railway feature";
+  if (normalizedKey === "aeroway") return "Airport / airfield feature";
+  if (normalizedKey === "amenity") return tag ? tag.replace(/_/g, " ") : "Public facility";
+  if (normalizedKey === "shop") return tag ? `${tag.replace(/_/g, " ")} shop` : "Shop";
+  if (normalizedKey === "office") return tag ? `${tag.replace(/_/g, " ")} office` : "Office";
+  if (normalizedKey === "tourism") return tag ? tag.replace(/_/g, " ") : "Place to visit";
+  if (normalizedKey === "leisure") return tag ? tag.replace(/_/g, " ") : "Recreation";
+  if (normalizedKey === "building") return "Building";
+  if (normalizedKey === "landuse") return "Land use";
+  if (normalizedKey === "boundary") return "Boundary / administrative area";
+
+  return tag ? tag.replace(/_/g, " ") : "Mapped place";
 }
 
 async function geocodeAruaAddress(value: string): Promise<RideLocation> {
@@ -589,8 +671,10 @@ function LocationSuggestions({
             properties.country
           ].filter((part): part is string => Boolean(part) && part !== primary);
           const uniqueDetails = [...new Set(details)];
+          const category = describeMapFeature(properties.osm_key, properties.osm_value);
           return [{
             label: [primary, ...uniqueDetails].join(", "),
+            category,
             latitude,
             longitude
           }];
@@ -617,9 +701,8 @@ function LocationSuggestions({
   if (!visible || !query.trim()) return null;
 
   const normalized = query.trim().toLowerCase();
-  const localMatches: LocationSuggestion[] = ARUA_LOCATION_SUGGESTIONS
-    .filter((location) => location.toLowerCase().includes(normalized))
-    .map((label) => ({ label }));
+  const localMatches = ARUA_LOCATION_SUGGESTIONS
+    .filter((location) => location.label.toLowerCase().includes(normalized));
   const combined = [...localMatches, ...remoteMatches];
   const uniqueMatches = combined.filter((item, index, all) =>
     all.findIndex((candidate) => candidate.label.toLowerCase() === item.label.toLowerCase()) === index
@@ -637,7 +720,10 @@ function LocationSuggestions({
           style={styles.suggestionItem}
           onPress={() => onSelect(suggestion)}
         >
-          <Text style={styles.suggestionText}>{suggestion.label}</Text>
+          <View style={styles.suggestionCopy}>
+            <Text style={styles.suggestionText}>{suggestion.label}</Text>
+            <Text style={styles.suggestionCategory}>{suggestion.category}</Text>
+          </View>
         </TouchableOpacity>
       )) : searching ? null : (
         <Text style={styles.noSuggestionText}>
@@ -794,7 +880,9 @@ const styles = StyleSheet.create({
   suggestionHeading: { color: "#98A2B3", fontSize: 9, fontWeight: "800", letterSpacing: 1, paddingVertical: 5 },
   suggestionLoading: { color: "#236B9A", fontSize: 9, fontWeight: "700" },
   suggestionItem: { paddingVertical: 10, borderTopWidth: 1, borderTopColor: "#F0F2F5" },
+  suggestionCopy: { flex: 1, gap: 3 },
   suggestionText: { color: "#344054", fontSize: 12, fontWeight: "600" },
+  suggestionCategory: { color: "#8793A2", fontSize: 9, textTransform: "capitalize" },
   noSuggestionText: { color: "#8793A2", fontSize: 11, lineHeight: 16, paddingVertical: 8 },
   attributionText: { color: "#A0A8B2", fontSize: 8, marginTop: 5, textAlign: "right" },
   paymentRow: { flexDirection: "row", gap: 9, marginTop: 2, marginBottom: 13 },
