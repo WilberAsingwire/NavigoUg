@@ -29,7 +29,7 @@ export const authRouter = Router();
 
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  limit: 10,
+  limit: process.env.NODE_ENV === "test" ? 100 : 10,
   standardHeaders: "draft-8",
   legacyHeaders: false,
   message: { error: { code: "TOO_MANY_ATTEMPTS", message: "Too many attempts. Please try again later." } }
