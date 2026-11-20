@@ -1105,6 +1105,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
   const [selectedDestinationSearchQuery, setSelectedDestinationSearchQuery] = useState("");
   const [rides, setRides] = useState<Ride[]>([]);
   const [availableRides, setAvailableRides] = useState<Ride[]>([]);
+  const observedAvailableRideIds = useRef(new Set<string>());
   const [riderOnline, setRiderOnline] = useState(false);
   const [riderDeviceLocation, setRiderDeviceLocation] = useState<RideLocation | null>(null);
   const [availableParcels, setAvailableParcels] = useState<RiderParcel[]>([]);
@@ -1379,6 +1380,17 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
   }, [isApprovedRider, riderOnline, refreshAvailableRides]);
 
   useEffect(() => {
+    if (!isApprovedRider || !riderOnline || activeRiderRide || availableRides.length === 0) return;
+    const hasUnseenRide = availableRides.some((ride) => !observedAvailableRideIds.current.has(ride.id));
+    availableRides.forEach((ride) => observedAvailableRideIds.current.add(ride.id));
+    if (hasUnseenRide && mainTab === "home") {
+      setRiderRequestTab("rides");
+      setMainTab("requests");
+      setMessage("A new nearby ride request is waiting for you.");
+    }
+  }, [isApprovedRider, riderOnline, activeRiderRide?.id, availableRides, mainTab]);
+
+  useEffect(() => {
     if (!hasActiveCustomerRides) return undefined;
     let disposed = false;
     const refreshCustomerRides = async () => {
@@ -1554,6 +1566,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
         await apiRequest("/api/v1/rides/availability/offline", activeSession.accessToken, { method: "POST" }, refreshAccessToken);
         setRiderOnline(false);
         setAvailableRides([]);
+        setMainTab("home");
         setMessage("You are offline. NAVIGO will no longer send nearby ride requests to this device.");
       } else {
         const permission = await Location.requestForegroundPermissionsAsync();
@@ -1568,8 +1581,10 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
         const riderLocation = { latitude: position.coords.latitude, longitude: position.coords.longitude, description: "Your current location" };
         setRiderDeviceLocation(riderLocation);
         setRiderOnline(true);
+        setRiderRequestTab("rides");
+        setMainTab("requests");
         animateRiderMapTo(riderLocation);
-        setMessage("You are online. NAVIGO will show you ride requests near your current location.");
+        setMessage("You are online. New ride requests will appear here automatically.");
       }
     } catch (availabilityError) {
       setError(availabilityError instanceof Error ? availabilityError.message : "Unable to update your rider availability.");
@@ -2113,7 +2128,13 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
           body: JSON.stringify({ status: action })
         }, refreshAccessToken);
       }
-      setMessage(action === "accept" ? "Ride accepted. The customer can now see your assignment." : "Ride status updated.");
+      if (isApprovedRider && action !== "cancel") {
+        setRiderJobTab("rides");
+        setMainTab("home");
+      }
+      setMessage(action === "accept"
+        ? "Ride accepted. Follow the map and complete each ride step from this screen."
+        : "Ride status updated. Your next ride step is ready below the map.");
       await loadDashboard();
     } catch (actionError) {
       setError(actionError instanceof Error ? actionError.message : "Unable to update this ride.");
@@ -2577,6 +2598,25 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                   ) : null}
                   <View style={styles.riderMapStatus}><View style={[styles.riderOnlineDot, riderOnline ? styles.riderOnlineDotActive : null]} /><Text style={styles.riderMapStatusText}>{riderOnline ? "You are online" : "You are offline"}</Text></View>
                 </View>
+                {activeRiderRide ? (
+                  <View style={styles.section}>
+                    <View style={styles.sectionHeader}>
+                      <Text style={styles.sectionTitle}>Your active ride</Text>
+                      <Text style={styles.refreshText}>In progress</Text>
+                    </View>
+                    <Text style={styles.trackingPrivacyText}>
+                      Keep this screen open. Your next ride action is available here, so you do not need to switch to My Jobs.
+                    </Text>
+                    <RideCard
+                      ride={activeRiderRide}
+                      busy={working}
+                      riderView
+                      onAdvance={NEXT_RIDER_STATUS[activeRiderRide.status]
+                        ? () => performRideAction(activeRiderRide.id, NEXT_RIDER_STATUS[activeRiderRide.status])
+                        : undefined}
+                    />
+                  </View>
+                ) : null}
                 <View style={styles.trackingControlPanel}>
                   <Text style={styles.sectionTitle}>Rider availability</Text>
                   <Text style={styles.trackingPrivacyText}>
@@ -2586,21 +2626,25 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                   </Text>
                   <PrimaryButton label={riderOnline ? "Go offline" : "Go online"} loading={working} onPress={toggleRiderAvailability} disabled={working} />
                 </View>
-                <View style={styles.heroCard}>
-                  <Text style={styles.heroEyebrow}>RIDER REQUESTS</Text>
-                  <Text style={styles.heroTitle}>{riderOnline ? "Nearby rides." : "Ready for your next ride?"}</Text>
-                  <Text style={styles.heroText}>{riderOnline ? "Ride requests are matched to your fresh location and shown nearest first." : "Go online to receive ride requests close to you."}</Text>
-                </View>
-                <View style={styles.quickAccessRow}>
-                  <TouchableOpacity style={styles.quickAccessCard} onPress={() => setMainTab("requests")}>
-                    <Text style={styles.quickAccessTitle}>Find requests</Text>
-                    <Text style={styles.quickAccessText}>View nearby rides and item deliveries</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={styles.quickAccessCard} onPress={() => setMainTab("jobs")}>
-                    <Text style={styles.quickAccessTitle}>My jobs</Text>
-                    <Text style={styles.quickAccessText}>Manage work you have accepted</Text>
-                  </TouchableOpacity>
-                </View>
+                {!activeRiderRide ? (
+                  <>
+                    <View style={styles.heroCard}>
+                      <Text style={styles.heroEyebrow}>RIDER REQUESTS</Text>
+                      <Text style={styles.heroTitle}>{riderOnline ? "Nearby rides." : "Ready for your next ride?"}</Text>
+                      <Text style={styles.heroText}>{riderOnline ? "Ride requests are matched to your fresh location and shown nearest first." : "Go online to receive ride requests close to you."}</Text>
+                    </View>
+                    <View style={styles.quickAccessRow}>
+                      <TouchableOpacity style={styles.quickAccessCard} onPress={() => setMainTab("requests")}>
+                        <Text style={styles.quickAccessTitle}>Find requests</Text>
+                        <Text style={styles.quickAccessText}>View nearby rides and item deliveries</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity style={styles.quickAccessCard} onPress={() => setMainTab("jobs")}>
+                        <Text style={styles.quickAccessTitle}>My jobs</Text>
+                        <Text style={styles.quickAccessText}>Manage work you have accepted</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </>
+                ) : null}
               </>
             ) : mainTab === "requests" ? (
               <View style={styles.section}>
