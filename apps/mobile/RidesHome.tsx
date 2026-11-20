@@ -1120,6 +1120,9 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
   const [destination, setDestination] = useState("");
   const pickupInputRef = useRef<ComponentRef<typeof TextInput> | null>(null);
   const destinationInputRef = useRef<ComponentRef<typeof TextInput> | null>(null);
+  const itemDescriptionInputRef = useRef<ComponentRef<typeof TextInput> | null>(null);
+  const recipientNameInputRef = useRef<ComponentRef<typeof TextInput> | null>(null);
+  const recipientPhoneInputRef = useRef<ComponentRef<typeof TextInput> | null>(null);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("CASH");
   const [quote, setQuote] = useState<Quote | null>(null);
   const [locations, setLocations] = useState<{ pickup: RideLocation; destination: RideLocation } | null>(null);
@@ -1670,9 +1673,18 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
   }
 
   function previewRideRoute() {
-    if (!pickup.trim() || !destination.trim()) {
-      setError("Enter both a pickup location and a destination before viewing the route.");
+    if (!pickup.trim()) {
+      setError("Enter a pickup location before viewing the route.");
       setMapSheetExpanded(true);
+      focusLocationField("pickup");
+      requestAnimationFrame(() => pickupInputRef.current?.focus());
+      return;
+    }
+    if (!destination.trim()) {
+      setError("Enter a destination before viewing the route.");
+      setMapSheetExpanded(true);
+      focusLocationField("destination");
+      requestAnimationFrame(() => destinationInputRef.current?.focus());
       return;
     }
     setError("");
@@ -1705,12 +1717,19 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
       const errorMessage = requestError instanceof Error
         ? requestError.message
         : "Unable to create the ride request.";
-      if (/fare quote has expired|pickup or destination has changed/i.test(errorMessage)) {
+      let customerMessage = errorMessage;
+      if (/fare quote has expired/i.test(errorMessage)) {
         setQuote(null);
         setLocations(null);
         setMapSheetExpanded(true);
+        customerMessage = "Your fare estimate has expired. Please recalculate the route and fare before confirming.";
+      } else if (/pickup or destination has changed/i.test(errorMessage)) {
+        setQuote(null);
+        setLocations(null);
+        setMapSheetExpanded(true);
+        customerMessage = "Your locations have changed. Please review the route and get a fresh fare estimate.";
       }
-      setError(errorMessage);
+      setError(customerMessage);
     } finally {
       setWorking(false);
     }
@@ -1722,6 +1741,37 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
     pickupText?: string;
     destinationText?: string;
   }) {
+    const pickupPoint = overrides && Object.prototype.hasOwnProperty.call(overrides, "pickup")
+      ? overrides.pickup
+      : selectedPickupLocation;
+    const destinationPoint = overrides && Object.prototype.hasOwnProperty.call(overrides, "destination")
+      ? overrides.destination
+      : selectedDestinationLocation;
+    const pickupText = overrides?.pickupText ?? (selectedPickupSearchQuery || pickup);
+    const destinationText = overrides?.destinationText ?? (selectedDestinationSearchQuery || destination);
+
+    if (!pickupText.trim()) {
+      setError("Enter a pickup location before calculating the delivery fee.");
+      setMapSheetExpanded(true);
+      focusLocationField("pickup");
+      requestAnimationFrame(() => pickupInputRef.current?.focus());
+      return;
+    }
+    if (!destinationText.trim()) {
+      setError("Enter a delivery location before calculating the delivery fee.");
+      setMapSheetExpanded(true);
+      focusLocationField("destination");
+      requestAnimationFrame(() => destinationInputRef.current?.focus());
+      return;
+    }
+    if (itemDescription.trim().length < 3) {
+      setError("Describe the item in at least 3 characters before calculating the delivery fee.");
+      setMapSheetExpanded(true);
+      Keyboard.dismiss();
+      requestAnimationFrame(() => itemDescriptionInputRef.current?.focus());
+      return;
+    }
+
     setWorking(true);
     setError("");
     setMessage("");
@@ -1729,14 +1779,6 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
     setParcelLocations(null);
     setCreatedParcel(null);
     try {
-      const pickupPoint = overrides && Object.prototype.hasOwnProperty.call(overrides, "pickup")
-        ? overrides.pickup
-        : selectedPickupLocation;
-      const destinationPoint = overrides && Object.prototype.hasOwnProperty.call(overrides, "destination")
-        ? overrides.destination
-        : selectedDestinationLocation;
-      const pickupText = overrides?.pickupText ?? (selectedPickupSearchQuery || pickup);
-      const destinationText = overrides?.destinationText ?? (selectedDestinationSearchQuery || destination);
       const [pickupLocation, destinationLocation] = await Promise.all([
         pickupPoint ?? geocodeAruaAddress(pickupText, activeSession.accessToken, refreshAccessToken),
         destinationPoint ?? geocodeAruaAddress(destinationText, activeSession.accessToken, refreshAccessToken)
@@ -1757,6 +1799,34 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
 
   async function requestParcel() {
     if (!parcelQuote || !parcelLocations) return;
+
+    const trimmedRecipientName = recipientName.trim();
+    const trimmedRecipientPhone = recipientPhone.trim();
+    if (trimmedRecipientName.length < 2) {
+      setError("Enter the recipient's name using at least 2 characters.");
+      setMapSheetExpanded(true);
+      requestAnimationFrame(() => recipientNameInputRef.current?.focus());
+      return;
+    }
+    if (trimmedRecipientName.length > 100) {
+      setError("The recipient's name must be 100 characters or fewer.");
+      setMapSheetExpanded(true);
+      requestAnimationFrame(() => recipientNameInputRef.current?.focus());
+      return;
+    }
+    if (trimmedRecipientPhone.length < 7 || trimmedRecipientPhone.length > 20) {
+      setError("Enter a recipient phone number between 7 and 20 characters.");
+      setMapSheetExpanded(true);
+      requestAnimationFrame(() => recipientPhoneInputRef.current?.focus());
+      return;
+    }
+    if (itemDescription.trim().length < 3 || itemDescription.trim().length > 300) {
+      setError("Describe the item using 3 to 300 characters.");
+      setMapSheetExpanded(true);
+      requestAnimationFrame(() => itemDescriptionInputRef.current?.focus());
+      return;
+    }
+
     setWorking(true);
     setError("");
     setMessage("");
@@ -1766,9 +1836,9 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
         body: JSON.stringify({
           ...parcelLocations,
           sizeCategory: parcelSize,
-          recipientName,
-          recipientPhone,
-          parcelDescription: itemDescription,
+          recipientName: trimmedRecipientName,
+          recipientPhone: trimmedRecipientPhone,
+          parcelDescription: itemDescription.trim(),
           paymentMethod
         })
       }, refreshAccessToken);
@@ -2322,20 +2392,56 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                 ) : (
                   <>
                     <Text style={styles.label}>Pickup location</Text>
-                    <TextInput ref={pickupInputRef} style={styles.addressInput} value={pickup} onFocus={() => focusLocationField("pickup")} onChangeText={(value) => { setPickup(value); setSelectedPickupLocation(null); setSelectedPickupSearchQuery(""); setParcelQuote(null); setParcelLocations(null); }} placeholder="Where should we collect the item?" placeholderTextColor="#98A2B3" />
+                    <TextInput
+                      ref={pickupInputRef}
+                      style={styles.addressInput}
+                      value={pickup}
+                      accessibilityLabel="Item pickup location"
+                      accessibilityHint="Enter or choose the place where the item should be collected."
+                      onFocus={() => focusLocationField("pickup")}
+                      onChangeText={(value) => { setPickup(value); setSelectedPickupLocation(null); setSelectedPickupSearchQuery(""); setParcelQuote(null); setParcelLocations(null); setError(""); }}
+                      placeholder="Where should we collect the item?"
+                      placeholderTextColor="#98A2B3"
+                      returnKeyType="next"
+                      onSubmitEditing={() => destinationInputRef.current?.focus()}
+                    />
                     {activeLocationField === "pickup" ? <TouchableOpacity style={styles.locationSearchLocationAction} onPress={() => void detectPickupLocation(true)}><Text style={styles.locationSearchLocationActionText}>◎  Use current location</Text></TouchableOpacity> : null}
                     <LocationSuggestions visible={activeLocationField === "pickup"} query={pickup} onSelect={(suggestion) => selectLocationSuggestion("pickup", suggestion)} />
                     <Text style={styles.label}>Delivery location</Text>
-                    <TextInput ref={destinationInputRef} style={styles.addressInput} value={destination} onFocus={() => focusLocationField("destination")} onChangeText={(value) => { setDestination(value); setSelectedDestinationLocation(null); setSelectedDestinationSearchQuery(""); setParcelQuote(null); setParcelLocations(null); }} placeholder="Where should we deliver it?" placeholderTextColor="#98A2B3" returnKeyType="done" onSubmitEditing={() => {
-                      if (!pickup.trim() || !destination.trim()) return;
-                      setActiveLocationField(null);
-                      setMapSheetExpanded(false);
-                      Keyboard.dismiss();
-                      void getParcelFareEstimate();
-                    }} />
+                    <TextInput
+                      ref={destinationInputRef}
+                      style={styles.addressInput}
+                      value={destination}
+                      accessibilityLabel="Item delivery location"
+                      accessibilityHint="Enter or choose where the item should be delivered."
+                      onFocus={() => focusLocationField("destination")}
+                      onChangeText={(value) => { setDestination(value); setSelectedDestinationLocation(null); setSelectedDestinationSearchQuery(""); setParcelQuote(null); setParcelLocations(null); setError(""); }}
+                      placeholder="Where should we deliver it?"
+                      placeholderTextColor="#98A2B3"
+                      returnKeyType="done"
+                      onSubmitEditing={() => {
+                        setActiveLocationField(null);
+                        setMapSheetExpanded(false);
+                        Keyboard.dismiss();
+                        void getParcelFareEstimate();
+                      }}
+                    />
                     <LocationSuggestions visible={activeLocationField === "destination"} query={destination} onSelect={(suggestion) => selectLocationSuggestion("destination", suggestion)} />
                     <Text style={styles.label}>What are you sending?</Text>
-                    <TextInput style={styles.addressInput} value={itemDescription} onChangeText={(value) => { setItemDescription(value); setParcelQuote(null); }} placeholder="e.g. Documents, clothes, phone" placeholderTextColor="#98A2B3" />
+                    <TextInput
+                      ref={itemDescriptionInputRef}
+                      style={styles.addressInput}
+                      value={itemDescription}
+                      accessibilityLabel="Item description"
+                      accessibilityHint="Briefly describe the item being sent."
+                      onChangeText={(value) => { setItemDescription(value); setParcelQuote(null); setError(""); }}
+                      placeholder="e.g. Documents, clothes, phone"
+                      placeholderTextColor="#98A2B3"
+                      autoCapitalize="sentences"
+                      maxLength={300}
+                      returnKeyType="next"
+                      onSubmitEditing={() => recipientNameInputRef.current?.focus()}
+                    />
                     <Text style={styles.label}>Item size</Text>
                     <View style={styles.paymentRow}>
                       <ChoiceButton label="Small" selected={parcelSize === "SMALL"} onPress={() => { setParcelSize("SMALL"); setParcelQuote(null); }} />
@@ -2343,9 +2449,35 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                       <ChoiceButton label="Large" selected={parcelSize === "LARGE"} onPress={() => { setParcelSize("LARGE"); setParcelQuote(null); }} />
                     </View>
                     <Text style={styles.label}>Recipient's name</Text>
-                    <TextInput style={styles.addressInput} value={recipientName} onChangeText={setRecipientName} placeholder="Person receiving the item" placeholderTextColor="#98A2B3" />
+                    <TextInput
+                      ref={recipientNameInputRef}
+                      style={styles.addressInput}
+                      value={recipientName}
+                      accessibilityLabel="Recipient name"
+                      accessibilityHint="Enter the name of the person receiving the item."
+                      onChangeText={(value) => { setRecipientName(value); setError(""); }}
+                      placeholder="Person receiving the item"
+                      placeholderTextColor="#98A2B3"
+                      autoCapitalize="words"
+                      maxLength={100}
+                      returnKeyType="next"
+                      onSubmitEditing={() => recipientPhoneInputRef.current?.focus()}
+                    />
                     <Text style={styles.label}>Recipient's phone number</Text>
-                    <TextInput style={styles.addressInput} value={recipientPhone} onChangeText={setRecipientPhone} keyboardType="phone-pad" placeholder="e.g. 07XXXXXXXX" placeholderTextColor="#98A2B3" />
+                    <TextInput
+                      ref={recipientPhoneInputRef}
+                      style={styles.addressInput}
+                      value={recipientPhone}
+                      accessibilityLabel="Recipient phone number"
+                      accessibilityHint="Enter a phone number with 7 to 20 characters."
+                      onChangeText={(value) => { setRecipientPhone(value); setError(""); }}
+                      keyboardType="phone-pad"
+                      maxLength={20}
+                      placeholder="e.g. 07XXXXXXXX"
+                      placeholderTextColor="#98A2B3"
+                      returnKeyType="done"
+                      onSubmitEditing={() => Keyboard.dismiss()}
+                    />
                     <Text style={styles.label}>Payment preference</Text>
                     <View style={styles.paymentRow}>
                       <ChoiceButton label="Cash" selected={paymentMethod === "CASH"} onPress={() => setPaymentMethod("CASH")} />
@@ -2373,7 +2505,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                 {error ? <Notice tone="error" text={error} /> : null}
                 {message ? <Notice tone="success" text={message} /> : null}
                 {!createdParcel ? (
-                  <PrimaryButton label={parcelQuote ? "Confirm item delivery" : "Calculate delivery fee"} loading={working} onPress={parcelQuote ? requestParcel : getParcelFareEstimate} disabled={working || !pickup.trim() || !destination.trim() || !itemDescription.trim() || !recipientName.trim() || !recipientPhone.trim()} />
+                  <PrimaryButton label={parcelQuote ? "Confirm item delivery" : "Calculate delivery fee"} loading={working} onPress={parcelQuote ? requestParcel : getParcelFareEstimate} disabled={working} />
                 ) : (
                   <PrimaryButton label="Send another item" loading={false} onPress={() => { setCreatedParcel(null); setPickup(""); setDestination(""); setItemDescription(""); setRecipientName(""); setRecipientPhone(""); setSelectedPickupLocation(null); setSelectedDestinationLocation(null); setParcelQuote(null); }} />
                 )}
@@ -2413,7 +2545,8 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                         <Text style={styles.quoteMetricLabel}>Estimated travel time</Text>
                         <Text style={styles.quoteMetricValue}>About {Math.max(1, Math.ceil(quote.durationSeconds / 60))} min</Text>
                       </View>
-                      <Text style={styles.quoteNote}>The blue line on the map shows the suggested motorcycle road route. This is an estimate; actual travel time can change with road conditions.</Text>
+                      <Text style={styles.quoteNote}>The orange line on the map shows the suggested motorcycle road route. This is an estimate; actual travel time can change with road conditions.</Text>
+                      <Text style={styles.quoteNote}>This quoted fare is held for 5 minutes. Recalculate the route and fare if it expires before you confirm.</Text>
                     </View>
                     <Text style={styles.label}>Choose how to pay</Text>
                     <View style={styles.paymentRow}>
@@ -2449,6 +2582,8 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                       ref={pickupInputRef}
                       style={styles.addressInput}
                       value={pickup}
+                      accessibilityLabel="Ride pickup location"
+                      accessibilityHint="Enter or choose where your ride should pick you up."
                       onFocus={() => focusLocationField("pickup")}
                       onChangeText={(value) => {
                         setPickup(value);
@@ -2456,6 +2591,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                         setSelectedPickupSearchQuery("");
                         setQuote(null);
                         setLocations(null);
+                        setError("");
                       }}
                       placeholder="e.g. Muni University or Arua Main Market"
                       placeholderTextColor="#98A2B3"
@@ -2471,6 +2607,8 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                       ref={destinationInputRef}
                       style={styles.addressInput}
                       value={destination}
+                      accessibilityLabel="Ride destination"
+                      accessibilityHint="Enter or choose where you want to travel."
                       onFocus={() => focusLocationField("destination")}
                       onChangeText={(value) => {
                         setDestination(value);
@@ -2478,6 +2616,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                         setSelectedDestinationSearchQuery("");
                         setQuote(null);
                         setLocations(null);
+                        setError("");
                       }}
                       placeholder="e.g. Muni Site or Arua Hill"
                       placeholderTextColor="#98A2B3"
@@ -2493,7 +2632,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                       label="Show road route & fare"
                       loading={working}
                       onPress={previewRideRoute}
-                      disabled={working || !pickup.trim() || !destination.trim()}
+                      disabled={working}
                     />
                     <Text style={styles.quoteNote}>Step 1: choose both places. Step 2: review the route and price. Step 3: confirm only when you are happy with the fare.</Text>
                   </>
