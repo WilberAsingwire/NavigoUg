@@ -333,7 +333,7 @@ function OpenStreetMapRasterView({
         <Text style={{ color: "#344054", fontSize: 8, fontWeight: "700" }}>© OpenStreetMap contributors</Text>
       </View>
       {zoomEnabled !== false ? (
-        <View style={{ position: "absolute", right: 12, top: 62, backgroundColor: "#FFFFFF", borderRadius: 12, elevation: 5, overflow: "hidden", zIndex: 5 }}>
+        <View style={{ position: "absolute", left: 12, top: 62, backgroundColor: "#FFFFFF", borderRadius: 12, elevation: 5, overflow: "hidden", zIndex: 5 }}>
           <TouchableOpacity accessibilityRole="button" accessibilityLabel="Zoom in" onPress={() => changeZoom(1)} style={{ width: 44, height: 42, alignItems: "center", justifyContent: "center" }}>
             <Text style={{ color: "#174A72", fontSize: 25, fontWeight: "800", lineHeight: 28 }}>+</Text>
           </TouchableOpacity>
