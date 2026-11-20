@@ -865,22 +865,6 @@ type LocationSuggestion = {
   searchQuery?: string;
 };
 
-type PhotonFeature = {
-  geometry?: { coordinates?: number[] };
-  properties?: {
-    name?: string;
-    street?: string;
-    district?: string;
-    city?: string;
-    county?: string;
-    state?: string;
-    country?: string;
-    osm_key?: string;
-    osm_value?: string;
-    extra?: Record<string, string | number | boolean | null>;
-  };
-};
-
 async function apiRequest<T>(
   path: string,
   token: string,
@@ -920,187 +904,27 @@ function formatDistance(value: number | string | null): string {
   return Number.isFinite(parsed) ? `${parsed.toFixed(2)} km estimated` : "Distance estimate unavailable";
 }
 
-function describeMapFeature(
-  key?: string,
-  value?: string,
-  extra?: Record<string, string | number | boolean | null>
-): string {
-  const tag = (value ?? "").toLowerCase();
-  const normalizedKey = (key ?? "").toLowerCase();
-  const bridge = String(extra?.bridge ?? "").toLowerCase();
-  const ford = String(extra?.ford ?? "").toLowerCase();
-  const tunnel = String(extra?.tunnel ?? "").toLowerCase();
-
-  if (bridge && bridge !== "no") return "Bridge / road crossing";
-  if (ford && ford !== "no") return "Ford / water crossing";
-  if (tunnel && tunnel !== "no") return "Tunnel";
-
-  if (normalizedKey === "waterway") {
-    const labels: Record<string, string> = {
-      river: "River",
-      stream: "Stream",
-      canal: "Canal",
-      drain: "Drainage channel",
-      ditch: "Ditch",
-      waterfall: "Waterfall",
-      dam: "Dam",
-      weir: "Weir",
-      riverbank: "River bank",
-      lock: "Canal lock"
-    };
-    return labels[tag] ?? "Waterway";
-  }
-
-  if (normalizedKey === "natural") {
-    const labels: Record<string, string> = {
-      peak: "Hill / peak",
-      hill: "Hill",
-      ridge: "Ridge",
-      saddle: "Mountain pass",
-      isthmus: "Land passage",
-      volcano: "Volcano",
-      valley: "Valley",
-      cliff: "Cliff",
-      spring: "Spring",
-      water: "Water body",
-      wetland: "Wetland",
-      bay: "Bay",
-      beach: "Beach",
-      wood: "Woodland",
-      scrub: "Scrubland",
-      heath: "Heath",
-      grassland: "Grassland"
-    };
-    return labels[tag] ?? "Natural feature";
-  }
-
-  if (normalizedKey === "place") {
-    const labels: Record<string, string> = {
-      city: "City",
-      town: "Town",
-      village: "Village",
-      suburb: "Suburb",
-      neighbourhood: "Neighbourhood",
-      quarter: "Neighbourhood",
-      hamlet: "Hamlet",
-      locality: "Locality",
-      district: "District"
-    };
-    return labels[tag] ?? "Area";
-  }
-
-  if (normalizedKey === "highway") {
-    if (tag === "bus_stop") return "Bus stop";
-    if (tag === "path" || tag === "footway" || tag === "pedestrian") return "Path / footway";
-    if (tag === "track") return "Track";
-    if (tag === "steps") return "Steps";
-    if (tag === "crossing") return "Road crossing";
-    return "Road";
-  }
-
-  if (normalizedKey === "bridge" || (normalizedKey === "man_made" && tag === "bridge")) return "Bridge";
-  if (normalizedKey === "ford") return "River crossing / ford";
-  if (normalizedKey === "water") {
-    const labels: Record<string, string> = {
-      lake: "Lake",
-      pond: "Pond",
-      reservoir: "Reservoir",
-      river: "River",
-      basin: "Water basin"
-    };
-    return labels[tag] ?? "Water feature";
-  }
-  if (normalizedKey === "barrier") return "Access barrier / crossing control";
-  if (normalizedKey === "railway") return "Railway feature";
-  if (normalizedKey === "aeroway") return "Airport / airfield feature";
-  if (normalizedKey === "amenity") return tag ? tag.replace(/_/g, " ") : "Public facility";
-  if (normalizedKey === "shop") return tag ? `${tag.replace(/_/g, " ")} shop` : "Shop";
-  if (normalizedKey === "office") return tag ? `${tag.replace(/_/g, " ")} office` : "Office";
-  if (normalizedKey === "tourism") {
-    const labels: Record<string, string> = {
-      hostel: "Student hostel",
-      guest_house: "Guest house",
-      hotel: "Hotel",
-      motel: "Motel",
-      apartment: "Serviced accommodation",
-      chalet: "Chalet",
-      camp_site: "Camp site",
-      caravan_site: "Caravan site"
-    };
-    return labels[tag] ?? (tag ? tag.replace(/_/g, " ") : "Place to visit");
-  }
-  if (normalizedKey === "amenity" && (tag === "dormitory" || tag === "student_accommodation")) {
-    return "Student accommodation";
-  }
-  if (normalizedKey === "leisure") return tag ? tag.replace(/_/g, " ") : "Recreation";
-  if (normalizedKey === "building") return "Building";
-  if (normalizedKey === "landuse") return "Land use";
-  if (normalizedKey === "boundary") return "Boundary / administrative area";
-
-  return tag ? tag.replace(/_/g, " ") : "Mapped place";
-}
-
-async function geocodeAruaAddress(value: string): Promise<RideLocation> {
+async function geocodeAruaAddress(
+  value: string,
+  accessToken: string,
+  refreshAccessToken: () => Promise<string>
+): Promise<RideLocation> {
   const trimmed = value.trim();
   if (trimmed.length < 3) throw new Error("Enter a pickup or destination address.");
 
-  // Use the same Arua-bounded Photon map search as autocomplete.
-  // Address geocoding must not depend on Android device-location permission.
-  const query = /uganda/i.test(trimmed) ? trimmed : `${trimmed}, Arua, Uganda`;
-  const params = [
-    `q=${encodeURIComponent(query)}`,
-    "lat=3.02",
-    "lon=30.92",
-    "zoom=11",
-    "location_bias_scale=0.2",
-    "limit=5",
-    "lang=en",
-    "countrycode=UG",
-    "bbox=30.55,2.75,31.25,3.30"
-  ].join("&");
-
-  let response: Response;
-  try {
-    response = await fetch(`https://photon.komoot.io/api/?${params}`, {
-      headers: { Accept: "application/json" }
-    });
-  } catch {
-    throw new Error("Unable to search the Arua map right now. Check your internet connection and try again.");
-  }
-
-  if (!response.ok) {
-    throw new Error("The Arua location service is temporarily unavailable. Please try again.");
-  }
-
-  const payload = await response.json() as { features?: PhotonFeature[] };
-  const candidates = (payload.features ?? []).flatMap((feature) => {
-    const coordinates = feature.geometry?.coordinates;
-    if (!coordinates || coordinates.length < 2) return [];
-    const longitude = Number(coordinates[0]);
-    const latitude = Number(coordinates[1]);
-
-    // Enforce the service area even if a provider returns an out-of-area match.
-    if (
-      !Number.isFinite(latitude) ||
-      !Number.isFinite(longitude) ||
-      longitude < 30.55 ||
-      longitude > 31.25 ||
-      latitude < 2.75 ||
-      latitude > 3.30
-    ) return [];
-
-    return [{ latitude, longitude }];
-  });
-
-  const firstResult = candidates[0];
-  if (!firstResult) {
-    throw new Error(`We couldn't find "${trimmed}" on the Arua map. Choose one of the suggested places or add a nearby landmark and try again.`);
-  }
+  const result = await apiRequest<{ data: RideLocation }>(
+    "/api/v1/rides/geocode",
+    accessToken,
+    {
+      method: "POST",
+      body: JSON.stringify({ query: trimmed })
+    },
+    refreshAccessToken
+  );
 
   return {
-    latitude: firstResult.latitude,
-    longitude: firstResult.longitude,
-    description: trimmed
+    ...result.data,
+    description: result.data.description || trimmed
   };
 }
 
@@ -1741,8 +1565,8 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
       const pickupText = overrides?.pickupText ?? (selectedPickupSearchQuery || pickup);
       const destinationText = overrides?.destinationText ?? (selectedDestinationSearchQuery || destination);
       const [pickupLocation, destinationLocation] = await Promise.all([
-        pickupPoint ?? geocodeAruaAddress(pickupText),
-        destinationPoint ?? geocodeAruaAddress(destinationText)
+        pickupPoint ?? geocodeAruaAddress(pickupText, activeSession.accessToken, refreshAccessToken),
+        destinationPoint ?? geocodeAruaAddress(destinationText, activeSession.accessToken, refreshAccessToken)
       ]);
       const result = await apiRequest<{ data: Quote }>("/api/v1/rides/fare-quote", activeSession.accessToken, {
         method: "POST",
@@ -1826,8 +1650,8 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
       const pickupText = overrides?.pickupText ?? (selectedPickupSearchQuery || pickup);
       const destinationText = overrides?.destinationText ?? (selectedDestinationSearchQuery || destination);
       const [pickupLocation, destinationLocation] = await Promise.all([
-        pickupPoint ?? geocodeAruaAddress(pickupText),
-        destinationPoint ?? geocodeAruaAddress(destinationText)
+        pickupPoint ?? geocodeAruaAddress(pickupText, activeSession.accessToken, refreshAccessToken),
+        destinationPoint ?? geocodeAruaAddress(destinationText, activeSession.accessToken, refreshAccessToken)
       ]);
       const result = await apiRequest<{ data: ParcelQuote }>("/api/v1/parcels/fare-quote", activeSession.accessToken, {
         method: "POST",
@@ -3574,97 +3398,10 @@ function LocationSuggestions({
   query: string;
   onSelect: (suggestion: LocationSuggestion) => void;
 }) {
-  const [remoteMatches, setRemoteMatches] = useState<LocationSuggestion[]>([]);
-  const [searching, setSearching] = useState(false);
-  const [searchFailed, setSearchFailed] = useState(false);
-
-  useEffect(() => {
-    const term = query.trim();
-    if (!visible || !term) {
-      setRemoteMatches([]);
-      setSearching(false);
-      setSearchFailed(false);
-      return undefined;
-    }
-
-    let cancelled = false;
-    const controller = new AbortController();
-    setSearching(true);
-    setSearchFailed(false);
-
-    const timer = setTimeout(async () => {
-      try {
-        const params = [
-          `q=${encodeURIComponent(term)}`,
-          "lat=3.02",
-          "lon=30.92",
-          "zoom=11",
-          "location_bias_scale=0.2",
-          "limit=12",
-          "lang=en",
-          "countrycode=UG",
-          "bbox=30.55,2.75,31.25,3.30"
-        ].join("&");
-        const response = await fetch(`https://photon.komoot.io/api/?${params}`, {
-          headers: { Accept: "application/json" },
-          signal: controller.signal
-        });
-        if (!response.ok) throw new Error("Location search is temporarily unavailable.");
-
-        const payload = await response.json() as { features?: PhotonFeature[] };
-        const mapped = (payload.features ?? []).flatMap((feature): LocationSuggestion[] => {
-          const properties = feature.properties;
-          const coordinates = feature.geometry?.coordinates;
-          if (!properties || !coordinates || coordinates.length < 2) return [];
-          const longitude = Number(coordinates[0]);
-          const latitude = Number(coordinates[1]);
-          if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return [];
-
-          const primary = properties.name || properties.street || properties.district || properties.city;
-          if (!primary) return [];
-          const details = [
-            properties.district,
-            properties.city,
-            properties.county,
-            properties.state,
-            properties.country
-          ].filter((part): part is string => Boolean(part) && part !== primary);
-          const uniqueDetails = [...new Set(details)];
-          const category = describeMapFeature(
-            properties.osm_key,
-            properties.osm_value,
-            properties.extra
-          );
-          return [{
-            label: [primary, ...uniqueDetails].join(", "),
-            category,
-            latitude,
-            longitude
-          }];
-        });
-
-        if (!cancelled) setRemoteMatches(mapped);
-      } catch (error) {
-        if (!cancelled && !(error instanceof Error && error.name === "AbortError")) {
-          setSearchFailed(true);
-          setRemoteMatches([]);
-        }
-      } finally {
-        if (!cancelled) setSearching(false);
-      }
-    }, 350);
-
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-      controller.abort();
-    };
-  }, [query, visible]);
-
   if (!visible || !query.trim()) return null;
 
   const normalized = query.trim().toLowerCase();
-  const localMatches = ARUA_LOCATION_SUGGESTIONS
+  const matches = ARUA_LOCATION_SUGGESTIONS
     .filter((location) => [
       location.label,
       location.category,
@@ -3675,18 +3412,13 @@ function LocationSuggestions({
       const bStarts = b.label.toLowerCase().startsWith(normalized) ? 0 : 1;
       return aStarts - bStarts || a.label.localeCompare(b.label);
     });
-  const combined = [...localMatches, ...remoteMatches];
-  const uniqueMatches = combined.filter((item, index, all) =>
-    all.findIndex((candidate) => candidate.label.toLowerCase() === item.label.toLowerCase()) === index
-  );
 
   return (
     <View style={styles.suggestionList}>
       <View style={styles.suggestionTitleRow}>
-        <Text style={styles.suggestionHeading}>PLACES NEAR ARUA</Text>
-        {searching ? <Text style={styles.suggestionLoading}>Searching...</Text> : null}
+        <Text style={styles.suggestionHeading}>SUGGESTED ARUA PLACES</Text>
       </View>
-      {uniqueMatches.length ? uniqueMatches.map((suggestion) => (
+      {matches.length ? matches.map((suggestion) => (
         <TouchableOpacity
           key={suggestion.label}
           style={styles.suggestionItem}
@@ -3697,11 +3429,9 @@ function LocationSuggestions({
             <Text style={styles.suggestionCategory}>{suggestion.category}</Text>
           </View>
         </TouchableOpacity>
-      )) : searching ? null : (
+      )) : (
         <Text style={styles.noSuggestionText}>
-          {searchFailed
-            ? "Online place search is unavailable. You can still enter a full location."
-            : "No places matched yet. Try more letters or enter the full location."}
+          No saved suggestion matched. You can still enter the full place name and tap Show road route &amp; fare to search the Arua map.
         </Text>
       )}
       <Text style={styles.attributionText}>Place data © OpenStreetMap contributors</Text>
