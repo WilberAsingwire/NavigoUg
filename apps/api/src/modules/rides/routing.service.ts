@@ -50,14 +50,15 @@ function wait(milliseconds: number): Promise<void> {
  * several customers triggering simultaneous requests from one server.
  */
 function scheduleValhallaRequest<T>(operation: () => Promise<T>): Promise<T> {
-  const scheduled = valhallaQueue.then(async () => {
-    const remaining = valhallaNextRequestAt - Date.now();
-    if (remaining > 0) await wait(remaining);
-    valhallaNextRequestAt = Date.now() + VALHALLA_MIN_REQUEST_INTERVAL_MS;
-    return operation();
-  });
+  const scheduled = valhallaQueue.then(operation);
   valhallaQueue = scheduled.then(() => undefined, () => undefined);
   return scheduled;
+}
+
+async function waitForValhallaSlot(): Promise<void> {
+  const remaining = valhallaNextRequestAt - Date.now();
+  if (remaining > 0) await wait(remaining);
+  valhallaNextRequestAt = Date.now() + VALHALLA_MIN_REQUEST_INTERVAL_MS;
 }
 
 function retryAfterMilliseconds(response: Response): number {
@@ -269,6 +270,7 @@ async function getValhallaMotorcycleRoute(
 
     for (let attempt = 1; attempt <= VALHALLA_MAX_ATTEMPTS; attempt += 1) {
       let response: Response;
+      await waitForValhallaSlot();
       try {
         response = await fetch(`${baseUrl}/route`, {
           method: "POST",
