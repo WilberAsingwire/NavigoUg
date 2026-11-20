@@ -9,6 +9,7 @@ on:
       - feature/navigo-booking-form-polish
       - feature/navigo-dashboard-responsive
       - feature/navigo-customer-tracking-polish
+      - feature/navigo-web-support
     paths:
       - "apps/mobile/**"
       - "packages/shared/**"
@@ -41,3 +42,6 @@ jobs:
       - name: Bundle the Android app
         working-directory: apps/mobile
         run: npx expo export --platform android --output-dir ../../.expo-export-check
+      - name: Bundle the browser app
+        working-directory: apps/mobile
+        run: npx expo export --platform web --output-dir ../../.expo-web-export-check

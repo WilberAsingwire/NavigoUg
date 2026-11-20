@@ -23,6 +23,8 @@
     "db:push": "npm run db:push -w @navigo/api",
     "db:migrate": "npm run db:migrate -w @navigo/api",
     "db:studio": "npm run db:studio -w @navigo/api",
-    "db:seed": "npm run db:seed -w @navigo/api"
+    "db:seed": "npm run db:seed -w @navigo/api",
+    "dev:web": "npm run web -w @navigo/mobile",
+    "build:web": "npm run web:export -w @navigo/mobile"
   }
 }

@@ -14,7 +14,7 @@ import {
   View
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
-import * as SecureStore from "expo-secure-store";
+import * as AppStorage from "./AppStorage";
 import RidesHome from "./RidesHome";
 import { SplashScreen, WelcomeScreen } from "./LaunchScreens";
 import { BRAND_COLORS } from "./brand";
@@ -117,7 +117,7 @@ export default function App() {
   useEffect(() => {
     let mounted = true;
 
-    SecureStore.getItemAsync(SESSION_KEY)
+    AppStorage.getItemAsync(SESSION_KEY)
       .then((stored) => {
         if (!mounted || !stored) return;
         try {
@@ -125,10 +125,10 @@ export default function App() {
           if (saved.accessToken && saved.refreshToken && saved.user) {
             setSession(saved);
           } else {
-            void SecureStore.deleteItemAsync(SESSION_KEY);
+            void AppStorage.deleteItemAsync(SESSION_KEY);
           }
         } catch {
-          void SecureStore.deleteItemAsync(SESSION_KEY);
+          void AppStorage.deleteItemAsync(SESSION_KEY);
         }
       })
       .catch(() => {
@@ -144,17 +144,15 @@ export default function App() {
   }, []);
 
   function explainPasswordRecovery() {
-    Alert.alert(
-      "Password recovery",
-      "Secure password recovery is not connected yet. It needs a verified phone or email delivery service. For now, please sign in with your existing password."
-    );
+    const message = "Secure password recovery is not connected yet. It needs a verified phone or email delivery service. For now, please sign in with your existing password.";
+    if (Platform.OS === "web") setError(message);
+    else Alert.alert("Password recovery", message);
   }
 
   function explainGoogleSignIn() {
-    Alert.alert(
-      "Google sign-in",
-      "Google sign-in is not connected yet. It needs Google OAuth configuration and server-side token verification. You can currently sign in with your phone number and password."
-    );
+    const message = "Google sign-in is not connected yet. It needs Google OAuth configuration and server-side token verification. You can currently sign in with your phone number and password.";
+    if (Platform.OS === "web") setError(message);
+    else Alert.alert("Google sign-in", message);
   }
 
   async function submitAuth() {
@@ -212,7 +210,7 @@ export default function App() {
         body: JSON.stringify(body)
       });
 
-      await SecureStore.setItemAsync(SESSION_KEY, JSON.stringify(result.data));
+      await AppStorage.setItemAsync(SESSION_KEY, JSON.stringify(result.data));
       setSession(result.data);
       setPassword("");
     } catch (submitError) {
@@ -238,7 +236,7 @@ export default function App() {
     } catch {
       // Clear the device session even when the network is unavailable.
     } finally {
-      await SecureStore.deleteItemAsync(SESSION_KEY).catch(() => undefined);
+      await AppStorage.deleteItemAsync(SESSION_KEY).catch(() => undefined);
       setSession(null);
       setMode("login");
       setRole("CUSTOMER");
@@ -525,7 +523,7 @@ function Detail({ label, value }: { label: string; value: string }) {
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: "#F3F6FA" },
   flex: { flex: 1 },
-  authPage: { flexGrow: 1, paddingHorizontal: 20, paddingTop: 18, paddingBottom: 28 },
+  authPage: { flexGrow: 1, width: Platform.OS === "web" ? "100%" : undefined, maxWidth: Platform.OS === "web" ? 600 : undefined, alignSelf: Platform.OS === "web" ? "center" : undefined, paddingHorizontal: 20, paddingTop: 18, paddingBottom: 28 },
   entryBackButton: { alignSelf: "flex-start", paddingVertical: 8, paddingHorizontal: 3, marginBottom: 5 },
   entryBackText: { color: BRAND_COLORS.blue, fontSize: 12, fontWeight: "700" },
   dashboard: { flexGrow: 1, paddingHorizontal: 24, paddingTop: 34, paddingBottom: 30 },

@@ -14,6 +14,9 @@ const config: ExpoConfig = {
   },
   orientation: "portrait",
   userInterfaceStyle: "light",
+  web: {
+    bundler: "metro"
+  },
   android: {
     package: "ug.ac.muni.navigo",
     versionCode: 1,
