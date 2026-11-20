@@ -8,7 +8,7 @@ type Item={id?:string;userId?:string;user?:{id?:string;fullName?:string;phone?:s
 const KEY="navigo.web.session";
 
 async function api<T>(path:string,token?:string,init:RequestInit={}):Promise<T>{
- const res=await fetch(API+path,{...init,headers:{"Content-Type":"application/json",...(token?{Authorization:"Bearer "+token}:{}),...init.headers}});
+ const headers=new Headers(init.headers);headers.set("Content-Type","application/json");if(token)headers.set("Authorization","Bearer "+token);const res=await fetch(API+path,{...init,headers});
  const data=res.status===204?null:await res.json().catch(()=>null);
  if(!res.ok) throw new Error((data as {error?:{message?:string}}|null)?.error?.message||"Request failed ("+res.status+")");
  return data as T;
