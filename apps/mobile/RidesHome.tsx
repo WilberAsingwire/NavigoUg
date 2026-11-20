@@ -93,13 +93,20 @@ function OpenStreetMapRasterView({
   zoomEnabled?: boolean;
 }) {
   const [layout, setLayout] = useState({ width: 0, height: 0 });
-  const currentRegion = region ?? initialRegion ?? DEFAULT_OSM_REGION;
+  const [localRegion, setLocalRegion] = useState<OsmRegion>(initialRegion ?? DEFAULT_OSM_REGION);
+  const controlledRegionRef = useRef(region !== undefined);
+  controlledRegionRef.current = region !== undefined;
+  const currentRegion = region ?? localRegion;
   const regionRef = useRef(currentRegion);
   regionRef.current = currentRegion;
   const layoutRef = useRef(layout);
   layoutRef.current = layout;
   const onRegionChangeRef = useRef(onRegionChangeComplete);
   onRegionChangeRef.current = onRegionChangeComplete;
+  const applyRegionChange = (nextRegion: OsmRegion) => {
+    if (!controlledRegionRef.current) setLocalRegion(nextRegion);
+    onRegionChangeRef.current?.(nextRegion);
+  };
   const zoom = osmZoomForRegion(currentRegion, layout.width || 360);
   const zoomRef = useRef(zoom);
   zoomRef.current = zoom;
@@ -123,7 +130,7 @@ function OpenStreetMapRasterView({
       const nextCoordinate = osmPixelToCoordinate(nextCenter, activeZoom);
       const north = osmPixelToCoordinate({ x: nextCenter.x, y: nextCenter.y - size.height / 2 }, activeZoom);
       const south = osmPixelToCoordinate({ x: nextCenter.x, y: nextCenter.y + size.height / 2 }, activeZoom);
-      onRegionChangeRef.current?.({
+      applyRegionChange({
         latitude: nextCoordinate.latitude,
         longitude: nextCoordinate.longitude,
         latitudeDelta: Math.max(0.001, Math.abs(north.latitude - south.latitude)),
@@ -174,7 +181,7 @@ function OpenStreetMapRasterView({
     const nextZoom = Math.max(3, Math.min(19, zoom + amount));
     if (nextZoom === zoom) return;
     const factor = 2 ** (zoom - nextZoom);
-    onRegionChangeRef.current?.({
+    applyRegionChange({
       ...currentRegion,
       latitudeDelta: Math.max(0.001, currentRegion.latitudeDelta * factor),
       longitudeDelta: Math.max(0.001, currentRegion.longitudeDelta * factor)
@@ -2406,7 +2413,8 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                   <SafeMapView
                     ref={riderMapRef}
                     style={styles.customerMap}
-                    initialRegion={mapRegion}
+                    region={mapRegion}
+                    onRegionChangeComplete={setMapRegion}
                     routeCoordinates={riderMapPickup && riderMapDestination ? [riderMapPickup, riderMapDestination] : undefined}
                     markers={[{ coordinate: riderDeviceLocation, title: "You", pinColor: "#236B9A" }, { coordinate: riderMapPickup, title: "Pickup", pinColor: "#21865B" }, { coordinate: riderMapDestination, title: "Destination", pinColor: "#C54848" }]}
                     onMapReady={() => {
