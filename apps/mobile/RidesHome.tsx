@@ -2602,7 +2602,9 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                   <View style={styles.section}>
                     <View style={styles.sectionHeader}>
                       <Text style={styles.sectionTitle}>Your active ride</Text>
-                      <Text style={styles.refreshText}>In progress</Text>
+                      <Text style={styles.refreshText}>
+                        {activeRiderRide.status === "ACCEPTED" ? "Heading to pickup" : activeRiderRide.status === "ARRIVED_AT_PICKUP" ? "At pickup" : "Journey started"}
+                      </Text>
                     </View>
                     <Text style={styles.trackingPrivacyText}>
                       Keep this screen open. Your next ride action is available here, so you do not need to switch to My Jobs.
@@ -3593,6 +3595,15 @@ function RideCard({
   onRecordPayment?: () => void;
 }) {
   const canCancel = customerView && (ride.status === "PENDING" || ride.status === "ACCEPTED");
+  const riderStatusLabels: Record<string, string> = {
+    PENDING: "Nearby ride request",
+    ACCEPTED: "You accepted this ride",
+    ARRIVED_AT_PICKUP: "You are at pickup",
+    IN_PROGRESS: "Journey in progress",
+    COMPLETED: "Ride completed",
+    CANCELLED: "Ride cancelled",
+    EXPIRED: "Ride expired"
+  };
   const nextLabel: Record<string, string> = {
     ACCEPTED: "Confirm arrival at pickup",
     ARRIVED_AT_PICKUP: "Start trip",
@@ -3601,7 +3612,7 @@ function RideCard({
   return (
     <View style={styles.rideCard}>
       <View style={styles.rideTopRow}>
-        <Text style={styles.rideStatus}>{riderView && ride.status === "PENDING" ? "Nearby ride request" : (STATUS_LABELS[ride.status] ?? ride.status)}</Text>
+        <Text style={styles.rideStatus}>{riderView ? (riderStatusLabels[ride.status] ?? ride.status) : (STATUS_LABELS[ride.status] ?? ride.status)}</Text>
         <Text style={styles.rideFare}>{money(ride.fareAmountUgx)}</Text>
       </View>
       <View style={styles.routeRow}>
