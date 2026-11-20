@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Alert,
   KeyboardAvoidingView,
+  Image,
   Platform,
   SafeAreaView,
   ScrollView,
@@ -16,6 +17,7 @@ import { StatusBar } from "expo-status-bar";
 import * as SecureStore from "expo-secure-store";
 import * as Notifications from "expo-notifications";
 import Constants from "expo-constants";
+import Svg, { Circle, Defs, LinearGradient, Path, Rect, Stop } from "react-native-svg";
 import RidesHome from "./RidesHome";
 
 const API_BASE_URL = "https://navigou-api-2978.onrender.com";
@@ -87,6 +89,7 @@ export default function App() {
   const [motorcycleDescription, setMotorcycleDescription] = useState("");
   const [busy, setBusy] = useState(false);
   const [restoring, setRestoring] = useState(true);
+  const [introComplete, setIntroComplete] = useState(false);
   const [error, setError] = useState("");
   const [session, setSession] = useState<Session | null>(null);
   const [pushNotificationsEnabled, setPushNotificationsEnabled] = useState(false);
@@ -258,6 +261,12 @@ export default function App() {
     };
   }, []);
 
+  useEffect(() => {
+    if (restoring) return;
+    const timer = setTimeout(() => setIntroComplete(true), 2600);
+    return () => clearTimeout(timer);
+  }, [restoring]);
+
   function explainPasswordRecovery() {
     Alert.alert(
       "Password recovery",
@@ -371,16 +380,8 @@ export default function App() {
     }
   }
 
-  if (restoring) {
-    return (
-      <SafeAreaView style={styles.safeArea}>
-        <StatusBar style="dark" />
-        <View style={styles.loading}>
-          <ActivityIndicator size="large" color="#174A72" />
-          <Text style={styles.muted}>Preparing NAVIGO...</Text>
-        </View>
-      </SafeAreaView>
-    );
+  if (restoring || !introComplete) {
+    return <BrandSplash />;
   }
 
   if (session) {
@@ -568,14 +569,78 @@ export default function App() {
   );
 }
 
+function BrandSplash() {
+  return (
+    <View style={styles.splashScreen}>
+      <StatusBar hidden />
+      <Svg
+        width="100%"
+        height="100%"
+        viewBox="0 0 390 844"
+        preserveAspectRatio="xMidYMid slice"
+        style={StyleSheet.absoluteFillObject}
+      >
+        <Defs>
+          <LinearGradient id="navigoSky" x1="0%" y1="0%" x2="0%" y2="100%">
+            <Stop offset="0%" stopColor="#B9D8FA" />
+            <Stop offset="43%" stopColor="#EAF4FF" />
+            <Stop offset="100%" stopColor="#D8EAFE" />
+          </LinearGradient>
+        </Defs>
+        <Rect x="0" y="0" width="390" height="844" fill="url(#navigoSky)" />
+        <Circle cx="318" cy="132" r="86" fill="#FFFFFF" opacity="0.14" />
+        <Circle cx="60" cy="260" r="60" fill="#FFFFFF" opacity="0.12" />
+
+        <Path
+          d="M0 608 L0 565 L18 565 L18 535 L36 535 L36 556 L51 556 L51 505 L72 505 L72 559 L86 559 L86 480 L106 480 L106 558 L123 558 L123 524 L143 524 L143 566 L160 566 L160 506 L183 506 L183 564 L201 564 L201 462 L220 462 L220 562 L238 562 L238 526 L258 526 L258 565 L277 565 L277 498 L300 498 L300 559 L316 559 L316 525 L337 525 L337 564 L352 564 L352 512 L370 512 L370 563 L390 563 L390 632 Z"
+          fill="#76A9E8"
+          opacity="0.30"
+        />
+        <Path d="M0 624 L0 588 L26 588 L26 573 L45 573 L45 624 L66 624 L66 580 L89 580 L89 624 L111 624 L111 592 L135 592 L135 624 L153 624 L153 572 L174 572 L174 624 L197 624 L197 582 L221 582 L221 624 L245 624 L245 569 L270 569 L270 624 L290 624 L290 591 L312 591 L312 624 L338 624 L338 578 L361 578 L361 624 L390 624 L390 684 L0 684 Z" fill="#8BB9EE" opacity="0.25"/>
+
+        <Path d="M0 667 C62 632 123 661 181 665 C246 670 319 628 390 617 L390 844 L0 844 Z" fill="#245EA8" />
+        <Path d="M0 711 C76 670 131 715 199 713 C268 710 322 675 390 663 L390 844 L0 844 Z" fill="#12458F" />
+        <Path d="M0 756 C82 723 139 757 213 752 C283 747 343 720 390 708 L390 844 L0 844 Z" fill="#092D70" />
+
+        <Circle cx="116" cy="681" r="27" fill="none" stroke="#0A2A61" strokeWidth="8" />
+        <Circle cx="270" cy="681" r="27" fill="none" stroke="#0A2A61" strokeWidth="8" />
+        <Circle cx="116" cy="681" r="7" fill="#0A2A61" />
+        <Circle cx="270" cy="681" r="7" fill="#0A2A61" />
+        <Path
+          d="M116 681 L155 642 L195 681 L270 681 L235 642 L202 642 L181 642"
+          fill="none"
+          stroke="#09295F"
+          strokeWidth="8"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+        <Path d="M155 642 L177 625 L207 625 L235 642 L254 635" fill="none" stroke="#09295F" strokeWidth="8" strokeLinecap="round" strokeLinejoin="round" />
+        <Path d="M202 642 L223 660 L247 660" fill="none" stroke="#09295F" strokeWidth="7" strokeLinecap="round" />
+        <Path d="M167 640 L188 636 L211 648 L201 661 L174 659 Z" fill="#0A2B64" />
+        <Circle cx="194" cy="574" r="15" fill="#08275C" />
+        <Path d="M183 587 C170 596 163 610 160 628 L185 645 L211 617 L207 591 Z" fill="#08275C" />
+        <Path d="M183 600 L215 624 L238 621" fill="none" stroke="#08275C" strokeWidth="11" strokeLinecap="round" strokeLinejoin="round" />
+        <Path d="M188 625 L164 652 L191 662" fill="none" stroke="#08275C" strokeWidth="12" strokeLinecap="round" strokeLinejoin="round" />
+        <Path d="M181 592 L205 601" fill="none" stroke="#08275C" strokeWidth="10" strokeLinecap="round" />
+        <Path d="M190 557 L202 561 L205 574 L190 577 Z" fill="#08275C" />
+        <Path d="M0 812 C105 784 173 813 248 800 C312 788 358 770 390 760 L390 844 L0 844 Z" fill="#062657" />
+      </Svg>
+
+      <View style={styles.splashBrand}>
+        <Image source={require("./assets/icon.png")} style={styles.splashLogoImage} resizeMode="contain" />
+        <Text style={styles.splashWordmark}>NAVIGO</Text>
+        <Text style={styles.splashTagline}>Ride • Deliver • Move</Text>
+      </View>
+    </View>
+  );
+}
+
 function Brand() {
   return (
     <View style={styles.brand}>
-      <View style={styles.brandMark}>
-        <Text style={styles.brandLetter}>N</Text>
-      </View>
+      <Image source={require("./assets/icon.png")} style={styles.brandLogo} resizeMode="contain" />
       <Text style={styles.brandName}>NAVIGO</Text>
-      <Text style={styles.brandTagline}>Your journey, made easier.</Text>
+      <Text style={styles.brandTagline}>Ride • Deliver • Move</Text>
     </View>
   );
 }
@@ -635,6 +700,12 @@ function Detail({ label, value }: { label: string; value: string }) {
 }
 
 const styles = StyleSheet.create({
+  splashScreen: { flex: 1, backgroundColor: "#DCEEFF", overflow: "hidden" },
+  splashBrand: { position: "absolute", top: "10%", left: 0, right: 0, alignItems: "center" },
+  splashLogoImage: { width: 112, height: 112, borderRadius: 56, marginBottom: 5 },
+  splashWordmark: { color: "#0B2E6B", fontSize: 35, fontWeight: "900", fontStyle: "italic", letterSpacing: 1.2 },
+  splashTagline: { color: "#0B2E6B", fontSize: 14, fontWeight: "700", fontStyle: "italic", marginTop: 1 },
+  brandLogo: { width: 58, height: 58, borderRadius: 16, marginBottom: 7 },
   safeArea: { flex: 1, backgroundColor: "#F3F6FA" },
   flex: { flex: 1 },
   authPage: { flexGrow: 1, paddingHorizontal: 20, paddingTop: 25, paddingBottom: 28 },
@@ -647,7 +718,7 @@ const styles = StyleSheet.create({
   },
   brandLetter: { color: "#FFFFFF", fontSize: 31, fontWeight: "800" },
   brandName: { color: "#174A72", fontSize: 25, fontWeight: "900", letterSpacing: 2.4 },
-  brandTagline: { color: "#667085", fontSize: 12, marginTop: 4, letterSpacing: 0.2 },
+  brandTagline: { color: "#0B2E6B", fontSize: 12, fontStyle: "italic", fontWeight: "600", marginTop: 4, letterSpacing: 0.2 },
   headingBlock: { marginBottom: 19, paddingHorizontal: 3 },
   eyebrow: { color: "#2B719F", fontSize: 10, fontWeight: "800", letterSpacing: 1.4, marginBottom: 8 },
   heading: { color: "#142B3D", fontSize: 27, lineHeight: 33, fontWeight: "800" },
