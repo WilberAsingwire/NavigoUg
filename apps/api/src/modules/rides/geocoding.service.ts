@@ -158,7 +158,7 @@ async function lookupWithNominatim(query: string): Promise<AruaGeocodedLocation>
  * entire NAVIGO API instance.
  */
 export async function geocodeAruaPlace(value: string): Promise<AruaGeocodedLocation> {
-  const query = value.trim().replace(/\\s+/g, " ");
+  const query = value.trim().replace(/\s+/g, " ");
   if (query.length < 3 || query.length > 160) {
     throw new RideError(
       400,
