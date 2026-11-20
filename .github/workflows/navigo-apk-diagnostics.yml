@@ -1,0 +1,90 @@
+name: NAVIGO APK installability diagnostics
+
+on:
+  push:
+    branches-ignore:
+      - main
+    paths:
+      - .github/workflows/navigo-apk-diagnostics.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-apk:
+    name: Verify the first preview APK
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Set up EAS CLI
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Inspect EAS build metadata
+        working-directory: apps/mobile
+        run: |
+          eas build:view 9dc36bdc-74ae-4f60-87d9-fb1410fc9a48 --json > build-info.json
+          node -e '
+            const b = require("./build-info.json");
+            const a = b.artifacts || {};
+            console.log(JSON.stringify({
+              id: b.id,
+              status: b.status,
+              platform: b.platform,
+              profile: b.buildProfile,
+              distribution: b.distribution,
+              appIdentifier: b.applicationIdentifier,
+              appVersion: b.appVersion,
+              appBuildVersion: b.appBuildVersion,
+              artifact: a.buildUrl || a.applicationArchiveUrl || null
+            }, null, 2));
+          '
+
+      - name: Download the exact APK that failed to install
+        working-directory: apps/mobile
+        run: |
+          eas build:download --build-id 9dc36bdc-74ae-4f60-87d9-fb1410fc9a48 --non-interactive
+          find . -type f -name '*.apk' -print
+
+      - name: Verify APK file, archive and Android signature
+        working-directory: apps/mobile
+        run: |
+          APK="$(find . -type f -name '*.apk' -print -quit)"
+          if [ -z "$APK" ]; then
+            echo "::error::EAS did not download an APK file."
+            exit 1
+          fi
+
+          echo "APK_PATH=$APK" >> "$GITHUB_ENV"
+          echo "APK_SIZE_BYTES=$(stat -c '%s' "$APK")" >> "$GITHUB_ENV"
+          file "$APK"
+          stat -c 'APK size: %s bytes (%n)' "$APK"
+          unzip -t "$APK" | tail -n 2
+
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
+          AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -n 1)"
+          if [ -z "$APKSIGNER" ] || [ -z "$AAPT" ]; then
+            echo "::error::Android build-tools (apksigner/aapt) were not found on the runner."
+            exit 1
+          fi
+
+          "$APKSIGNER" verify --verbose --print-certs "$APK"
+          "$AAPT" dump badging "$APK" | head -n 8
+
+      - name: Upload the inspected APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: navigo-preview-apk-inspected
+          path: apps/mobile/${{ env.APK_PATH }}
+          if-no-files-found: error
+          retention-days: 7
