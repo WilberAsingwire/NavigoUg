@@ -53,6 +53,7 @@ describe("motorcycle road routing", () => {
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       expect(String(input)).toBe("https://valhalla.test/route");
       valhallaRequestBody = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      expect((init?.headers as Record<string, string>)["X-Client-Id"]).toBe("navigo-arua-pilot");
       return new Response(JSON.stringify({
         trip: {
           status: 0,
@@ -74,6 +75,43 @@ describe("motorcycle road routing", () => {
     expect(route.provider).toBe("VALHALLA_MOTORCYCLE");
     expect(route.distanceKm).toBe(3.75);
     expect(route.durationSeconds).toBe(840);
+    expect(route.coordinates).toHaveLength(2);
+  });
+
+  it("retries a shared Valhalla rate-limit response and still returns the fare route", async () => {
+    delete process.env.GOOGLE_MAPS_API_KEY;
+    process.env.VALHALLA_BASE_URL = "https://valhalla.test";
+
+    const points = [
+      { latitude: 3.0400, longitude: 30.9300 },
+      { latitude: 3.0500, longitude: 30.9400 }
+    ];
+    let attempts = 0;
+
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      attempts += 1;
+      if (attempts === 1) {
+        return new Response("rate limited", {
+          status: 429,
+          headers: { "Retry-After": "0" }
+        });
+      }
+      return new Response(JSON.stringify({
+        trip: {
+          status: 0,
+          summary: { length: 2.4, time: 600 },
+          legs: [{ shape: encodePolyline6(points) }]
+        }
+      }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" }
+      });
+    }) as typeof fetch);
+
+    const route = await getMotorcycleRoute(points[0]!, points[1]!);
+
+    expect(attempts).toBe(2);
+    expect(route.distanceKm).toBe(2.4);
     expect(route.coordinates).toHaveLength(2);
   });
 });
