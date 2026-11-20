@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ComponentRef } from "react";
+import { forwardRef, useCallback, useEffect, useRef, useState, type ComponentProps, type ComponentRef } from "react";
 import * as SecureStore from "expo-secure-store";
 import * as Location from "expo-location";
 import {
@@ -9,6 +9,7 @@ import {
   Dimensions,
   Linking,
   PanResponder,
+  Platform,
   SafeAreaView,
   ScrollView,
   StyleSheet,
@@ -18,12 +19,100 @@ import {
   View
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
-import MapView, { Marker, Polyline } from "react-native-maps";
+import NativeMapView, { Marker, Polyline } from "react-native-maps";
 
 type UiAppearance = "LIGHT" | "DARK";
 type UiTextSize = "COMPACT" | "STANDARD" | "LARGE";
 type UiPreferences = { appearance: UiAppearance; textSize: UiTextSize };
 const UI_PREFERENCES_KEY = "navigo.uiPreferences";
+
+// Android's installed binary has no Google Maps API-key metadata. Mounting the
+// native react-native-maps view can therefore terminate the Android process.
+// Keep Android usable through an OTA-safe OpenStreetMap handoff; iOS continues
+// to use its native map implementation.
+type SafeMapViewProps = ComponentProps<typeof NativeMapView> & {
+  routeCoordinates?: Array<{ latitude: number; longitude: number }> | null;
+};
+
+const SafeMapView = forwardRef<ComponentRef<typeof NativeMapView>, SafeMapViewProps>(
+  function SafeMapView({ routeCoordinates, children, style, region, initialRegion, ...nativeProps }, ref) {
+    if (Platform.OS === "android") {
+      const points = routeCoordinates ?? [];
+      const center = points.length
+        ? points[Math.floor(points.length / 2)]
+        : region ?? initialRegion;
+      const latitude = center?.latitude ?? 3.02;
+      const longitude = center?.longitude ?? 30.92;
+      const mapUrl = `https://www.openstreetmap.org/?mlat=${latitude}&mlon=${longitude}#map=15/${latitude}/${longitude}`;
+
+      return (
+        <View
+          style={[
+            style,
+            {
+              backgroundColor: "#E8F0F4",
+              alignItems: "center",
+              justifyContent: "center",
+              padding: 16
+            }
+          ]}
+        >
+          <View
+            style={{
+              width: "100%",
+              maxWidth: 340,
+              backgroundColor: "#FFFFFF",
+              borderRadius: 16,
+              padding: 16,
+              alignItems: "center",
+              elevation: 3
+            }}
+          >
+            <Text style={{ color: "#174A72", fontSize: 15, fontWeight: "900" }}>
+              OpenStreetMap
+            </Text>
+            <Text style={{ color: "#667085", fontSize: 11, lineHeight: 17, textAlign: "center", marginTop: 7 }}>
+              Open the map for this location in your browser. Your NAVIGO bookings and rider tools remain available here.
+            </Text>
+            <TouchableOpacity
+              accessibilityRole="button"
+              accessibilityLabel="Open this location in OpenStreetMap"
+              onPress={() => { void Linking.openURL(mapUrl).catch(() => undefined); }}
+              style={{
+                backgroundColor: "#174A72",
+                borderRadius: 10,
+                paddingHorizontal: 16,
+                paddingVertical: 11,
+                marginTop: 12
+              }}
+            >
+              <Text style={{ color: "#FFFFFF", fontSize: 11, fontWeight: "800" }}>
+                Open OpenStreetMap
+              </Text>
+            </TouchableOpacity>
+            <Text style={{ color: "#98A2B3", fontSize: 9, marginTop: 9 }}>
+              Map data © OpenStreetMap contributors
+            </Text>
+          </View>
+        </View>
+      );
+    }
+
+    return (
+      <NativeMapView
+        ref={ref}
+        style={style}
+        region={region}
+        initialRegion={initialRegion}
+        {...nativeProps}
+      >
+        {children}
+      </NativeMapView>
+    );
+  }
+);
+
+SafeMapView.displayName = "SafeMapView";
 
 type Session = {
   accessToken: string;
@@ -876,7 +965,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
   }
   const [deviceLocation, setDeviceLocation] = useState<RideLocation | null>(null);
   const [locationStatus, setLocationStatus] = useState<"locating" | "ready" | "denied" | "unavailable">("locating");
-  const riderMapRef = useRef<MapView | null>(null);
+  const riderMapRef = useRef<ComponentRef<typeof NativeMapView> | null>(null);
   const pendingRiderMapCenter = useRef<RideLocation | null>(null);
   const riderMapCentering = useRef(false);
   const [riderMapReady, setRiderMapReady] = useState(false);
@@ -1121,6 +1210,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
   }, [isCustomer]);
 
   function animateRiderMapTo(point: RideLocation) {
+    setMapRegion({ latitude: point.latitude, longitude: point.longitude, latitudeDelta: 0.045, longitudeDelta: 0.045 });
     if (!riderMapReady || !riderMapRef.current) {
       pendingRiderMapCenter.current = point;
       return;
@@ -1166,7 +1256,10 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
       return;
     }
     const { latitude, longitude } = riderMapNavigationTarget;
-    const url = `https://www.google.com/maps/dir/?api=1&destination=${latitude},${longitude}&travelmode=driving`;
+    const origin = riderDeviceLocation;
+    const url = origin
+      ? `https://www.openstreetmap.org/directions?engine=fossgis_osrm_car&route=${origin.latitude}%2C${origin.longitude}%3B${latitude}%2C${longitude}`
+      : `https://www.openstreetmap.org/?mlat=${latitude}&mlon=${longitude}#map=16/${latitude}/${longitude}`;
     try {
       await Linking.openURL(url);
     } catch {
@@ -1725,9 +1818,10 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
             {mainTab === "home" ? (
               <>
             <View style={styles.customerMapFrame}>
-              <MapView
+              <SafeMapView
                 style={styles.customerMap}
                 region={mapRegion}
+                routeCoordinates={quote?.routeCoordinates ?? parcelQuote?.routeCoordinates}
                 onRegionChangeComplete={setMapRegion}
                 customMapStyle={LIGHT_MAP_STYLE}
                 showsCompass={false}
@@ -1852,7 +1946,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                     {parcelQuote && parcelLocations ? (
                       <>
                         <View style={styles.routeMapFrame}>
-                          <MapView style={styles.routeMap} initialRegion={routeMapRegion(parcelQuote.routeCoordinates)} scrollEnabled={false} zoomEnabled={false} rotateEnabled={false} pitchEnabled={false} toolbarEnabled={false} showsCompass={false} showsScale={false}>
+                          <SafeMapView style={styles.routeMap} initialRegion={routeMapRegion(parcelQuote.routeCoordinates)} routeCoordinates={parcelQuote.routeCoordinates} scrollEnabled={false} zoomEnabled={false} rotateEnabled={false} pitchEnabled={false} toolbarEnabled={false} showsCompass={false} showsScale={false}>
                             <Polyline coordinates={parcelQuote.routeCoordinates} strokeColor="#1F76A8" strokeWidth={5} />
                             <Marker coordinate={parcelLocations.pickup} title="Pickup" pinColor="#21865B" />
                             <Marker coordinate={parcelLocations.destination} title="Delivery" pinColor="#C54848" />
@@ -1956,9 +2050,10 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                 {quote && locations && (
                   <>
                     <View style={styles.routeMapFrame}>
-                      <MapView
+                      <SafeMapView
                         style={styles.routeMap}
                         initialRegion={routeMapRegion(quote.routeCoordinates)}
+                        routeCoordinates={quote.routeCoordinates}
                         scrollEnabled={false}
                         zoomEnabled={false}
                         rotateEnabled={false}
@@ -2085,10 +2180,11 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
             ) : mainTab === "home" ? (
               <>
                 <View style={styles.riderMapFrame}>
-                  <MapView
+                  <SafeMapView
                     ref={riderMapRef}
                     style={styles.customerMap}
                     initialRegion={mapRegion}
+                    routeCoordinates={riderMapPickup && riderMapDestination ? [riderMapPickup, riderMapDestination] : undefined}
                     onMapReady={() => {
                       setRiderMapReady(true);
                       const pendingCenter = pendingRiderMapCenter.current;
@@ -3354,9 +3450,10 @@ function CustomerParcelCard({
         <View style={styles.trackingPanel}>
           <Text style={styles.label}>RIDER LOCATION</Text>
           <View style={styles.trackingMapFrame}>
-            <MapView
+            <SafeMapView
               style={styles.routeMap}
               initialRegion={parcelTrackingRegion(tracking)}
+              routeCoordinates={[tracking.pickup, tracking.destination]}
               customMapStyle={LIGHT_MAP_STYLE}
               scrollEnabled
               zoomEnabled
