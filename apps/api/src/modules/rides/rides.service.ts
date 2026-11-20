@@ -1,5 +1,6 @@
 import type { CreateRideInput, RideFareQuoteInput } from "@navigo/shared";
 import { prisma } from "../../lib/prisma.js";
+import { sendPushNotificationToUser } from "../notifications/notifications.service.js";
 import { RIDE_DISTANCE_TARIFF } from "./fare-rules.js";
 import { getMotorcycleRoute, MotorcycleRoutingError } from "./routing.service.js";
 
@@ -209,7 +210,7 @@ export async function createRide(customerId: string, input: CreateRideInput) {
   const fare = await calculateFare(input);
   const now = new Date();
 
-  return prisma.$transaction(async (tx) => {
+  const created = await prisma.$transaction(async (tx) => {
     const ride = await tx.rideRequest.create({
       data: {
         customerId,
@@ -245,7 +246,7 @@ export async function createRide(customerId: string, input: CreateRideInput) {
         note: "Ride request created"
       }
     });
-    await tx.notification.create({
+    const notification = await tx.notification.create({
       data: {
         userId: customerId,
         title: "Ride request received",
@@ -255,8 +256,15 @@ export async function createRide(customerId: string, input: CreateRideInput) {
       }
     });
 
-    return { ...ride, estimatedDistanceKm: fare.distanceKm };
+    return { ride: { ...ride, estimatedDistanceKm: fare.distanceKm }, notificationId: notification.id };
   });
+
+  await sendPushNotificationToUser(customerId, {
+    title: "Ride request received",
+    body: "Your ride request has been created. We will update you when a rider accepts it.",
+    data: { notificationId: created.notificationId, requestType: "RIDE", requestId: created.ride.id }
+  });
+  return created.ride;
 }
 
 export async function listCustomerRides(userId: string) {
@@ -393,7 +401,7 @@ export async function acceptRide(riderId: string, rideId: string) {
     // A rider can still accept if routing is unavailable; the customer will not see an invented ETA.
   }
 
-  return prisma.$transaction(async (tx) => {
+  const accepted = await prisma.$transaction(async (tx) => {
     const acceptedAt = new Date();
     const claimed = await tx.rideRequest.updateMany({
       where: { id: rideId, status: "PENDING", riderId: null },
@@ -430,7 +438,7 @@ export async function acceptRide(riderId: string, rideId: string) {
     if (!ride) {
       throw new RideError(404, "RIDE_NOT_FOUND", "The ride request could not be found.");
     }
-    await tx.notification.create({
+    const notification = await tx.notification.create({
       data: {
         userId: ride.customerId,
         title: "Your rider has accepted",
@@ -439,8 +447,15 @@ export async function acceptRide(riderId: string, rideId: string) {
         requestId: ride.id
       }
     });
-    return ride;
+    return { ride, notificationId: notification.id };
   });
+
+  await sendPushNotificationToUser(accepted.ride.customerId, {
+    title: "Your rider has accepted",
+    body: "A NAVIGO rider has accepted your ride request and is preparing to come to your pickup point.",
+    data: { notificationId: accepted.notificationId, requestType: "RIDE", requestId: accepted.ride.id }
+  });
+  return accepted.ride;
 }
 
 export async function updateRideStatus(
@@ -469,8 +484,22 @@ export async function updateRideStatus(
     ...(nextStatus === "IN_PROGRESS" ? { startedAt: now } : {}),
     ...(nextStatus === "COMPLETED" ? { completedAt: now } : {})
   };
+  const notificationCopy = {
+    ARRIVED_AT_PICKUP: {
+      title: "Your rider has arrived",
+      body: "Your NAVIGO rider is at the pickup point."
+    },
+    IN_PROGRESS: {
+      title: "Your ride has started",
+      body: "Your NAVIGO trip is now in progress."
+    },
+    COMPLETED: {
+      title: "Your ride is complete",
+      body: "Your NAVIGO trip has been completed. Thank you for riding with us."
+    }
+  }[nextStatus];
 
-  return prisma.$transaction(async (tx) => {
+  const updated = await prisma.$transaction(async (tx) => {
     const changed = await tx.rideRequest.updateMany({
       where: { id: rideId, riderId, status: ride.status },
       data: updates
@@ -488,12 +517,28 @@ export async function updateRideStatus(
         changedById: riderId
       }
     });
-
-    return tx.rideRequest.findUnique({
+    const notification = await tx.notification.create({
+      data: {
+        userId: ride.customerId,
+        title: notificationCopy.title,
+        body: notificationCopy.body,
+        requestType: "RIDE",
+        requestId: rideId
+      }
+    });
+    const result = await tx.rideRequest.findUnique({
       where: { id: rideId },
       include: rideInclude()
     });
+    return { result, notificationId: notification.id };
   });
+
+  await sendPushNotificationToUser(ride.customerId, {
+    title: notificationCopy.title,
+    body: notificationCopy.body,
+    data: { notificationId: updated.notificationId, requestType: "RIDE", requestId: rideId }
+  });
+  return updated.result;
 }
 
 export async function recordRidePayment(

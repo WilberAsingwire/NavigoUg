@@ -128,6 +128,7 @@ const fakeParcel = {
 describe("Parcel delivery API", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.notificationCreate.mockResolvedValue({ id: "notification-id" });
     process.env.JWT_ACCESS_SECRET = "local-test-secret-that-is-long-enough-123456";
     mocks.getMotorcycleRoute.mockResolvedValue({
       distanceKm: 3.7,

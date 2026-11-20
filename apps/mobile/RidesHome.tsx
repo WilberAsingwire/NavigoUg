@@ -4,6 +4,7 @@ import * as Location from "expo-location";
 import {
   AppState,
   ActivityIndicator,
+  Alert,
   SafeAreaView,
   ScrollView,
   StyleSheet,
@@ -167,6 +168,16 @@ type AdminFareRule = {
   isActive: boolean;
 };
 
+type AdminAnnouncement = {
+  id: string;
+  title: string;
+  body: string;
+  audience: "CUSTOMER" | "RIDER" | "BOTH";
+  recipientCount: number;
+  createdAt: string;
+  senderName: string;
+};
+
 const ACTIVE_TRACKING_STATUSES = [
   "ACCEPTED",
   "ARRIVED_AT_PICKUP",
@@ -183,6 +194,10 @@ type Props = {
   onSignOut: () => void;
   onSessionChange: (session: Session) => void;
   signingOut: boolean;
+  onEnablePushNotifications: () => Promise<boolean>;
+  onDisablePushNotifications: () => Promise<boolean>;
+  pushNotificationsEnabled: boolean;
+  pushNotificationsBusy: boolean;
 };
 
 const API_BASE_URL = "https://navigou-api-2978.onrender.com";
@@ -630,7 +645,16 @@ async function geocodeAruaAddress(value: string): Promise<RideLocation> {
   };
 }
 
-export default function RidesHome({ session, onSignOut, onSessionChange, signingOut }: Props) {
+export default function RidesHome({
+  session,
+  onSignOut,
+  onSessionChange,
+  signingOut,
+  onEnablePushNotifications,
+  onDisablePushNotifications,
+  pushNotificationsEnabled,
+  pushNotificationsBusy
+}: Props) {
   const [activeSession, setActiveSession] = useState(session);
 
   useEffect(() => {
@@ -794,8 +818,12 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
   const [trackingParcelIds, setTrackingParcelIds] = useState<string[]>([]);
   const [adminRiders, setAdminRiders] = useState<AdminRider[]>([]);
   const [adminFareRules, setAdminFareRules] = useState<AdminFareRule[]>([]);
+  const [adminAnnouncements, setAdminAnnouncements] = useState<AdminAnnouncement[]>([]);
   const [adminRiderFilter, setAdminRiderFilter] = useState<"ALL" | "PENDING" | "APPROVED" | "REJECTED" | "SUSPENDED">("PENDING");
-  const [adminTab, setAdminTab] = useState<"riders" | "fares">("riders");
+  const [adminTab, setAdminTab] = useState<"riders" | "fares" | "announcements">("riders");
+  const [announcementTitle, setAnnouncementTitle] = useState("");
+  const [announcementBody, setAnnouncementBody] = useState("");
+  const [announcementAudience, setAnnouncementAudience] = useState<"CUSTOMER" | "RIDER" | "BOTH">("BOTH");
   const [adminReviewReason, setAdminReviewReason] = useState("");
   const [fareRequestType, setFareRequestType] = useState<"RIDE" | "PARCEL">("PARCEL");
   const [fareSize, setFareSize] = useState<ParcelSize>("SMALL");
@@ -833,12 +861,14 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
     if (activeSession.user.role === "ADMIN") {
       try {
         const riderQuery = adminRiderFilter === "ALL" ? "" : `?status=${adminRiderFilter}`;
-        const [riderResult, fareResult] = await Promise.all([
+        const [riderResult, fareResult, announcementResult] = await Promise.all([
           apiRequest<{ data: AdminRider[] }>(`/api/v1/admin/riders${riderQuery}`, activeSession.accessToken, undefined, refreshAccessToken),
-          apiRequest<{ data: AdminFareRule[] }>("/api/v1/admin/fare-rules", activeSession.accessToken, undefined, refreshAccessToken)
+          apiRequest<{ data: AdminFareRule[] }>("/api/v1/admin/fare-rules", activeSession.accessToken, undefined, refreshAccessToken),
+          apiRequest<{ data: AdminAnnouncement[] }>("/api/v1/admin/announcements", activeSession.accessToken, undefined, refreshAccessToken)
         ]);
         setAdminRiders(riderResult.data ?? []);
         setAdminFareRules(fareResult.data ?? []);
+        setAdminAnnouncements(announcementResult.data ?? []);
         setRides([]);
         setAvailableRides([]);
         setAvailableParcels([]);
@@ -1502,6 +1532,60 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
     }
   }
 
+  function requestSendAdminAnnouncement() {
+    const title = announcementTitle.trim();
+    const body = announcementBody.trim();
+    if (!title || !body) {
+      setError("Enter both a notification title and message before sending.");
+      return;
+    }
+
+    const audienceLabel = announcementAudience === "BOTH"
+      ? "customers and riders"
+      : announcementAudience === "CUSTOMER" ? "customers" : "riders";
+    Alert.alert(
+      "Send announcement?",
+      `This will add a notification for all active ${audienceLabel}. Users who have enabled push alerts will also receive an Android push notification. This action cannot be recalled.`,
+      [
+        { text: "Cancel", style: "cancel" },
+        { text: "Send now", onPress: () => { void sendAdminAnnouncement(); } }
+      ]
+    );
+  }
+
+  async function sendAdminAnnouncement() {
+    setWorking(true);
+    setError("");
+    setMessage("");
+    try {
+      const result = await apiRequest<{ data: AdminAnnouncement }>(
+        "/api/v1/admin/announcements",
+        activeSession.accessToken,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            title: announcementTitle.trim(),
+            body: announcementBody.trim(),
+            audience: announcementAudience
+          })
+        },
+        refreshAccessToken
+      );
+      setAnnouncementTitle("");
+      setAnnouncementBody("");
+      setMessage(
+        `Announcement added to the notification inboxes of ${result.data.recipientCount} active accounts. Push alerts are attempted for users who have enabled them.`
+      );
+      await loadDashboard();
+    } catch (announcementError) {
+      setError(announcementError instanceof Error
+        ? announcementError.message
+        : "Unable to send this announcement.");
+    } finally {
+      setWorking(false);
+    }
+  }
+
   async function performRideAction(rideId: string, action: "accept" | "cancel" | "ARRIVED_AT_PICKUP" | "IN_PROGRESS" | "COMPLETED") {
     setWorking(true);
     setError("");
@@ -1829,13 +1913,13 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                 {message ? <Notice tone="success" text={message} /> : null}
               </View>
             ) : (
-              <ProfilePanel session={activeSession} onSignOut={onSignOut} signingOut={signingOut} onSaveProfile={saveOwnProfile} onChangePassword={changeOwnPassword} onSwitchWorkspace={switchWorkspace} onApplyRider={applyForRider} refreshAccessToken={refreshAccessToken} appearance={appearance} textSize={textSize} onUpdateUiPreferences={updateUiPreferences} />
+              <ProfilePanel session={activeSession} onSignOut={onSignOut} signingOut={signingOut} onSaveProfile={saveOwnProfile} onChangePassword={changeOwnPassword} onSwitchWorkspace={switchWorkspace} onApplyRider={applyForRider} refreshAccessToken={refreshAccessToken} appearance={appearance} textSize={textSize} onUpdateUiPreferences={updateUiPreferences} onEnablePushNotifications={onEnablePushNotifications} onDisablePushNotifications={onDisablePushNotifications} pushNotificationsEnabled={pushNotificationsEnabled} pushNotificationsBusy={pushNotificationsBusy} />
             )}
           </>
         ) : activeSession.user.role === "RIDER" ? (
           <>
             {mainTab === "profile" ? (
-              <ProfilePanel session={activeSession} onSignOut={onSignOut} signingOut={signingOut} onSaveProfile={saveOwnProfile} onChangePassword={changeOwnPassword} onSwitchWorkspace={switchWorkspace} onApplyRider={applyForRider} refreshAccessToken={refreshAccessToken} appearance={appearance} textSize={textSize} onUpdateUiPreferences={updateUiPreferences} />
+              <ProfilePanel session={activeSession} onSignOut={onSignOut} signingOut={signingOut} onSaveProfile={saveOwnProfile} onChangePassword={changeOwnPassword} onSwitchWorkspace={switchWorkspace} onApplyRider={applyForRider} refreshAccessToken={refreshAccessToken} appearance={appearance} textSize={textSize} onUpdateUiPreferences={updateUiPreferences} onEnablePushNotifications={onEnablePushNotifications} onDisablePushNotifications={onDisablePushNotifications} pushNotificationsEnabled={pushNotificationsEnabled} pushNotificationsBusy={pushNotificationsBusy} />
             ) : activeSession.user.riderApprovalStatus !== "APPROVED" ? (
               <View style={styles.card}>
                 <Text style={styles.cardTitle}>Rider application status</Text>
@@ -1962,7 +2046,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                 )}
               </View>
             ) : (
-              <ProfilePanel session={activeSession} onSignOut={onSignOut} signingOut={signingOut} onSaveProfile={saveOwnProfile} onChangePassword={changeOwnPassword} onSwitchWorkspace={switchWorkspace} onApplyRider={applyForRider} refreshAccessToken={refreshAccessToken} appearance={appearance} textSize={textSize} onUpdateUiPreferences={updateUiPreferences} />
+              <ProfilePanel session={activeSession} onSignOut={onSignOut} signingOut={signingOut} onSaveProfile={saveOwnProfile} onChangePassword={changeOwnPassword} onSwitchWorkspace={switchWorkspace} onApplyRider={applyForRider} refreshAccessToken={refreshAccessToken} appearance={appearance} textSize={textSize} onUpdateUiPreferences={updateUiPreferences} onEnablePushNotifications={onEnablePushNotifications} onDisablePushNotifications={onDisablePushNotifications} pushNotificationsEnabled={pushNotificationsEnabled} pushNotificationsBusy={pushNotificationsBusy} />
             )}
             {error ? <Notice tone="error" text={error} /> : null}
             {message ? <Notice tone="success" text={message} /> : null}
@@ -1972,14 +2056,17 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
             <View style={styles.heroCard}>
               <Text style={styles.heroEyebrow}>NAVIGO MANAGEMENT</Text>
               <Text style={styles.heroTitle}>Administrator workspace</Text>
-              <Text style={styles.heroText}>Review rider applications and manage the distance-based prices used by the service.</Text>
+              <Text style={styles.heroText}>Manage rider applications, service prices and messages sent to NAVIGO users.</Text>
             </View>
             <View style={styles.tabRow}>
               <TouchableOpacity style={[styles.tabButton, adminTab === "riders" ? styles.tabButtonSelected : null]} onPress={() => { setAdminTab("riders"); setMessage(""); setError(""); }}>
-                <Text style={[styles.tabText, adminTab === "riders" ? styles.tabTextSelected : null]}>Rider applications</Text>
+                <Text style={[styles.tabText, adminTab === "riders" ? styles.tabTextSelected : null]}>Riders</Text>
               </TouchableOpacity>
               <TouchableOpacity style={[styles.tabButton, adminTab === "fares" ? styles.tabButtonSelected : null]} onPress={() => { setAdminTab("fares"); setMessage(""); setError(""); }}>
                 <Text style={[styles.tabText, adminTab === "fares" ? styles.tabTextSelected : null]}>Fare rules</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.tabButton, adminTab === "announcements" ? styles.tabButtonSelected : null]} onPress={() => { setAdminTab("announcements"); setMessage(""); setError(""); }}>
+                <Text style={[styles.tabText, adminTab === "announcements" ? styles.tabTextSelected : null]}>Announcements</Text>
               </TouchableOpacity>
             </View>
 
@@ -2052,7 +2139,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                   </View>
                 )) : <EmptyState title="No rider applications here" text={adminRiderFilter === "PENDING" ? "New rider applications will appear here for review." : "There are no riders under this filter."} />}
               </View>
-            ) : (
+            ) : adminTab === "fares" ? (
               <View style={styles.section}>
                 <View style={styles.sectionHeader}>
                   <Text style={styles.sectionTitle}>Fare configuration</Text>
@@ -2117,6 +2204,62 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                   );
                 }) : <EmptyState title="No fare rules configured" text="Create a fare rule above. Item delivery quotes will remain unavailable for sizes and distances without an active rule." />}
               </View>
+            ) : (
+              <View style={styles.section}>
+                <View style={styles.sectionHeader}>
+                  <Text style={styles.sectionTitle}>Send an announcement</Text>
+                  <TouchableOpacity onPress={loadDashboard} disabled={loading}>
+                    <Text style={styles.refreshText}>{loading ? "Loading..." : "Refresh"}</Text>
+                  </TouchableOpacity>
+                </View>
+                <Text style={styles.bodyText}>Share greetings, service news, important updates or other messages with selected NAVIGO users.</Text>
+                <View style={styles.card}>
+                  <Text style={styles.label}>Notification title</Text>
+                  <TextInput
+                    style={styles.addressInput}
+                    value={announcementTitle}
+                    onChangeText={setAnnouncementTitle}
+                    maxLength={120}
+                    placeholder="e.g. Welcome to NAVIGO"
+                    placeholderTextColor="#98A2B3"
+                  />
+                  <Text style={styles.label}>Message</Text>
+                  <TextInput
+                    style={[styles.addressInput, { minHeight: 112, textAlignVertical: "top" }]}
+                    value={announcementBody}
+                    onChangeText={setAnnouncementBody}
+                    maxLength={500}
+                    multiline
+                    placeholder="Write the message users will receive..."
+                    placeholderTextColor="#98A2B3"
+                  />
+                  <Text style={styles.label}>Send to</Text>
+                  <View style={styles.paymentRow}>
+                    <ChoiceButton label="Customers" selected={announcementAudience === "CUSTOMER"} onPress={() => setAnnouncementAudience("CUSTOMER")} />
+                    <ChoiceButton label="Riders" selected={announcementAudience === "RIDER"} onPress={() => setAnnouncementAudience("RIDER")} />
+                    <ChoiceButton label="Both" selected={announcementAudience === "BOTH"} onPress={() => setAnnouncementAudience("BOTH")} />
+                  </View>
+                  <Text style={styles.rideMeta}>Only active customer and rider accounts are included. Administrators do not receive these announcements. Push alerts are sent only to devices that have enabled them.</Text>
+                  <PrimaryButton
+                    label="Send announcement"
+                    loading={working}
+                    onPress={requestSendAdminAnnouncement}
+                    disabled={working || !announcementTitle.trim() || !announcementBody.trim()}
+                  />
+                </View>
+                <Text style={styles.sectionTitle}>Recently sent announcements</Text>
+                {adminAnnouncements.length ? adminAnnouncements.map((announcement) => (
+                  <View key={announcement.id} style={styles.rideCard}>
+                    <View style={styles.rideTopRow}>
+                      <Text style={styles.rideStatus}>{announcement.title}</Text>
+                      <Text style={styles.adminStatusText}>{announcement.audience === "BOTH" ? "CUSTOMERS + RIDERS" : announcement.audience}</Text>
+                    </View>
+                    <Text style={styles.bodyText}>{announcement.body}</Text>
+                    <Text style={styles.rideMeta}>Sent to {announcement.recipientCount} active accounts · {new Date(announcement.createdAt).toLocaleString()}</Text>
+                    <Text style={styles.rideMeta}>Sent by {announcement.senderName}</Text>
+                  </View>
+                )) : <EmptyState title="No announcements sent yet" text="Messages you send to customers or riders will appear here." />}
+              </View>
             )}
             {error ? <Notice tone="error" text={error} /> : null}
             {message ? <Notice tone="success" text={message} /> : null}
@@ -2169,7 +2312,11 @@ function ProfilePanel({
   refreshAccessToken,
   appearance,
   textSize,
-  onUpdateUiPreferences
+  onUpdateUiPreferences,
+  onEnablePushNotifications,
+  onDisablePushNotifications,
+  pushNotificationsEnabled,
+  pushNotificationsBusy
 }: {
   session: Session;
   onSignOut: () => void;
@@ -2182,6 +2329,10 @@ function ProfilePanel({
   appearance: UiAppearance;
   textSize: UiTextSize;
   onUpdateUiPreferences: (changes: Partial<UiPreferences>) => Promise<void>;
+  onEnablePushNotifications: () => Promise<boolean>;
+  onDisablePushNotifications: () => Promise<boolean>;
+  pushNotificationsEnabled: boolean;
+  pushNotificationsBusy: boolean;
 }) {
   const roleLabel = session.user.role === "CUSTOMER" ? "Customer" : session.user.role === "RIDER" ? "Rider" : "Administrator";
   const riderStatus = session.user.riderApprovalStatus ?? "NOT SET";
@@ -2405,7 +2556,7 @@ function ProfilePanel({
           <View style={styles.card}>
             <Text style={styles.profileMenuGroupTitle}>APP SETTINGS</Text>
             {menuItem("Preferences and accessibility", "Appearance, text size and notifications", "preferences")}
-            {menuItem("Notifications", "Ride and item-delivery updates", "notifications", unreadCount > 0 ? String(unreadCount) : undefined)}
+            {menuItem("Notifications", "Ride, delivery and NAVIGO announcements", "notifications", unreadCount > 0 ? String(unreadCount) : undefined)}
           </View>
           <View style={styles.card}>
             <Text style={styles.profileMenuGroupTitle}>HELP AND INFORMATION</Text>
@@ -2575,8 +2726,36 @@ function ProfilePanel({
               <View style={styles.card}>
                 <Text style={styles.cardTitle}>Notifications</Text>
                 <Detail label="In-app notifications" value="Enabled" />
-                <Detail label="Push notifications" value="Not configured on this build" />
-                <Text style={styles.profileHint}>You can review ride and item-delivery updates in the Notifications section. Push alerts will require device registration and notification-service configuration.</Text>
+                <Detail label="Push alerts" value={pushNotificationsEnabled ? "Enabled on this device" : "Not enabled"} />
+                {pushNotificationsEnabled ? (
+                  <>
+                    <Text style={styles.profileHint}>NAVIGO announcements and booking alerts are enabled on this Android device. You can manage notification permission in your phone settings.</Text>
+                    <TouchableOpacity
+                      accessibilityRole="button"
+                      style={[styles.profileChoiceButton, { marginTop: 10, minHeight: 46 }]}
+                      onPress={() => void onDisablePushNotifications()}
+                      disabled={pushNotificationsBusy}
+                    >
+                      {pushNotificationsBusy
+                        ? <ActivityIndicator color="#174A72" />
+                        : <Text style={styles.profileChoiceText}>Disable push alerts</Text>}
+                    </TouchableOpacity>
+                  </>
+                ) : (
+                  <>
+                    <Text style={styles.profileHint}>Enable Android alerts to receive ride, item-delivery and NAVIGO announcement updates even when the app is not open. The in-app inbox remains available.</Text>
+                    <TouchableOpacity
+                      accessibilityRole="button"
+                      style={[styles.profileChoiceButton, styles.profileChoiceButtonSelected, { marginTop: 10, minHeight: 46 }]}
+                      onPress={() => void onEnablePushNotifications()}
+                      disabled={pushNotificationsBusy}
+                    >
+                      {pushNotificationsBusy
+                        ? <ActivityIndicator color="#174A72" />
+                        : <Text style={styles.profileChoiceTextSelected}>Enable push alerts</Text>}
+                    </TouchableOpacity>
+                  </>
+                )}
               </View>
             </>
           ) : null}

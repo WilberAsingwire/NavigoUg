@@ -1,6 +1,7 @@
 import type { AdminFareRuleInput, AdminRiderApprovalInput, RiderApprovalStatus } from "@navigo/shared";
 import type { Prisma } from "../../generated/prisma/client.js";
 import { prisma } from "../../lib/prisma.js";
+import { sendPushNotificationToUsers } from "../notifications/notifications.service.js";
 
 export class AdminError extends Error {
   constructor(
@@ -229,4 +230,116 @@ export function adminErrorHandler(
     return;
   }
   next(error);
+}
+
+
+export type AdminAnnouncementAudience = "CUSTOMER" | "RIDER" | "BOTH";
+
+export type AdminAnnouncementInput = {
+  title: string;
+  body: string;
+  audience: AdminAnnouncementAudience;
+};
+
+export async function createAdminAnnouncement(
+  adminId: string,
+  input: AdminAnnouncementInput
+) {
+  const outcome = await prisma.$transaction(async (tx) => {
+    const roles = input.audience === "BOTH"
+      ? ["CUSTOMER", "RIDER"] as const
+      : [input.audience] as const;
+    const recipients = await tx.user.findMany({
+      where: {
+        isActive: true,
+        role: { in: [...roles] }
+      },
+      select: { id: true }
+    });
+
+    if (recipients.length === 0) {
+      throw new AdminError(
+        409,
+        "NO_ANNOUNCEMENT_RECIPIENTS",
+        "There are no active users in the selected audience."
+      );
+    }
+
+    const recipientIds = recipients.map((recipient) => recipient.id);
+    for (let offset = 0; offset < recipientIds.length; offset += 1000) {
+      const batch = recipientIds.slice(offset, offset + 1000);
+      await tx.notification.createMany({
+        data: batch.map((userId) => ({
+          userId,
+          title: input.title,
+          body: input.body
+        }))
+      });
+    }
+
+    const audit = await tx.auditLog.create({
+      data: {
+        actorId: adminId,
+        action: "ADMIN_ANNOUNCEMENT_SENT",
+        targetType: "ANNOUNCEMENT",
+        metadata: {
+          title: input.title,
+          body: input.body,
+          audience: input.audience,
+          recipientCount: recipientIds.length
+        }
+      }
+    });
+
+    return {
+      recipientIds,
+      announcement: {
+        id: audit.id,
+        title: input.title,
+        body: input.body,
+        audience: input.audience,
+        recipientCount: recipientIds.length,
+        createdAt: audit.createdAt
+      }
+    };
+  });
+
+  await sendPushNotificationToUsers(outcome.recipientIds, {
+    title: input.title,
+    body: input.body,
+    data: {}
+  });
+
+  return outcome.announcement;
+}
+
+export async function listAdminAnnouncements() {
+  const rows = await prisma.auditLog.findMany({
+    where: {
+      action: "ADMIN_ANNOUNCEMENT_SENT",
+      targetType: "ANNOUNCEMENT"
+    },
+    orderBy: { createdAt: "desc" },
+    take: 20,
+    include: {
+      actor: { select: { fullName: true } }
+    }
+  });
+
+  return rows.map((row) => {
+    const metadata = row.metadata && typeof row.metadata === "object" && !Array.isArray(row.metadata)
+      ? row.metadata as Record<string, unknown>
+      : {};
+    return {
+      id: row.id,
+      title: typeof metadata.title === "string" ? metadata.title : "NAVIGO announcement",
+      body: typeof metadata.body === "string" ? metadata.body : "",
+      audience: metadata.audience === "CUSTOMER" || metadata.audience === "RIDER" || metadata.audience === "BOTH"
+        ? metadata.audience
+        : "BOTH",
+      recipientCount: typeof metadata.recipientCount === "number" ? metadata.recipientCount : 0,
+      createdAt: row.createdAt,
+      senderName: row.actor?.fullName ?? "Administrator"
+    };
+  });
 }
