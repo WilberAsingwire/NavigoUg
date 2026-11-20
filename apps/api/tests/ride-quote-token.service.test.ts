@@ -49,7 +49,9 @@ describe("signed ride fare quotes", () => {
   it("rejects a quote after its signature is changed", () => {
     process.env.JWT_ACCESS_SECRET = "local-test-secret-that-is-long-enough-123456";
     const token = issueRideQuoteToken(customerId, routeInput, fare);
-    const tampered = `${token.slice(0, -1)}${token.endsWith("a") ? "b" : "a"}`;
+    const [payloadPart, signaturePart] = token.split(".");
+    const changedFirstSignatureCharacter = signaturePart?.[0] === "a" ? "b" : "a";
+    const tampered = `${payloadPart}.${changedFirstSignatureCharacter}${signaturePart?.slice(1) ?? ""}`;
 
     expect(() => verifyRideQuoteToken(customerId, routeInput, tampered))
       .toThrowError(RideQuoteTokenError);
