@@ -4271,8 +4271,10 @@ function appThemeColor(color: string, property: string, appearance: UiAppearance
       "#8793A2": "#9AACC0",
       "#98A2B3": "#9AACC0",
       "#526779": "#C1D1DF",
-      BRAND_COLORS.navy: "#77BCE8",
-      BRAND_COLORS.blue: "#7FC5ED",
+      "#082B78": "#9DBDF7",
+      "#2F5D9E": "#A4C6F5",
+      "#E27622": "#FFB36F",
+      "#F2C45B": "#F6D78E",
       "#B42318": "#FCA5A5",
       "#067647": "#6EE7B7",
       "#93370D": "#FDBA8C"
