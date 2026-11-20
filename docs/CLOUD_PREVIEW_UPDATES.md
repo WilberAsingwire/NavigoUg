@@ -13,8 +13,8 @@ NAVIGO uses Expo Update for internal Android previews so normal JavaScript and i
 
 1. Create an Expo access token at https://expo.dev/settings/access-tokens.
 2. In GitHub, open **Settings → Secrets and variables → Actions** for this repository and add a repository secret named `EXPO_TOKEN`. Never commit the token or paste it into source code.
-3. Create a new Android APK from the EAS `preview` build profile and install it on the test phone. This is required because `expo-updates` is included in the native app binary.
-4. Keep the installed preview APK for subsequent UI testing.
+3. In GitHub **Actions**, select **NAVIGO preview APK** and click **Run workflow**. This starts a cloud Android build using the EAS `preview` profile. Download and install the resulting APK from the build link in the workflow output or Expo dashboard.
+4. Keep this preview APK installed for subsequent UI testing.
 
 ## Reviewing changes
 
