@@ -5,11 +5,16 @@ const config: ExpoConfig = {
   slug: "navigo",
   scheme: "navigo",
   version: "1.0.0",
+  icon: "./assets/icon.png",
   orientation: "portrait",
   userInterfaceStyle: "light",
   android: {
     package: "ug.ac.muni.navigo",
     versionCode: 1,
+    adaptiveIcon: {
+      foregroundImage: "./assets/icon.png",
+      backgroundColor: "#EDF6FF"
+    },
     permissions: [
       "ACCESS_COARSE_LOCATION",
       "ACCESS_FINE_LOCATION",
@@ -30,7 +35,16 @@ const config: ExpoConfig = {
       }
     ],
     "expo-notifications",
-    "expo-secure-store"
+    "expo-secure-store",
+    [
+      "expo-splash-screen",
+      {
+        image: "./assets/icon.png",
+        imageWidth: 112,
+        resizeMode: "contain",
+        backgroundColor: "#EDF6FF"
+      }
+    ]
   ],
   extra: {
     eas: {
