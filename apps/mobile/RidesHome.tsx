@@ -7,6 +7,7 @@ import {
   Keyboard,
   Animated,
   Dimensions,
+  Image,
   Linking,
   PanResponder,
   Platform,
@@ -26,75 +27,293 @@ type UiTextSize = "COMPACT" | "STANDARD" | "LARGE";
 type UiPreferences = { appearance: UiAppearance; textSize: UiTextSize };
 const UI_PREFERENCES_KEY = "navigo.uiPreferences";
 
-// Android's installed binary has no Google Maps API-key metadata. Mounting the
-// native react-native-maps view can therefore terminate the Android process.
-// Keep Android usable through an OTA-safe OpenStreetMap handoff; iOS continues
-// to use its native map implementation.
+// Android uses an OTA-safe raster OpenStreetMap renderer. This avoids
+// mounting the native Google Maps view that is not configured in the installed APK.
+type OsmRegion = { latitude: number; longitude: number; latitudeDelta: number; longitudeDelta: number };
+type OsmMarker = { coordinate?: RouteCoordinate | null; title?: string; pinColor?: string };
 type SafeMapViewProps = ComponentProps<typeof NativeMapView> & {
-  routeCoordinates?: Array<{ latitude: number; longitude: number }> | null;
+  routeCoordinates?: RouteCoordinate[] | null;
+  markers?: OsmMarker[];
 };
 
-const SafeMapView = forwardRef<ComponentRef<typeof NativeMapView>, SafeMapViewProps>(
-  function SafeMapView({ routeCoordinates, children, style, region, initialRegion, ...nativeProps }, ref) {
-    if (Platform.OS === "android") {
-      const points = routeCoordinates ?? [];
-      const center = points.length
-        ? points[Math.floor(points.length / 2)]
-        : region ?? initialRegion;
-      const latitude = center?.latitude ?? 3.02;
-      const longitude = center?.longitude ?? 30.92;
-      const mapUrl = `https://www.openstreetmap.org/?mlat=${latitude}&mlon=${longitude}#map=15/${latitude}/${longitude}`;
+const OSM_TILE_SIZE = 256;
+const OSM_TILE_URL = "https://tile.openstreetmap.org";
+const OSM_TILE_HEADERS = {
+  "User-Agent": "NAVIGO/1.0 (+https://github.com/WilberAsingwire/NavigoUg)"
+};
+const DEFAULT_OSM_REGION: OsmRegion = {
+  latitude: 3.02,
+  longitude: 30.92,
+  latitudeDelta: 0.035,
+  longitudeDelta: 0.035
+};
 
-      return (
-        <View
-          style={[
-            style,
-            {
-              backgroundColor: "#E8F0F4",
-              alignItems: "center",
-              justifyContent: "center",
-              padding: 16
-            }
-          ]}
-        >
+function osmCoordinateToPixel(point: RouteCoordinate, zoom: number) {
+  const worldSize = OSM_TILE_SIZE * 2 ** zoom;
+  const latitude = Math.max(-85.05112878, Math.min(85.05112878, point.latitude));
+  const sinLatitude = Math.sin((latitude * Math.PI) / 180);
+  return {
+    x: ((point.longitude + 180) / 360) * worldSize,
+    y: (0.5 - Math.log((1 + sinLatitude) / (1 - sinLatitude)) / (4 * Math.PI)) * worldSize
+  };
+}
+
+function osmPixelToCoordinate(point: { x: number; y: number }, zoom: number): RouteCoordinate {
+  const worldSize = OSM_TILE_SIZE * 2 ** zoom;
+  const longitude = (point.x / worldSize) * 360 - 180;
+  const mercatorY = Math.PI - (2 * Math.PI * point.y) / worldSize;
+  const latitude = (180 / Math.PI) * Math.atan(Math.sinh(mercatorY));
+  return { latitude, longitude };
+}
+
+function osmZoomForRegion(region: OsmRegion, width: number) {
+  const safeWidth = Math.max(width, 320);
+  return Math.max(3, Math.min(19, Math.round(Math.log2((360 * safeWidth) / (OSM_TILE_SIZE * Math.max(region.longitudeDelta, 0.00001))))));
+}
+
+function OpenStreetMapRasterView({
+  style,
+  region,
+  initialRegion,
+  routeCoordinates,
+  markers,
+  onRegionChangeComplete,
+  onMapReady,
+  scrollEnabled,
+  zoomEnabled
+}: {
+  style?: ComponentProps<typeof NativeMapView>["style"];
+  region?: OsmRegion;
+  initialRegion?: OsmRegion;
+  routeCoordinates?: RouteCoordinate[] | null;
+  markers?: OsmMarker[];
+  onRegionChangeComplete?: (nextRegion: OsmRegion) => void;
+  onMapReady?: () => void;
+  scrollEnabled?: boolean;
+  zoomEnabled?: boolean;
+}) {
+  const [layout, setLayout] = useState({ width: 0, height: 0 });
+  const currentRegion = region ?? initialRegion ?? DEFAULT_OSM_REGION;
+  const regionRef = useRef(currentRegion);
+  regionRef.current = currentRegion;
+  const layoutRef = useRef(layout);
+  layoutRef.current = layout;
+  const onRegionChangeRef = useRef(onRegionChangeComplete);
+  onRegionChangeRef.current = onRegionChangeComplete;
+  const zoom = osmZoomForRegion(currentRegion, layout.width || 360);
+  const zoomRef = useRef(zoom);
+  zoomRef.current = zoom;
+  const readyRef = useRef(false);
+  const centerPixel = osmCoordinateToPixel(currentRegion, zoom);
+  const worldTileCount = 2 ** zoom;
+
+  const panResponder = useRef(PanResponder.create({
+    onStartShouldSetPanResponder: () => false,
+    onMoveShouldSetPanResponder: (_event, gesture) =>
+      scrollEnabled !== false && (Math.abs(gesture.dx) > 7 || Math.abs(gesture.dy) > 7),
+    onPanResponderRelease: (_event, gesture) => {
+      const size = layoutRef.current;
+      if (size.width <= 0 || size.height <= 0 || (Math.abs(gesture.dx) < 3 && Math.abs(gesture.dy) < 3)) return;
+      const activeZoom = zoomRef.current;
+      const oldCenter = osmCoordinateToPixel(regionRef.current, activeZoom);
+      const nextCenter = {
+        x: oldCenter.x - gesture.dx,
+        y: oldCenter.y - gesture.dy
+      };
+      const nextCoordinate = osmPixelToCoordinate(nextCenter, activeZoom);
+      const north = osmPixelToCoordinate({ x: nextCenter.x, y: nextCenter.y - size.height / 2 }, activeZoom);
+      const south = osmPixelToCoordinate({ x: nextCenter.x, y: nextCenter.y + size.height / 2 }, activeZoom);
+      onRegionChangeRef.current?.({
+        latitude: nextCoordinate.latitude,
+        longitude: nextCoordinate.longitude,
+        latitudeDelta: Math.max(0.001, Math.abs(north.latitude - south.latitude)),
+        longitudeDelta: Math.max(0.001, (size.width / (OSM_TILE_SIZE * 2 ** activeZoom)) * 360)
+      });
+    }
+  })).current;
+
+  const tiles: Array<{ key: string; uri: string; left: number; top: number }> = [];
+  if (layout.width > 0 && layout.height > 0) {
+    const minTileX = Math.floor((centerPixel.x - layout.width / 2) / OSM_TILE_SIZE);
+    const maxTileX = Math.floor((centerPixel.x + layout.width / 2) / OSM_TILE_SIZE);
+    const minTileY = Math.floor((centerPixel.y - layout.height / 2) / OSM_TILE_SIZE);
+    const maxTileY = Math.floor((centerPixel.y + layout.height / 2) / OSM_TILE_SIZE);
+    for (let tileY = minTileY; tileY <= maxTileY; tileY += 1) {
+      if (tileY < 0 || tileY >= worldTileCount) continue;
+      for (let unwrappedTileX = minTileX; unwrappedTileX <= maxTileX; unwrappedTileX += 1) {
+        const tileX = ((unwrappedTileX % worldTileCount) + worldTileCount) % worldTileCount;
+        tiles.push({
+          key: zoom + "/" + tileX + "/" + tileY,
+          uri: OSM_TILE_URL + "/" + zoom + "/" + tileX + "/" + tileY + ".png",
+          left: unwrappedTileX * OSM_TILE_SIZE - centerPixel.x + layout.width / 2,
+          top: tileY * OSM_TILE_SIZE - centerPixel.y + layout.height / 2
+        });
+      }
+    }
+  }
+
+  const toScreenPoint = (coordinate: RouteCoordinate) => {
+    const pixel = osmCoordinateToPixel(coordinate, zoom);
+    return {
+      x: pixel.x - centerPixel.x + layout.width / 2,
+      y: pixel.y - centerPixel.y + layout.height / 2
+    };
+  };
+
+  const routePoints = routeCoordinates?.length
+    ? routeCoordinates.filter((_point, index) => {
+        const stride = Math.max(1, Math.ceil(routeCoordinates.length / 120));
+        return index % stride === 0 || index === routeCoordinates.length - 1;
+      }).map(toScreenPoint)
+    : [];
+  const validMarkers = (markers ?? []).filter(
+    (marker): marker is OsmMarker & { coordinate: RouteCoordinate } => Boolean(marker.coordinate)
+  );
+
+  const changeZoom = (amount: number) => {
+    const nextZoom = Math.max(3, Math.min(19, zoom + amount));
+    if (nextZoom === zoom) return;
+    const factor = 2 ** (zoom - nextZoom);
+    onRegionChangeRef.current?.({
+      ...currentRegion,
+      latitudeDelta: Math.max(0.001, currentRegion.latitudeDelta * factor),
+      longitudeDelta: Math.max(0.001, currentRegion.longitudeDelta * factor)
+    });
+  };
+
+  return (
+    <View
+      style={[style, { overflow: "hidden", backgroundColor: "#E8F0F4" }]}
+      onLayout={(event) => {
+        const next = {
+          width: event.nativeEvent.layout.width,
+          height: event.nativeEvent.layout.height
+        };
+        setLayout((previous) =>
+          previous.width === next.width && previous.height === next.height ? previous : next
+        );
+        if (!readyRef.current) {
+          readyRef.current = true;
+          onMapReady?.();
+        }
+      }}
+      {...panResponder.panHandlers}
+    >
+      {tiles.map((tile) => (
+        <Image
+          key={tile.key}
+          source={{ uri: tile.uri, headers: OSM_TILE_HEADERS }}
+          resizeMode="stretch"
+          fadeDuration={0}
+          style={{
+            position: "absolute",
+            left: tile.left,
+            top: tile.top,
+            width: OSM_TILE_SIZE,
+            height: OSM_TILE_SIZE
+          }}
+        />
+      ))}
+      {routePoints.slice(1).map((point, index) => {
+        const previous = routePoints[index];
+        const dx = point.x - previous.x;
+        const dy = point.y - previous.y;
+        const length = Math.sqrt(dx * dx + dy * dy);
+        if (!Number.isFinite(length) || length < 1) return null;
+        return (
           <View
+            key={"route-" + index}
+            pointerEvents="none"
             style={{
-              width: "100%",
-              maxWidth: 340,
-              backgroundColor: "#FFFFFF",
-              borderRadius: 16,
-              padding: 16,
-              alignItems: "center",
-              elevation: 3
+              position: "absolute",
+              left: (previous.x + point.x - length) / 2,
+              top: (previous.y + point.y) / 2 - 2.5,
+              width: length,
+              height: 5,
+              borderRadius: 3,
+              backgroundColor: "#1F76A8",
+              transform: [{ rotate: Math.atan2(dy, dx) + "rad" }]
+            }}
+          />
+        );
+      })}
+      {validMarkers.map((marker, index) => {
+        const point = toScreenPoint(marker.coordinate);
+        if (point.x < -40 || point.x > layout.width + 40 || point.y < -50 || point.y > layout.height + 40) return null;
+        return (
+          <View
+            key={"marker-" + index}
+            pointerEvents="none"
+            style={{
+              position: "absolute",
+              left: point.x - 9,
+              top: point.y - 19,
+              alignItems: "center"
             }}
           >
-            <Text style={{ color: "#174A72", fontSize: 15, fontWeight: "900" }}>
-              OpenStreetMap
-            </Text>
-            <Text style={{ color: "#667085", fontSize: 11, lineHeight: 17, textAlign: "center", marginTop: 7 }}>
-              Open the map for this location in your browser. Your NAVIGO bookings and rider tools remain available here.
-            </Text>
-            <TouchableOpacity
-              accessibilityRole="button"
-              accessibilityLabel="Open this location in OpenStreetMap"
-              onPress={() => { void Linking.openURL(mapUrl).catch(() => undefined); }}
+            <View
               style={{
-                backgroundColor: "#174A72",
-                borderRadius: 10,
-                paddingHorizontal: 16,
-                paddingVertical: 11,
-                marginTop: 12
+                width: 18,
+                height: 18,
+                borderRadius: 9,
+                backgroundColor: marker.pinColor ?? "#236B9A",
+                borderColor: "#FFFFFF",
+                borderWidth: 2,
+                elevation: 4
               }}
-            >
-              <Text style={{ color: "#FFFFFF", fontSize: 11, fontWeight: "800" }}>
-                Open OpenStreetMap
-              </Text>
-            </TouchableOpacity>
-            <Text style={{ color: "#98A2B3", fontSize: 9, marginTop: 9 }}>
-              Map data © OpenStreetMap contributors
-            </Text>
+            />
+            {marker.title ? (
+              <View style={{ backgroundColor: "#FFFFFF", borderRadius: 6, paddingHorizontal: 5, paddingVertical: 2, marginTop: 2, elevation: 2 }}>
+                <Text style={{ color: "#344054", fontSize: 8, fontWeight: "800" }}>{marker.title}</Text>
+              </View>
+            ) : null}
           </View>
+        );
+      })}
+      <View
+        pointerEvents="none"
+        style={{
+          position: "absolute",
+          right: 7,
+          bottom: 7,
+          backgroundColor: "rgba(255,255,255,0.92)",
+          borderRadius: 5,
+          paddingHorizontal: 6,
+          paddingVertical: 3
+        }}
+      >
+        <Text style={{ color: "#344054", fontSize: 8, fontWeight: "700" }}>© OpenStreetMap contributors</Text>
+      </View>
+      {zoomEnabled !== false ? (
+        <View style={{ position: "absolute", left: 10, bottom: 10, backgroundColor: "#FFFFFF", borderRadius: 10, elevation: 3, overflow: "hidden" }}>
+          <TouchableOpacity onPress={() => changeZoom(1)} style={{ width: 34, height: 32, alignItems: "center", justifyContent: "center" }}>
+            <Text style={{ color: "#174A72", fontSize: 20, fontWeight: "800" }}>+</Text>
+          </TouchableOpacity>
+          <View style={{ height: 1, backgroundColor: "#E5EAF0" }} />
+          <TouchableOpacity onPress={() => changeZoom(-1)} style={{ width: 34, height: 32, alignItems: "center", justifyContent: "center" }}>
+            <Text style={{ color: "#174A72", fontSize: 20, fontWeight: "800" }}>−</Text>
+          </TouchableOpacity>
         </View>
+      ) : null}
+    </View>
+  );
+}
+
+const SafeMapView = forwardRef<ComponentRef<typeof NativeMapView>, SafeMapViewProps>(
+  function SafeMapView({ routeCoordinates, markers, children, style, region, initialRegion, ...nativeProps }, ref) {
+    if (Platform.OS === "android") {
+      return (
+        <OpenStreetMapRasterView
+          style={style}
+          region={region}
+          initialRegion={initialRegion}
+          routeCoordinates={routeCoordinates}
+          markers={markers}
+          onRegionChangeComplete={nativeProps.onRegionChangeComplete}
+          onMapReady={nativeProps.onMapReady}
+          scrollEnabled={nativeProps.scrollEnabled}
+          zoomEnabled={nativeProps.zoomEnabled}
+        />
       );
     }
 
@@ -113,7 +332,6 @@ const SafeMapView = forwardRef<ComponentRef<typeof NativeMapView>, SafeMapViewPr
 );
 
 SafeMapView.displayName = "SafeMapView";
-
 type Session = {
   accessToken: string;
   refreshToken: string;
@@ -1822,6 +2040,10 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                 style={styles.customerMap}
                 region={mapRegion}
                 routeCoordinates={quote?.routeCoordinates ?? parcelQuote?.routeCoordinates}
+                markers={[
+                  { coordinate: locations?.pickup ?? parcelLocations?.pickup ?? selectedPickupLocation ?? deviceLocation, title: "Pickup", pinColor: "#21865B" },
+                  { coordinate: locations?.destination ?? parcelLocations?.destination ?? selectedDestinationLocation, title: "Destination", pinColor: "#C54848" }
+                ]}
                 onRegionChangeComplete={setMapRegion}
                 customMapStyle={LIGHT_MAP_STYLE}
                 showsCompass={false}
@@ -1946,7 +2168,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                     {parcelQuote && parcelLocations ? (
                       <>
                         <View style={styles.routeMapFrame}>
-                          <SafeMapView style={styles.routeMap} initialRegion={routeMapRegion(parcelQuote.routeCoordinates)} routeCoordinates={parcelQuote.routeCoordinates} scrollEnabled={false} zoomEnabled={false} rotateEnabled={false} pitchEnabled={false} toolbarEnabled={false} showsCompass={false} showsScale={false}>
+                          <SafeMapView style={styles.routeMap} initialRegion={routeMapRegion(parcelQuote.routeCoordinates)} routeCoordinates={parcelQuote.routeCoordinates} markers={[{ coordinate: parcelLocations.pickup, title: "Pickup", pinColor: "#21865B" }, { coordinate: parcelLocations.destination, title: "Delivery", pinColor: "#C54848" }]} scrollEnabled={false} zoomEnabled={false} rotateEnabled={false} pitchEnabled={false} toolbarEnabled={false} showsCompass={false} showsScale={false}>
                             <Polyline coordinates={parcelQuote.routeCoordinates} strokeColor="#1F76A8" strokeWidth={5} />
                             <Marker coordinate={parcelLocations.pickup} title="Pickup" pinColor="#21865B" />
                             <Marker coordinate={parcelLocations.destination} title="Delivery" pinColor="#C54848" />
@@ -2054,6 +2276,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                         style={styles.routeMap}
                         initialRegion={routeMapRegion(quote.routeCoordinates)}
                         routeCoordinates={quote.routeCoordinates}
+                        markers={[{ coordinate: locations.pickup, title: "Pickup", pinColor: "#21865B" }, { coordinate: locations.destination, title: "Destination", pinColor: "#C54848" }]}
                         scrollEnabled={false}
                         zoomEnabled={false}
                         rotateEnabled={false}
@@ -2185,6 +2408,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                     style={styles.customerMap}
                     initialRegion={mapRegion}
                     routeCoordinates={riderMapPickup && riderMapDestination ? [riderMapPickup, riderMapDestination] : undefined}
+                    markers={[{ coordinate: riderDeviceLocation, title: "You", pinColor: "#236B9A" }, { coordinate: riderMapPickup, title: "Pickup", pinColor: "#21865B" }, { coordinate: riderMapDestination, title: "Destination", pinColor: "#C54848" }]}
                     onMapReady={() => {
                       setRiderMapReady(true);
                       const pendingCenter = pendingRiderMapCenter.current;
@@ -3454,6 +3678,7 @@ function CustomerParcelCard({
               style={styles.routeMap}
               initialRegion={parcelTrackingRegion(tracking)}
               routeCoordinates={[tracking.pickup, tracking.destination]}
+              markers={[{ coordinate: tracking.pickup, title: "Pickup", pinColor: "#21865B" }, { coordinate: tracking.destination, title: "Delivery", pinColor: "#C54848" }, { coordinate: tracking.rider, title: "Rider", pinColor: "#236B9A" }]}
               customMapStyle={LIGHT_MAP_STYLE}
               scrollEnabled
               zoomEnabled
