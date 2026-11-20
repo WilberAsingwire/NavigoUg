@@ -700,6 +700,14 @@ const NEXT_RIDER_STATUS: Record<string, "ARRIVED_AT_PICKUP" | "IN_PROGRESS" | "C
   IN_PROGRESS: "COMPLETED"
 };
 
+const CUSTOMER_RIDE_PROGRESS = [
+  { status: "PENDING", label: "Finding a rider" },
+  { status: "ACCEPTED", label: "Rider assigned" },
+  { status: "ARRIVED_AT_PICKUP", label: "Rider at pickup" },
+  { status: "IN_PROGRESS", label: "Trip in progress" },
+  { status: "COMPLETED", label: "Trip completed" }
+];
+
 const ARUA_LOCATION_SUGGESTIONS: LocationSuggestion[] = [
   { label: "Muni Site", category: "Local area", searchTerms: ["Muni", "Muni Hill", "Muni Cell"] },
   { label: "Muni University", category: "University", searchTerms: ["Muni", "main campus"] },
@@ -1140,6 +1148,14 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
   const [assignedParcels, setAssignedParcels] = useState<RiderParcel[]>([]);
   const [sentParcels, setSentParcels] = useState<RiderParcel[]>([]);
   const hasActiveCustomerRides = isCustomer && rides.some((ride) => !["COMPLETED", "CANCELLED", "EXPIRED"].includes(ride.status));
+  const hasActiveCustomerParcels = isCustomer && sentParcels.some((parcel) => !["DELIVERED", "CANCELLED", "EXPIRED"].includes(parcel.status));
+  const activeCustomerTrackingParcelIds = isCustomer
+    ? sentParcels
+      .filter((parcel) => ACTIVE_TRACKING_STATUSES.includes(parcel.status) && Boolean(parcel.rider))
+      .map((parcel) => parcel.id)
+      .sort()
+      .join("|")
+    : "";
   const activeRiderRide = rides.find((ride) => ["ACCEPTED", "ARRIVED_AT_PICKUP", "IN_PROGRESS"].includes(ride.status));
   const activeRiderRideNextStatus = activeRiderRide ? NEXT_RIDER_STATUS[activeRiderRide.status] : undefined;
   const activeRiderParcel = assignedParcels.find((parcel) => ["ACCEPTED", "ARRIVED_AT_PICKUP", "COLLECTED", "IN_TRANSIT", "ARRIVED_AT_DESTINATION"].includes(parcel.status));
@@ -1433,60 +1449,154 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
   useEffect(() => {
     if (!hasActiveCustomerRides) return undefined;
     let disposed = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let refreshing = false;
+
     const refreshCustomerRides = async () => {
+      if (disposed || refreshing || AppState.currentState !== "active") return;
+      refreshing = true;
       try {
         const result = await apiRequest<{ data: Ride[] }>("/api/v1/rides/mine", activeSession.accessToken, undefined, refreshAccessToken);
         if (!disposed) setRides(result.data ?? []);
       } catch {
-        // Continue showing the last server-confirmed state when temporarily offline.
+        // Keep the last server-confirmed ride status when connectivity is interrupted.
+      } finally {
+        refreshing = false;
+        if (!disposed && AppState.currentState === "active") {
+          timer = setTimeout(() => void refreshCustomerRides(), 8_000);
+        }
       }
     };
-    const timer = setInterval(() => void refreshCustomerRides(), 8_000);
-    return () => { disposed = true; clearInterval(timer); };
+
+    const subscription = AppState.addEventListener("change", (nextState) => {
+      if (nextState === "active") {
+        if (timer) clearTimeout(timer);
+        timer = undefined;
+        void refreshCustomerRides();
+      } else if (timer) {
+        clearTimeout(timer);
+        timer = undefined;
+      }
+    });
+    if (AppState.currentState === "active") void refreshCustomerRides();
+
+    return () => {
+      disposed = true;
+      if (timer) clearTimeout(timer);
+      subscription.remove();
+    };
   }, [hasActiveCustomerRides, activeSession.accessToken, refreshAccessToken]);
 
   useEffect(() => {
-    if (!isCustomer) return undefined;
-    const activeParcels = sentParcels.filter((parcel) =>
-      ACTIVE_TRACKING_STATUSES.includes(parcel.status) && Boolean(parcel.rider)
-    );
+    if (!hasActiveCustomerParcels) return undefined;
     let disposed = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let refreshing = false;
 
-    const refreshTracking = async () => {
-      const results = await Promise.all(activeParcels.map(async (parcel) => {
-        try {
-          const response = await apiRequest<{ data: ParcelTracking }>(
-            `/api/v1/parcels/${parcel.id}/tracking`,
-            activeSession.accessToken,
-            undefined,
-            refreshAccessToken
-          );
-          return [parcel.id, response.data] as const;
-        } catch {
-          return null;
+    const refreshCustomerParcels = async () => {
+      if (disposed || refreshing || AppState.currentState !== "active") return;
+      refreshing = true;
+      try {
+        const result = await apiRequest<{ data: RiderParcel[] }>("/api/v1/parcels/mine", activeSession.accessToken, undefined, refreshAccessToken);
+        if (!disposed) setSentParcels(result.data ?? []);
+      } catch {
+        // Retain the last confirmed delivery status; a later poll will retry.
+      } finally {
+        refreshing = false;
+        if (!disposed && AppState.currentState === "active") {
+          timer = setTimeout(() => void refreshCustomerParcels(), 10_000);
         }
-      }));
-      if (disposed) return;
-      setParcelTrackings((current) => {
-        const next: Record<string, ParcelTracking> = {};
-        for (const result of results) {
-          if (result) next[result[0]] = result[1];
-        }
-        return next;
-      });
+      }
     };
 
-    if (activeParcels.length) {
-      void refreshTracking();
-      const timer = setInterval(() => void refreshTracking(), 10_000);
-      return () => {
-        disposed = true;
-        clearInterval(timer);
-      };
+    const subscription = AppState.addEventListener("change", (nextState) => {
+      if (nextState === "active") {
+        if (timer) clearTimeout(timer);
+        timer = undefined;
+        void refreshCustomerParcels();
+      } else if (timer) {
+        clearTimeout(timer);
+        timer = undefined;
+      }
+    });
+    if (AppState.currentState === "active") void refreshCustomerParcels();
+
+    return () => {
+      disposed = true;
+      if (timer) clearTimeout(timer);
+      subscription.remove();
+    };
+  }, [hasActiveCustomerParcels, activeSession.accessToken, refreshAccessToken]);
+
+  useEffect(() => {
+    if (!isCustomer) return undefined;
+    const activeParcelIds = activeCustomerTrackingParcelIds
+      ? activeCustomerTrackingParcelIds.split("|")
+      : [];
+    if (!activeParcelIds.length) {
+      setParcelTrackings({});
+      return undefined;
     }
-    setParcelTrackings({});
-    return () => { disposed = true; };
-  }, [isCustomer, sentParcels, activeSession.accessToken, refreshAccessToken]);
+
+    let disposed = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let refreshing = false;
+
+    const refreshTracking = async () => {
+      if (disposed || refreshing || AppState.currentState !== "active") return;
+      refreshing = true;
+      try {
+        const results = await Promise.all(activeParcelIds.map(async (parcelId) => {
+          try {
+            const response = await apiRequest<{ data: ParcelTracking }>(
+              "/api/v1/parcels/" + parcelId + "/tracking",
+              activeSession.accessToken,
+              undefined,
+              refreshAccessToken
+            );
+            return [parcelId, response.data] as const;
+          } catch {
+            return null;
+          }
+        }));
+        if (!disposed) {
+          setParcelTrackings((current) => {
+            const next: Record<string, ParcelTracking> = {};
+            for (const parcelId of activeParcelIds) {
+              if (current[parcelId]) next[parcelId] = current[parcelId];
+            }
+            for (const result of results) {
+              if (result) next[result[0]] = result[1];
+            }
+            return next;
+          });
+        }
+      } finally {
+        refreshing = false;
+        if (!disposed && AppState.currentState === "active") {
+          timer = setTimeout(() => void refreshTracking(), 10_000);
+        }
+      }
+    };
+
+    const subscription = AppState.addEventListener("change", (nextState) => {
+      if (nextState === "active") {
+        if (timer) clearTimeout(timer);
+        timer = undefined;
+        void refreshTracking();
+      } else if (timer) {
+        clearTimeout(timer);
+        timer = undefined;
+      }
+    });
+    if (AppState.currentState === "active") void refreshTracking();
+
+    return () => {
+      disposed = true;
+      if (timer) clearTimeout(timer);
+      subscription.remove();
+    };
+  }, [isCustomer, activeCustomerTrackingParcelIds, activeSession.accessToken, refreshAccessToken]);
 
   const detectPickupLocation = useCallback(async (allowReplace = false) => {
     setLocationStatus("locating");
@@ -3871,6 +3981,21 @@ function RideCard({
           <Text style={styles.rideMeta}>{ride.rider.phone}{ride.rider.riderProfile?.motorcyclePlate ? ` • ${ride.rider.riderProfile.motorcyclePlate}` : ""}</Text>
         </View>
       ) : null}
+      {customerView && CUSTOMER_RIDE_PROGRESS.some((step) => step.status === ride.status) ? (
+        <View style={styles.progressPanel}>
+          <Text style={styles.label}>RIDE PROGRESS</Text>
+          {CUSTOMER_RIDE_PROGRESS.map((step, index) => {
+            const currentStep = CUSTOMER_RIDE_PROGRESS.findIndex((item) => item.status === ride.status);
+            const isDone = index <= currentStep;
+            return (
+              <View key={step.status} style={styles.progressRow}>
+                <View style={[styles.progressDot, isDone ? styles.progressDotDone : null]} />
+                <Text style={[styles.progressText, isDone ? styles.progressTextDone : null]}>{step.label}</Text>
+              </View>
+            );
+          })}
+        </View>
+      ) : null}
       {customerView && ride.status === "PENDING" ? (
         <View style={styles.trackingPanel}>
           <Text style={styles.trackingStatusText}>Finding a nearby rider</Text>
@@ -3951,6 +4076,11 @@ function CustomerParcelCard({
   };
   const steps = ["PENDING", "ACCEPTED", "ARRIVED_AT_PICKUP", "COLLECTED", "IN_TRANSIT", "ARRIVED_AT_DESTINATION", "DELIVERED"];
   const current = steps.indexOf(parcel.status);
+  const riderUpdatedAt = tracking?.rider ? Date.parse(tracking.rider.updatedAt) : Number.NaN;
+  const riderAgeMs = Number.isFinite(riderUpdatedAt) ? Date.now() - riderUpdatedAt : Number.POSITIVE_INFINITY;
+  const riderLocationFresh = Boolean(tracking?.rider) && riderAgeMs >= -60_000 && riderAgeMs <= 120_000;
+  const visibleRider = riderLocationFresh && tracking?.rider ? tracking.rider : null;
+  const riderAgeMinutes = Number.isFinite(riderAgeMs) ? Math.max(0, Math.floor(riderAgeMs / 60_000)) : null;
   return (
     <View style={styles.rideCard}>
       <View style={styles.rideTopRow}>
@@ -3973,39 +4103,46 @@ function CustomerParcelCard({
           <Text style={styles.routeAddress}>{parcel.destinationDescription}</Text>
         </View>
       </View>
-      {tracking && ACTIVE_TRACKING_STATUSES.includes(parcel.status) ? (
+      {ACTIVE_TRACKING_STATUSES.includes(parcel.status) ? (
         <View style={styles.trackingPanel}>
           <Text style={styles.label}>RIDER LOCATION</Text>
-          <View style={styles.trackingMapFrame}>
-            <SafeMapView
-              style={styles.routeMap}
-              initialRegion={parcelTrackingRegion(tracking)}
-              routeCoordinates={[tracking.pickup, tracking.destination]}
-              markers={[{ coordinate: tracking.pickup, title: "Pickup", pinColor: "#21865B" }, { coordinate: tracking.destination, title: "Delivery", pinColor: "#C54848" }, { coordinate: tracking.rider, title: "Rider", pinColor: BRAND_COLORS.blue }]}
-              customMapStyle={LIGHT_MAP_STYLE}
-              scrollEnabled
-              zoomEnabled
-              rotateEnabled={false}
-              pitchEnabled={false}
-              toolbarEnabled={false}
-              showsCompass={false}
-              showsScale={false}
-            >
-              <Marker coordinate={tracking.pickup} title="Pickup point" pinColor="#21865B" />
-              <Marker coordinate={tracking.destination} title="Delivery point" pinColor="#C54848" />
-              {tracking.rider ? (
-                <Marker coordinate={tracking.rider} title="Rider's latest location" description="Last reported GPS position" pinColor={BRAND_COLORS.blue} />
-              ) : null}
-            </SafeMapView>
-          </View>
+          {tracking ? (
+            <View style={styles.trackingMapFrame}>
+              <SafeMapView
+                style={styles.routeMap}
+                initialRegion={parcelTrackingRegion({ ...tracking, rider: visibleRider })}
+                markers={[{ coordinate: tracking.pickup, title: "Pickup", pinColor: "#21865B" }, { coordinate: tracking.destination, title: "Delivery", pinColor: "#C54848" }, { coordinate: visibleRider, title: "Rider", pinColor: BRAND_COLORS.blue }]}
+                customMapStyle={LIGHT_MAP_STYLE}
+                scrollEnabled
+                zoomEnabled
+                rotateEnabled={false}
+                pitchEnabled={false}
+                toolbarEnabled={false}
+                showsCompass={false}
+                showsScale={false}
+              >
+                <Marker coordinate={tracking.pickup} title="Pickup point" pinColor="#21865B" />
+                <Marker coordinate={tracking.destination} title="Delivery point" pinColor="#C54848" />
+                {visibleRider ? (
+                  <Marker coordinate={visibleRider} title="Rider's latest location" description="Last reported GPS position" pinColor={BRAND_COLORS.blue} />
+                ) : null}
+              </SafeMapView>
+            </View>
+          ) : null}
           <Text style={styles.trackingStatusText}>
-            {tracking.rider
-              ? `Rider location updated at ${new Date(tracking.rider.updatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
-              : tracking.sharingEnabled
-                ? "Waiting for the rider's next GPS update. Keep this screen open to refresh."
-                : "The rider has not enabled live location sharing yet."}
+            {!tracking
+              ? "Checking the rider's latest location..."
+              : visibleRider
+                ? "Rider location updated " + (riderAgeMinutes === 0 ? "less than a minute ago." : "about " + riderAgeMinutes + " minute" + (riderAgeMinutes === 1 ? "" : "s") + " ago.")
+                : tracking.rider
+                  ? riderAgeMinutes === null
+                    ? "The last GPS update time is unavailable. Waiting for a fresh position."
+                    : "The last GPS update was about " + riderAgeMinutes + " minute" + (riderAgeMinutes === 1 ? "" : "s") + " ago. It is hidden because positions older than two minutes are not shown."
+                  : tracking.sharingEnabled
+                    ? "Live sharing is enabled. Waiting for the rider's next GPS update."
+                    : "The rider has not enabled live location sharing yet."}
           </Text>
-          <Text style={styles.trackingPrivacyText}>Only you, as the sender, can view the rider's shared location. A position older than two minutes is hidden.</Text>
+          <Text style={styles.trackingPrivacyText}>Only you, as the sender, can view the rider's shared location. Positions older than two minutes are hidden, and the map does not draw an unverified road route.</Text>
         </View>
       ) : null}
       <View style={styles.progressPanel}>

@@ -8,6 +8,7 @@ on:
       - feature/navigo-loading-empty-states
       - feature/navigo-booking-form-polish
       - feature/navigo-dashboard-responsive
+      - feature/navigo-customer-tracking-polish
     paths:
       - "apps/mobile/**"
       - "packages/shared/**"
