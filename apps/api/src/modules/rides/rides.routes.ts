@@ -49,15 +49,43 @@ function validRideId(value: string): boolean {
 }
 
 ridesRouter.post("/fare-quote", requireRole("CUSTOMER"), async (request, response, next) => {
+  const startedAt = Date.now();
+  console.info("[NAVIGO fare quote] request received");
   const parsed = RideFareQuoteInputSchema.safeParse(request.body);
   if (!parsed.success) {
+    console.warn("[NAVIGO fare quote] input rejected", {
+      issues: parsed.error.issues.map((issue) => ({
+        path: issue.path.join("."),
+        code: issue.code
+      }))
+    });
     validationError(response, "Please select valid pickup and destination locations.", parsed.error.issues);
     return;
   }
 
   try {
-    response.status(200).json({ data: await getRideFareQuote(parsed.data) });
+    const quote = await getRideFareQuote(parsed.data);
+    console.info("[NAVIGO fare quote] completed", {
+      distanceKm: quote.distanceKm,
+      fareAmountUgx: quote.fareAmountUgx,
+      routingProvider: quote.routingProvider,
+      routePointCount: quote.routeCoordinates.length,
+      durationMs: Date.now() - startedAt
+    });
+    response.status(200).json({ data: quote });
   } catch (error) {
+    if (error instanceof RideError) {
+      console.warn("[NAVIGO fare quote] failed", {
+        code: error.code,
+        statusCode: error.statusCode,
+        durationMs: Date.now() - startedAt
+      });
+    } else {
+      console.error("[NAVIGO fare quote] unexpected failure", {
+        message: error instanceof Error ? error.message : "Unknown error",
+        durationMs: Date.now() - startedAt
+      });
+    }
     next(error);
   }
 });
