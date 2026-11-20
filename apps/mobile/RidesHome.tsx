@@ -893,7 +893,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
     longitudeDelta: 0.035
   });
   const mapSheetCollapsedHeight = 168;
-  const mapSheetExpandedHeight = Math.min(Dimensions.get("window").height * 0.72, 590);
+  const mapSheetExpandedHeight = Math.min(Dimensions.get("window").height * 0.60, 520);
   const [mapSheetExpanded, setMapSheetExpanded] = useState(true);
   const mapSheetHeight = useRef(new Animated.Value(mapSheetCollapsedHeight)).current;
   const mapSheetPanResponder = useRef(PanResponder.create({
@@ -1739,7 +1739,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
           <>
             {mainTab === "home" ? (
               <>
-            <View pointerEvents={activeLocationField === null ? "auto" : "none"} style={[styles.customerMapFrame, activeLocationField !== null ? styles.customerMapSearchMapHidden : null, { height: pickup.trim() && destination.trim() ? Math.min(Dimensions.get("window").height * 0.46, 390) : 230 }]}>
+            <View pointerEvents={activeLocationField === null ? "auto" : "none"} style={[styles.customerMapFrame, activeLocationField !== null ? styles.customerMapSearchMapHidden : null, { height: pickup.trim() && destination.trim() ? Math.min(Dimensions.get("window").height * 0.44, 360) : Math.min(Math.max(Dimensions.get("window").height * 0.29, 210), 260) }]}>
               <MapView
                 ref={customerMapRef}
                 style={[styles.customerMap, { opacity: customerMapLoaded ? 1 : 0 }]}
