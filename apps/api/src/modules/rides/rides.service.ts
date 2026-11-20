@@ -255,6 +255,9 @@ export async function createRide(customerId: string, input: CreateRideInput) {
         fareAmountUgx: fare.fareAmountUgx,
         fareBasis: fare.fareBasis,
         estimatedDistanceKm: fare.distanceKm,
+        routeCoordinates: fare.routeCoordinates,
+        estimatedDurationSeconds: fare.durationSeconds,
+        routingProvider: fare.routingProvider,
         status: "PENDING",
         payment: {
           create: {
