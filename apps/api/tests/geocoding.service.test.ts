@@ -1,32 +1,36 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { RideError } from "../src/modules/rides/rides.service.js";
 import { geocodeAruaPlace } from "../src/modules/rides/geocoding.service.js";
 
 afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+function photonFeature(longitude: number, latitude: number) {
+  return {
+    type: "Feature",
+    geometry: { type: "Point", coordinates: [longitude, latitude] },
+    properties: { name: "Muni University" }
+  };
+}
+
 describe("Arua final-place geocoding", () => {
-  it("searches within the Arua service area, identifies NAVIGO and caches the result", async () => {
+  it("uses Photon within the Arua boundary, identifies NAVIGO and caches the result", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = new URL(String(input));
-      expect(url.origin + url.pathname).toBe("https://nominatim.openstreetmap.org/search");
-      expect(url.searchParams.get("format")).toBe("jsonv2");
-      expect(url.searchParams.get("countrycodes")).toBe("ug");
-      expect(url.searchParams.get("bounded")).toBe("1");
-      expect(url.searchParams.get("viewbox")).toBe("30.55,3.30,31.25,2.75");
+      expect(url.origin + url.pathname).toBe("https://photon.komoot.io/api");
       expect(url.searchParams.get("q")).toBe("Muni University, Arua, Uganda");
+      expect(url.searchParams.get("bbox")).toBe("30.55,2.75,31.25,3.30");
+      expect(url.searchParams.get("lat")).toBe("3.02");
+      expect(url.searchParams.get("lon")).toBe("30.92");
+      expect(url.searchParams.get("limit")).toBe("5");
       expect((init?.headers as Record<string, string>)["User-Agent"]).toContain("NAVIGO/1.0");
 
-      return new Response(JSON.stringify([
-        {
-          lat: "3.0200",
-          lon: "30.9100",
-          display_name: "Muni University, Arua, Uganda"
-        }
-      ]), {
+      return new Response(JSON.stringify({
+        type: "FeatureCollection",
+        features: [photonFeature(30.91, 3.02)]
+      }), {
         status: 200,
-        headers: { "Content-Type": "application/json" }
+        headers: { "Content-Type": "application/geo+json" }
       });
     });
     vi.stubGlobal("fetch", fetchMock as typeof fetch);
@@ -43,10 +47,37 @@ describe("Arua final-place geocoding", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it("returns a clear temporary-unavailable error when Nominatim rate-limits NAVIGO", async () => {
+  it("falls back to Nominatim when Photon is unavailable", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input));
+      if (url.hostname === "photon.komoot.io") {
+        return new Response("temporarily unavailable", { status: 503 });
+      }
+      expect(url.origin + url.pathname).toBe("https://nominatim.openstreetmap.org/search");
+      expect(url.searchParams.get("format")).toBe("jsonv2");
+      expect(url.searchParams.get("countrycodes")).toBe("ug");
+      expect(url.searchParams.get("bounded")).toBe("1");
+      return new Response(JSON.stringify([
+        { lat: "3.0200", lon: "30.9100" }
+      ]), {
+        status: 200,
+        headers: { "Content-Type": "application/json" }
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock as typeof fetch);
+
+    await expect(geocodeAruaPlace("Muni University fallback test")).resolves.toEqual({
+      latitude: 3.02,
+      longitude: 30.91,
+      description: "Muni University fallback test"
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("returns a clear temporary-busy error when both public providers rate-limit NAVIGO", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response("rate limited", {
       status: 429,
-      headers: { "Retry-After": "1" }
+      headers: { "Retry-After": "0" }
     })) as typeof fetch);
 
     await expect(geocodeAruaPlace("Arua geocoder rate limit test")).rejects.toMatchObject({
@@ -55,13 +86,26 @@ describe("Arua final-place geocoding", () => {
     });
   });
 
-  it("rejects a geocoding result outside the Arua pilot boundary", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify([
-      { lat: "0.3476", lon: "32.5825", display_name: "Kampala, Uganda" }
-    ]), {
-      status: 200,
-      headers: { "Content-Type": "application/json" }
-    })) as typeof fetch);
+  it("rejects results outside the Arua pilot boundary", async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input));
+      if (url.hostname === "photon.komoot.io") {
+        return new Response(JSON.stringify({
+          type: "FeatureCollection",
+          features: [photonFeature(32.5825, 0.3476)]
+        }), {
+          status: 200,
+          headers: { "Content-Type": "application/geo+json" }
+        });
+      }
+      return new Response(JSON.stringify([
+        { lat: "0.3476", lon: "32.5825" }
+      ]), {
+        status: 200,
+        headers: { "Content-Type": "application/json" }
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock as typeof fetch);
 
     await expect(geocodeAruaPlace("Kampala out of area test")).rejects.toMatchObject({
       statusCode: 404,
