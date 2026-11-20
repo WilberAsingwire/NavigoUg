@@ -38,6 +38,8 @@ type SafeMapViewProps = Omit<ComponentProps<typeof NativeMapView>, "region" | "i
   onRegionChangeComplete?: NativeRegionChangeHandler;
   routeCoordinates?: RouteCoordinate[] | null;
   markers?: OsmMarker[];
+  onInteractionStart?: () => void;
+  onInteractionEnd?: () => void;
 };
 
 const OSM_TILE_SIZE = 256;
@@ -83,6 +85,8 @@ function OpenStreetMapRasterView({
   markers,
   onRegionChangeComplete,
   onMapReady,
+  onInteractionStart,
+  onInteractionEnd,
   scrollEnabled,
   zoomEnabled
 }: {
@@ -93,10 +97,13 @@ function OpenStreetMapRasterView({
   markers?: OsmMarker[];
   onRegionChangeComplete?: NativeRegionChangeHandler;
   onMapReady?: () => void;
+  onInteractionStart?: () => void;
+  onInteractionEnd?: () => void;
   scrollEnabled?: boolean;
   zoomEnabled?: boolean;
 }) {
   const [layout, setLayout] = useState({ width: 0, height: 0 });
+  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
   const [localRegion, setLocalRegion] = useState<OsmRegion>(initialRegion ?? DEFAULT_OSM_REGION);
   const controlledRegionRef = useRef(region !== undefined);
   controlledRegionRef.current = region !== undefined;
@@ -120,35 +127,49 @@ function OpenStreetMapRasterView({
 
   const panResponder = useRef(PanResponder.create({
     onStartShouldSetPanResponder: () => false,
+    onMoveShouldSetPanResponderCapture: (_event, gesture) =>
+      scrollEnabled !== false && (Math.abs(gesture.dx) > 7 || Math.abs(gesture.dy) > 7),
     onMoveShouldSetPanResponder: (_event, gesture) =>
       scrollEnabled !== false && (Math.abs(gesture.dx) > 7 || Math.abs(gesture.dy) > 7),
+    onPanResponderGrant: () => setDragOffset({ x: 0, y: 0 }),
+    onPanResponderMove: (_event, gesture) => {
+      // Move the visible tile layer with the finger; don't wait for release.
+      setDragOffset({ x: gesture.dx, y: gesture.dy });
+    },
+    onPanResponderTerminationRequest: () => false,
     onPanResponderRelease: (_event, gesture) => {
       const size = layoutRef.current;
-      if (size.width <= 0 || size.height <= 0 || (Math.abs(gesture.dx) < 3 && Math.abs(gesture.dy) < 3)) return;
-      const activeZoom = zoomRef.current;
-      const oldCenter = osmCoordinateToPixel(regionRef.current, activeZoom);
-      const nextCenter = {
-        x: oldCenter.x - gesture.dx,
-        y: oldCenter.y - gesture.dy
-      };
-      const nextCoordinate = osmPixelToCoordinate(nextCenter, activeZoom);
-      const north = osmPixelToCoordinate({ x: nextCenter.x, y: nextCenter.y - size.height / 2 }, activeZoom);
-      const south = osmPixelToCoordinate({ x: nextCenter.x, y: nextCenter.y + size.height / 2 }, activeZoom);
-      applyRegionChange({
-        latitude: nextCoordinate.latitude,
-        longitude: nextCoordinate.longitude,
-        latitudeDelta: Math.max(0.001, Math.abs(north.latitude - south.latitude)),
-        longitudeDelta: Math.max(0.001, (size.width / (OSM_TILE_SIZE * 2 ** activeZoom)) * 360)
-      });
-    }
+      const moved = Math.abs(gesture.dx) >= 3 || Math.abs(gesture.dy) >= 3;
+      if (size.width > 0 && size.height > 0 && moved) {
+        const activeZoom = zoomRef.current;
+        const oldCenter = osmCoordinateToPixel(regionRef.current, activeZoom);
+        const nextCenter = {
+          x: oldCenter.x - gesture.dx,
+          y: oldCenter.y - gesture.dy
+        };
+        const nextCoordinate = osmPixelToCoordinate(nextCenter, activeZoom);
+        const north = osmPixelToCoordinate({ x: nextCenter.x, y: nextCenter.y - size.height / 2 }, activeZoom);
+        const south = osmPixelToCoordinate({ x: nextCenter.x, y: nextCenter.y + size.height / 2 }, activeZoom);
+        applyRegionChange({
+          latitude: nextCoordinate.latitude,
+          longitude: nextCoordinate.longitude,
+          latitudeDelta: Math.max(0.001, Math.abs(north.latitude - south.latitude)),
+          longitudeDelta: Math.max(0.001, (size.width / (OSM_TILE_SIZE * 2 ** activeZoom)) * 360)
+        });
+      }
+      setDragOffset({ x: 0, y: 0 });
+    },
+    onPanResponderTerminate: () => setDragOffset({ x: 0, y: 0 })
   })).current;
 
   const tiles: Array<{ key: string; uri: string; left: number; top: number }> = [];
   if (layout.width > 0 && layout.height > 0) {
-    const minTileX = Math.floor((centerPixel.x - layout.width / 2) / OSM_TILE_SIZE);
-    const maxTileX = Math.floor((centerPixel.x + layout.width / 2) / OSM_TILE_SIZE);
-    const minTileY = Math.floor((centerPixel.y - layout.height / 2) / OSM_TILE_SIZE);
-    const maxTileY = Math.floor((centerPixel.y + layout.height / 2) / OSM_TILE_SIZE);
+    // One tile of short-range look-ahead keeps the viewport covered while a
+    // user pans, without prefetching areas outside normal map interaction.
+    const minTileX = Math.floor((centerPixel.x - layout.width / 2) / OSM_TILE_SIZE) - 1;
+    const maxTileX = Math.floor((centerPixel.x + layout.width / 2) / OSM_TILE_SIZE) + 1;
+    const minTileY = Math.floor((centerPixel.y - layout.height / 2) / OSM_TILE_SIZE) - 1;
+    const maxTileY = Math.floor((centerPixel.y + layout.height / 2) / OSM_TILE_SIZE) + 1;
     for (let tileY = minTileY; tileY <= maxTileY; tileY += 1) {
       if (tileY < 0 || tileY >= worldTileCount) continue;
       for (let unwrappedTileX = minTileX; unwrappedTileX <= maxTileX; unwrappedTileX += 1) {
@@ -208,8 +229,22 @@ function OpenStreetMapRasterView({
           onMapReady?.();
         }
       }}
+      onTouchStart={onInteractionStart}
+      onTouchEnd={onInteractionEnd}
+      onTouchCancel={onInteractionEnd}
       {...panResponder.panHandlers}
     >
+      <View
+        pointerEvents="none"
+        style={{
+          position: "absolute",
+          left: 0,
+          right: 0,
+          top: 0,
+          bottom: 0,
+          transform: [{ translateX: dragOffset.x }, { translateY: dragOffset.y }]
+        }}
+      >
       {tiles.map((tile) => (
         <Image
           key={tile.key}
@@ -282,6 +317,7 @@ function OpenStreetMapRasterView({
           </View>
         );
       })}
+      </View>
       <View
         pointerEvents="none"
         style={{
@@ -297,13 +333,13 @@ function OpenStreetMapRasterView({
         <Text style={{ color: "#344054", fontSize: 8, fontWeight: "700" }}>© OpenStreetMap contributors</Text>
       </View>
       {zoomEnabled !== false ? (
-        <View style={{ position: "absolute", left: 10, bottom: 10, backgroundColor: "#FFFFFF", borderRadius: 10, elevation: 3, overflow: "hidden" }}>
-          <TouchableOpacity onPress={() => changeZoom(1)} style={{ width: 34, height: 32, alignItems: "center", justifyContent: "center" }}>
-            <Text style={{ color: "#174A72", fontSize: 20, fontWeight: "800" }}>+</Text>
+        <View style={{ position: "absolute", right: 12, top: 62, backgroundColor: "#FFFFFF", borderRadius: 12, elevation: 5, overflow: "hidden", zIndex: 5 }}>
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel="Zoom in" onPress={() => changeZoom(1)} style={{ width: 44, height: 42, alignItems: "center", justifyContent: "center" }}>
+            <Text style={{ color: "#174A72", fontSize: 25, fontWeight: "800", lineHeight: 28 }}>+</Text>
           </TouchableOpacity>
           <View style={{ height: 1, backgroundColor: "#E5EAF0" }} />
-          <TouchableOpacity onPress={() => changeZoom(-1)} style={{ width: 34, height: 32, alignItems: "center", justifyContent: "center" }}>
-            <Text style={{ color: "#174A72", fontSize: 20, fontWeight: "800" }}>−</Text>
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel="Zoom out" onPress={() => changeZoom(-1)} style={{ width: 44, height: 42, alignItems: "center", justifyContent: "center" }}>
+            <Text style={{ color: "#174A72", fontSize: 25, fontWeight: "800", lineHeight: 28 }}>−</Text>
           </TouchableOpacity>
         </View>
       ) : null}
@@ -312,7 +348,7 @@ function OpenStreetMapRasterView({
 }
 
 const SafeMapView = forwardRef<ComponentRef<typeof NativeMapView>, SafeMapViewProps>(
-  function SafeMapView({ routeCoordinates, markers, children, style, region, initialRegion, ...nativeProps }, ref) {
+  function SafeMapView({ routeCoordinates, markers, onInteractionStart, onInteractionEnd, children, style, region, initialRegion, ...nativeProps }, ref) {
     if (Platform.OS === "android") {
       return (
         <OpenStreetMapRasterView
@@ -323,6 +359,8 @@ const SafeMapView = forwardRef<ComponentRef<typeof NativeMapView>, SafeMapViewPr
           markers={markers}
           onRegionChangeComplete={nativeProps.onRegionChangeComplete}
           onMapReady={nativeProps.onMapReady}
+          onInteractionStart={onInteractionStart}
+          onInteractionEnd={onInteractionEnd}
           scrollEnabled={nativeProps.scrollEnabled}
           zoomEnabled={nativeProps.zoomEnabled}
         />
@@ -1179,15 +1217,63 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
   const [error, setError] = useState("");
   const [activeLocationField, setActiveLocationField] = useState<"pickup" | "destination" | null>(null);
 
-  function continueLocationSearch(completedField: "pickup" | "destination", otherLocation: string) {
-    if (otherLocation.trim()) {
+  function focusLocationField(field: "pickup" | "destination") {
+    setActiveLocationField(field);
+    setMapSheetExpanded(true);
+  }
+
+  function selectLocationSuggestion(field: "pickup" | "destination", suggestion: LocationSuggestion) {
+    const selectedPoint: RideLocation | null =
+      suggestion.latitude !== undefined && suggestion.longitude !== undefined
+        ? {
+            latitude: suggestion.latitude,
+            longitude: suggestion.longitude,
+            description: suggestion.label
+          }
+        : null;
+
+    const nextPickup = field === "pickup" ? suggestion.label : pickup;
+    const nextDestination = field === "destination" ? suggestion.label : destination;
+    const nextPickupPoint = field === "pickup" ? selectedPoint : selectedPickupLocation;
+    const nextDestinationPoint = field === "destination" ? selectedPoint : selectedDestinationLocation;
+
+    if (field === "pickup") {
+      setPickup(suggestion.label);
+      setSelectedPickupLocation(selectedPoint);
+      setSelectedPickupSearchQuery(suggestion.searchQuery ?? "");
+      setQuote(null);
+      setLocations(null);
+      setParcelQuote(null);
+      setParcelLocations(null);
+    } else {
+      setDestination(suggestion.label);
+      setSelectedDestinationLocation(selectedPoint);
+      setSelectedDestinationSearchQuery(suggestion.searchQuery ?? "");
+      setQuote(null);
+      setLocations(null);
+      setParcelQuote(null);
+      setParcelLocations(null);
+    }
+
+    const otherPlaceIsReady = field === "pickup" ? Boolean(destination.trim()) : Boolean(pickup.trim());
+    if (otherPlaceIsReady) {
       setActiveLocationField(null);
+      setMapSheetExpanded(false);
       Keyboard.dismiss();
+      const overrides = {
+        pickup: nextPickupPoint,
+        destination: nextDestinationPoint,
+        pickupText: nextPickup,
+        destinationText: nextDestination
+      };
+      if (tab === "parcel") void getParcelFareEstimate(overrides);
+      else void getFareEstimate(overrides);
       return;
     }
 
-    const nextField = completedField === "pickup" ? "destination" : "pickup";
+    const nextField = field === "pickup" ? "destination" : "pickup";
     setActiveLocationField(nextField);
+    setMapSheetExpanded(true);
     requestAnimationFrame(() => {
       if (nextField === "pickup") pickupInputRef.current?.focus();
       else destinationInputRef.current?.focus();
@@ -1201,6 +1287,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
   const [riderMapReady, setRiderMapReady] = useState(false);
   const [riderMapCenteringUi, setRiderMapCenteringUi] = useState(false);
   const [keyboardVisible, setKeyboardVisible] = useState(false);
+  const [mapGestureActive, setMapGestureActive] = useState(false);
   const locationDetectionStarted = useRef(false);
   const [mapRegion, setMapRegion] = useState({
     latitude: 3.02,
@@ -1210,8 +1297,12 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
   });
   const mapSheetCollapsedHeight = 168;
   const mapSheetExpandedHeight = Math.min(Dimensions.get("window").height * 0.60, 520);
+  const mapSheetSearchHeight = Math.min(Dimensions.get("window").height * 0.84, 680);
   const [mapSheetExpanded, setMapSheetExpanded] = useState(true);
   const mapSheetHeight = useRef(new Animated.Value(mapSheetCollapsedHeight)).current;
+  const mapSheetTargetHeight = activeLocationField !== null
+    ? mapSheetSearchHeight
+    : mapSheetExpanded ? mapSheetExpandedHeight : mapSheetCollapsedHeight;
   const mapSheetPanResponder = useRef(PanResponder.create({
     onStartShouldSetPanResponder: () => false,
     onMoveShouldSetPanResponder: (_event, gesture) => Math.abs(gesture.dy) > 8,
@@ -1223,14 +1314,14 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
 
   useEffect(() => {
     const animation = Animated.spring(mapSheetHeight, {
-      toValue: mapSheetExpanded ? mapSheetExpandedHeight : mapSheetCollapsedHeight,
+      toValue: mapSheetTargetHeight,
       useNativeDriver: false,
       tension: 64,
       friction: 13
     });
     animation.start();
     return () => animation.stop();
-  }, [mapSheetExpanded, mapSheetExpandedHeight, mapSheetCollapsedHeight, mapSheetHeight]);
+  }, [mapSheetTargetHeight, mapSheetHeight]);
 
   useEffect(() => {
     if (activeSession.user.role === "RIDER" && mainTab !== "home") {
@@ -1530,16 +1621,29 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
     }
   }
 
-  async function getFareEstimate() {
+  async function getFareEstimate(overrides?: {
+    pickup?: RideLocation | null;
+    destination?: RideLocation | null;
+    pickupText?: string;
+    destinationText?: string;
+  }) {
     setWorking(true);
     setError("");
     setMessage("");
     setQuote(null);
     setLocations(null);
     try {
+      const pickupPoint = overrides && Object.prototype.hasOwnProperty.call(overrides, "pickup")
+        ? overrides.pickup
+        : selectedPickupLocation;
+      const destinationPoint = overrides && Object.prototype.hasOwnProperty.call(overrides, "destination")
+        ? overrides.destination
+        : selectedDestinationLocation;
+      const pickupText = overrides?.pickupText ?? (selectedPickupSearchQuery || pickup);
+      const destinationText = overrides?.destinationText ?? (selectedDestinationSearchQuery || destination);
       const [pickupLocation, destinationLocation] = await Promise.all([
-        selectedPickupLocation ?? geocodeAruaAddress(selectedPickupSearchQuery || pickup),
-        selectedDestinationLocation ?? geocodeAruaAddress(selectedDestinationSearchQuery || destination)
+        pickupPoint ?? geocodeAruaAddress(pickupText),
+        destinationPoint ?? geocodeAruaAddress(destinationText)
       ]);
       const result = await apiRequest<{ data: Quote }>("/api/v1/rides/fare-quote", activeSession.accessToken, {
         method: "POST",
@@ -1580,7 +1684,12 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
     }
   }
 
-  async function getParcelFareEstimate() {
+  async function getParcelFareEstimate(overrides?: {
+    pickup?: RideLocation | null;
+    destination?: RideLocation | null;
+    pickupText?: string;
+    destinationText?: string;
+  }) {
     setWorking(true);
     setError("");
     setMessage("");
@@ -1588,9 +1697,17 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
     setParcelLocations(null);
     setCreatedParcel(null);
     try {
+      const pickupPoint = overrides && Object.prototype.hasOwnProperty.call(overrides, "pickup")
+        ? overrides.pickup
+        : selectedPickupLocation;
+      const destinationPoint = overrides && Object.prototype.hasOwnProperty.call(overrides, "destination")
+        ? overrides.destination
+        : selectedDestinationLocation;
+      const pickupText = overrides?.pickupText ?? (selectedPickupSearchQuery || pickup);
+      const destinationText = overrides?.destinationText ?? (selectedDestinationSearchQuery || destination);
       const [pickupLocation, destinationLocation] = await Promise.all([
-        selectedPickupLocation ?? geocodeAruaAddress(selectedPickupSearchQuery || pickup),
-        selectedDestinationLocation ?? geocodeAruaAddress(selectedDestinationSearchQuery || destination)
+        pickupPoint ?? geocodeAruaAddress(pickupText),
+        destinationPoint ?? geocodeAruaAddress(destinationText)
       ]);
       const result = await apiRequest<{ data: ParcelQuote }>("/api/v1/parcels/fare-quote", activeSession.accessToken, {
         method: "POST",
@@ -2024,6 +2141,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
       <StatusBar style={appearance === "DARK" ? "light" : "dark"} />
       <ScrollView
         style={styles.mainScroll}
+        scrollEnabled={!((isCustomer && mainTab === "home") || mapGestureActive)}
         contentContainerStyle={[styles.page, isCustomer && mainTab === "home" ? styles.mapHomePage : null]}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
@@ -2154,12 +2272,18 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                 ) : (
                   <>
                     <Text style={styles.label}>Pickup location</Text>
-                    <TextInput ref={pickupInputRef} style={styles.addressInput} value={pickup} onFocus={() => setActiveLocationField("pickup")} onChangeText={(value) => { setPickup(value); setSelectedPickupLocation(null); setSelectedPickupSearchQuery(""); setParcelQuote(null); setParcelLocations(null); }} placeholder="Where should we collect the item?" placeholderTextColor="#98A2B3" />
+                    <TextInput ref={pickupInputRef} style={styles.addressInput} value={pickup} onFocus={() => focusLocationField("pickup")} onChangeText={(value) => { setPickup(value); setSelectedPickupLocation(null); setSelectedPickupSearchQuery(""); setParcelQuote(null); setParcelLocations(null); }} placeholder="Where should we collect the item?" placeholderTextColor="#98A2B3" />
                     {activeLocationField === "pickup" ? <TouchableOpacity style={styles.locationSearchLocationAction} onPress={() => void detectPickupLocation(true)}><Text style={styles.locationSearchLocationActionText}>◎  Use current location</Text></TouchableOpacity> : null}
-                    <LocationSuggestions visible={activeLocationField === "pickup"} query={pickup} onSelect={(suggestion) => { setPickup(suggestion.label); setSelectedPickupLocation(suggestion.latitude !== undefined && suggestion.longitude !== undefined ? { latitude: suggestion.latitude, longitude: suggestion.longitude, description: suggestion.label } : null); setSelectedPickupSearchQuery(suggestion.searchQuery ?? ""); continueLocationSearch("pickup", destination); setParcelQuote(null); setParcelLocations(null); }} />
+                    <LocationSuggestions visible={activeLocationField === "pickup"} query={pickup} onSelect={(suggestion) => selectLocationSuggestion("pickup", suggestion)} />
                     <Text style={styles.label}>Delivery location</Text>
-                    <TextInput ref={destinationInputRef} style={styles.addressInput} value={destination} onFocus={() => setActiveLocationField("destination")} onChangeText={(value) => { setDestination(value); setSelectedDestinationLocation(null); setSelectedDestinationSearchQuery(""); setParcelQuote(null); setParcelLocations(null); }} placeholder="Where should we deliver it?" placeholderTextColor="#98A2B3" />
-                    <LocationSuggestions visible={activeLocationField === "destination"} query={destination} onSelect={(suggestion) => { setDestination(suggestion.label); setSelectedDestinationLocation(suggestion.latitude !== undefined && suggestion.longitude !== undefined ? { latitude: suggestion.latitude, longitude: suggestion.longitude, description: suggestion.label } : null); setSelectedDestinationSearchQuery(suggestion.searchQuery ?? ""); continueLocationSearch("destination", pickup); setParcelQuote(null); setParcelLocations(null); }} />
+                    <TextInput ref={destinationInputRef} style={styles.addressInput} value={destination} onFocus={() => focusLocationField("destination")} onChangeText={(value) => { setDestination(value); setSelectedDestinationLocation(null); setSelectedDestinationSearchQuery(""); setParcelQuote(null); setParcelLocations(null); }} placeholder="Where should we deliver it?" placeholderTextColor="#98A2B3" returnKeyType="done" onSubmitEditing={() => {
+                      if (!pickup.trim() || !destination.trim()) return;
+                      setActiveLocationField(null);
+                      setMapSheetExpanded(false);
+                      Keyboard.dismiss();
+                      void getParcelFareEstimate();
+                    }} />
+                    <LocationSuggestions visible={activeLocationField === "destination"} query={destination} onSelect={(suggestion) => selectLocationSuggestion("destination", suggestion)} />
                     <Text style={styles.label}>What are you sending?</Text>
                     <TextInput style={styles.addressInput} value={itemDescription} onChangeText={(value) => { setItemDescription(value); setParcelQuote(null); }} placeholder="e.g. Documents, clothes, phone" placeholderTextColor="#98A2B3" />
                     <Text style={styles.label}>Item size</Text>
@@ -2214,7 +2338,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                   ref={pickupInputRef}
                   style={styles.addressInput}
                   value={pickup}
-                  onFocus={() => setActiveLocationField("pickup")}
+                  onFocus={() => focusLocationField("pickup")}
                   onChangeText={(value) => {
                     setPickup(value);
                     setSelectedPickupLocation(null);
@@ -2229,25 +2353,14 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                 <LocationSuggestions
                   visible={activeLocationField === "pickup"}
                   query={pickup}
-                  onSelect={(suggestion) => {
-                    setPickup(suggestion.label);
-                    setSelectedPickupLocation(
-                      suggestion.latitude !== undefined && suggestion.longitude !== undefined
-                        ? { latitude: suggestion.latitude, longitude: suggestion.longitude, description: suggestion.label }
-                        : null
-                    );
-                    setSelectedPickupSearchQuery(suggestion.searchQuery ?? "");
-                    continueLocationSearch("pickup", destination);
-                    setQuote(null);
-                    setLocations(null);
-                  }}
+                  onSelect={(suggestion) => selectLocationSuggestion("pickup", suggestion)}
                 />
                 <Text style={styles.label}>Destination</Text>
                 <TextInput
                   ref={destinationInputRef}
                   style={styles.addressInput}
                   value={destination}
-                  onFocus={() => setActiveLocationField("destination")}
+                  onFocus={() => focusLocationField("destination")}
                   onChangeText={(value) => {
                     setDestination(value);
                     setSelectedDestinationLocation(null);
@@ -2257,22 +2370,20 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                   }}
                   placeholder="e.g. Muni Site or Arua Hill"
                   placeholderTextColor="#98A2B3"
+                  returnKeyType="done"
+                  onSubmitEditing={() => {
+                    if (!pickup.trim() || !destination.trim()) return;
+                    setActiveLocationField(null);
+                    setMapSheetExpanded(false);
+                    Keyboard.dismiss();
+                    if (tab === "parcel") void getParcelFareEstimate();
+                    else void getFareEstimate();
+                  }}
                 />
                 <LocationSuggestions
                   visible={activeLocationField === "destination"}
                   query={destination}
-                  onSelect={(suggestion) => {
-                    setDestination(suggestion.label);
-                    setSelectedDestinationLocation(
-                      suggestion.latitude !== undefined && suggestion.longitude !== undefined
-                        ? { latitude: suggestion.latitude, longitude: suggestion.longitude, description: suggestion.label }
-                        : null
-                    );
-                    setSelectedDestinationSearchQuery(suggestion.searchQuery ?? "");
-                    continueLocationSearch("destination", pickup);
-                    setQuote(null);
-                    setLocations(null);
-                  }}
+                  onSelect={(suggestion) => selectLocationSuggestion("destination", suggestion)}
                 />
 
                 <Text style={styles.label}>Payment preference</Text>
@@ -2422,6 +2533,8 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                     onRegionChangeComplete={setMapRegion}
                     routeCoordinates={riderMapPickup && riderMapDestination ? [riderMapPickup, riderMapDestination] : undefined}
                     markers={[{ coordinate: riderDeviceLocation, title: "You", pinColor: "#236B9A" }, { coordinate: riderMapPickup, title: "Pickup", pinColor: "#21865B" }, { coordinate: riderMapDestination, title: "Destination", pinColor: "#C54848" }]}
+                    onInteractionStart={() => setMapGestureActive(true)}
+                    onInteractionEnd={() => setMapGestureActive(false)}
                     onMapReady={() => {
                       setRiderMapReady(true);
                       const pendingCenter = pendingRiderMapCenter.current;
