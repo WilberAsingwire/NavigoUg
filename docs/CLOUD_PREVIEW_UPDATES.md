@@ -7,13 +7,14 @@ NAVIGO uses Expo Update for internal Android previews so normal JavaScript and i
 - The installed Android preview APK uses the EAS `preview` channel.
 - Expo Update targets runtime version `1.0.0`, derived from the app version.
 - GitHub Actions publishes an update to the shared `preview` channel after pushes to branches other than `main`.
-- The workflow uses the repository secret `EXPO_TOKEN`. If it is not configured, publishing is skipped and the workflow displays a notice.
+- The repository secret `EXPO_TOKEN` authenticates both cloud updates and cloud builds. If it is missing, the workflows skip their Expo steps and display a notice.
+- The Android preview APK workflow runs when mobile native configuration files change. It does not rebuild for ordinary JavaScript or UI edits.
 
 ## One-time setup
 
 1. Create an Expo access token at https://expo.dev/settings/access-tokens.
 2. In GitHub, open **Settings → Secrets and variables → Actions** for this repository and add a repository secret named `EXPO_TOKEN`. Never commit the token or paste it into source code.
-3. In GitHub **Actions**, select **NAVIGO preview APK** and click **Run workflow**. This starts a cloud Android build using the EAS `preview` profile. Download and install the resulting APK from the build link in the workflow output or Expo dashboard.
+3. Trigger one Android APK build using the EAS `preview` profile. The build workflow is configured to run on native mobile configuration changes. Download and install the resulting APK from the EAS build link.
 4. Keep this preview APK installed for subsequent UI testing.
 
 ## Reviewing changes
