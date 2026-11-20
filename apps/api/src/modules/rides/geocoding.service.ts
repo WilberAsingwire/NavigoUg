@@ -19,7 +19,9 @@ const ARUA_BOUNDS = {
   maxLatitude: 3.30
 } as const;
 
-const NOMINATIM_BASE_URL = "https://nominatim.openstreetmap.org/search";
+const NOMINATIM_BASE_URL = (
+  process.env.NOMINATIM_BASE_URL || "https://nominatim.openstreetmap.org/search"
+).replace(/\\/+$/, "");
 const NOMINATIM_MIN_INTERVAL_MS = 1_100;
 const NOMINATIM_TIMEOUT_MS = 12_000;
 const GEOCODE_CACHE_TTL_MS = 30 * 60 * 1000;
