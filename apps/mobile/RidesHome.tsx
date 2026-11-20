@@ -2051,9 +2051,20 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
             ) : mainTab === "activity" ? (
               <View style={styles.section}>
                 <SectionHeader title="Your activity" onRefresh={loadDashboard} loading={loading} />
+                <Text style={styles.activityIntro}>Follow your ride requests and item deliveries, including their latest status and rider details.</Text>
+                <View style={styles.activitySummaryRow}>
+                  <View style={styles.activitySummaryCard}>
+                    <Text style={styles.activitySummaryValue}>{rides.filter((ride) => !["COMPLETED", "CANCELLED", "EXPIRED"].includes(ride.status)).length}</Text>
+                    <Text style={styles.activitySummaryLabel}>Active rides</Text>
+                  </View>
+                  <View style={styles.activitySummaryCard}>
+                    <Text style={styles.activitySummaryValue}>{sentParcels.filter((parcel) => !["DELIVERED", "CANCELLED", "EXPIRED"].includes(parcel.status)).length}</Text>
+                    <Text style={styles.activitySummaryLabel}>Active deliveries</Text>
+                  </View>
+                </View>
                 <View style={styles.tabRow}>
-                  <TabButton label="Rides" selected={customerActivityTab === "rides"} onPress={() => setCustomerActivityTab("rides")} />
-                  <TabButton label="Item deliveries" selected={customerActivityTab === "parcels"} onPress={() => setCustomerActivityTab("parcels")} />
+                  <TabButton label={`Rides · ${rides.length}`} selected={customerActivityTab === "rides"} onPress={() => setCustomerActivityTab("rides")} />
+                  <TabButton label={`Item deliveries · ${sentParcels.length}`} selected={customerActivityTab === "parcels"} onPress={() => setCustomerActivityTab("parcels")} />
                 </View>
                 {customerActivityTab === "parcels" ? (
                   <>
@@ -3284,6 +3295,29 @@ function RideCard({
           <Text style={styles.trackingPrivacyText}>This is an estimate based on the motorcycle route and may change with road conditions or delays.</Text>
         </View>
       ) : null}
+      {customerView && ride.status === "ARRIVED_AT_PICKUP" ? (
+        <View style={styles.trackingPanel}>
+          <Text style={styles.trackingStatusText}>Your rider has arrived at the pickup point.</Text>
+          <Text style={styles.trackingPrivacyText}>Please meet your rider at the agreed pickup location.</Text>
+        </View>
+      ) : null}
+      {customerView && ride.status === "IN_PROGRESS" ? (
+        <View style={styles.trackingPanel}>
+          <Text style={styles.trackingStatusText}>Your trip is in progress.</Text>
+          <Text style={styles.trackingPrivacyText}>Your rider has started the journey to your destination.</Text>
+        </View>
+      ) : null}
+      {customerView && ride.status === "COMPLETED" ? (
+        <View style={styles.trackingPanel}>
+          <Text style={styles.trackingStatusText}>This ride has been completed.</Text>
+          <Text style={styles.trackingPrivacyText}>{ride.payment?.status === "PAID" ? "Payment is recorded as paid." : "Payment has not yet been recorded."}</Text>
+        </View>
+      ) : null}
+      {customerView && ["CANCELLED", "EXPIRED"].includes(ride.status) ? (
+        <View style={styles.trackingPanel}>
+          <Text style={styles.trackingStatusText}>{ride.status === "CANCELLED" ? "This ride was cancelled." : "This ride request expired."}</Text>
+        </View>
+      ) : null}
       {riderView && typeof ride.pickupDistanceKm === "number" ? <Text style={styles.rideMeta}>Pickup is about {ride.pickupDistanceKm.toFixed(1)} km away in a straight line</Text> : null}
       {riderView && ride.customer ? <Text style={styles.rideMeta}>Customer: {ride.customer.fullName}</Text> : null}
       {onAccept ? <PrimaryButton label="Accept this ride" loading={busy} onPress={onAccept} disabled={busy} /> : null}
@@ -3686,6 +3720,11 @@ const baseStyles = StyleSheet.create({
   heroEyebrow: { color: "#BDD7EA", fontSize: 10, fontWeight: "800", letterSpacing: 1.4 },
   heroTitle: { color: "#FFFFFF", fontSize: 23, fontWeight: "800", marginTop: 8 },
   heroText: { color: "#DCEAF4", fontSize: 12, lineHeight: 19, marginTop: 7 },
+  activityIntro: { color: "#667085", fontSize: 11, lineHeight: 17, marginTop: -3, marginBottom: 12 },
+  activitySummaryRow: { flexDirection: "row", gap: 10, marginBottom: 14 },
+  activitySummaryCard: { flex: 1, backgroundColor: "#F0F7FC", borderRadius: 12, borderWidth: 1, borderColor: "#DCEAF4", padding: 12 },
+  activitySummaryValue: { color: "#174A72", fontSize: 21, fontWeight: "900" },
+  activitySummaryLabel: { color: "#667085", fontSize: 10, fontWeight: "700", marginTop: 3 },
   tabRow: { flexDirection: "row", backgroundColor: "#E8EEF4", borderRadius: 13, padding: 4, marginBottom: 15 },
   tabButton: { flex: 1, alignItems: "center", paddingVertical: 11, borderRadius: 10 },
   tabButtonSelected: { backgroundColor: "#FFFFFF" },
