@@ -3233,7 +3233,7 @@ function ProfilePanel({
             {menuItem("Help and support", "Answers to common questions", "support")}
             {menuItem("Privacy and about NAVIGO", "Permissions, data use and app information", "privacy")}
           </View>
-          {error && page !== "notifications" ? <Notice tone="error" text={error} /> : null}
+          {error ? <Notice tone="error" text={error} /> : null}
           {success ? <Notice tone="success" text={success} /> : null}
           <TouchableOpacity style={styles.profileSignOut} onPress={onSignOut} disabled={signingOut || busy}>
             {signingOut ? <ActivityIndicator color="#B42318" /> : <Text style={styles.profileSignOutText}>Sign out of NAVIGO</Text>}
