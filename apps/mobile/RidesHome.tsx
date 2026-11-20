@@ -2138,6 +2138,13 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
     }
   }
 
+  const showCollectionError = Boolean(error) && (
+    (isCustomer && mainTab === "activity" && (customerActivityTab === "parcels" ? sentParcels.length === 0 : rides.length === 0)) ||
+    (isApprovedRider && mainTab === "requests" && (riderRequestTab === "rides" ? availableRides.length === 0 : availableParcels.length === 0)) ||
+    (isApprovedRider && mainTab === "jobs" && (riderJobTab === "rides" ? rides.length === 0 : assignedParcels.length === 0)) ||
+    (activeSession.user.role === "ADMIN" && ((adminTab === "riders" && adminRiders.length === 0) || (adminTab === "fares" && adminFareRules.length === 0)))
+  );
+
   async function performRideAction(rideId: string, action: "accept" | "cancel" | "ARRIVED_AT_PICKUP" | "IN_PROGRESS" | "COMPLETED") {
     setWorking(true);
     setError("");
@@ -2537,7 +2544,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                 )) : <CollectionState loading={loading} error={error} emptyTitle="No rides yet" emptyText="Your ride requests and trip history will appear here." onRetry={() => void loadDashboard()} label="Loading your rides" />}
                   </>
                 )}
-                {error ? <Notice tone="error" text={error} /> : null}
+                {error && !showCollectionError ? <Notice tone="error" text={error} /> : null}
                 {message ? <Notice tone="success" text={message} /> : null}
               </View>
             ) : (
@@ -2771,7 +2778,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
             ) : (
               <ProfilePanel session={activeSession} onSignOut={onSignOut} signingOut={signingOut} onSaveProfile={saveOwnProfile} onChangePassword={changeOwnPassword} onSwitchWorkspace={switchWorkspace} onApplyRider={applyForRider} refreshAccessToken={refreshAccessToken} appearance={appearance} textSize={textSize} onUpdateUiPreferences={updateUiPreferences} />
             )}
-            {error ? <Notice tone="error" text={error} /> : null}
+            {error && !showCollectionError ? <Notice tone="error" text={error} /> : null}
             {message ? <Notice tone="success" text={message} /> : null}
           </>
         ) : activeSession.user.role === "ADMIN" ? (
@@ -2925,7 +2932,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                 }) : <CollectionState loading={loading} error={error} emptyTitle="No fare rules configured" emptyText="Create a fare rule above. Item delivery quotes will remain unavailable for sizes and distances without an active rule." onRetry={() => void loadDashboard()} label="Loading fare rules" />}
               </View>
             )}
-            {error ? <Notice tone="error" text={error} /> : null}
+            {error && !showCollectionError ? <Notice tone="error" text={error} /> : null}
             {message ? <Notice tone="success" text={message} /> : null}
           </>
         ) : (
@@ -3483,7 +3490,7 @@ function ProfilePanel({
             </>
           ) : null}
 
-          {error ? <Notice tone="error" text={error} /> : null}
+          {error && page !== "notifications" ? <Notice tone="error" text={error} /> : null}
           {success ? <Notice tone="success" text={success} /> : null}
         </>
       )}
