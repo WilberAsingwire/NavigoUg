@@ -96,7 +96,7 @@ ridesRouter.post("/fare-quote", requireRole("CUSTOMER"), async (request, respons
   }
 
   try {
-    const quote = await getRideFareQuote(parsed.data);
+    const quote = await getRideFareQuote(request.auth!.userId, parsed.data);
     console.info("[NAVIGO fare quote] completed", {
       distanceKm: quote.distanceKm,
       fareAmountUgx: quote.fareAmountUgx,

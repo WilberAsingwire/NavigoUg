@@ -120,7 +120,9 @@ export const RideFareQuoteInputSchema = z.object({
 );
 
 export const CreateRideInputSchema = RideFareQuoteInputSchema.extend({
-  paymentMethod: PaymentMethodSchema.default("CASH")
+  paymentMethod: PaymentMethodSchema.default("CASH"),
+  // Optional to keep older installed app versions booking during OTA rollout.
+  quoteToken: z.string().min(50).max(60000).optional()
 });
 
 export type CreateRideInput = z.infer<typeof CreateRideInputSchema>;
