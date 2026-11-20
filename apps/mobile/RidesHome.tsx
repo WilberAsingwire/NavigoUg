@@ -16,12 +16,12 @@ import {
   StyleSheet,
   Text,
   TextInput,
-  TouchableOpacity,
   View
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import NativeMapView, { Marker, Polyline } from "react-native-maps";
 import { BRAND_COLORS } from "./brand";
+import { InteractiveTouchable as TouchableOpacity } from "./InteractiveTouchable";
 
 type UiAppearance = "LIGHT" | "DARK";
 type UiTextSize = "COMPACT" | "STANDARD" | "LARGE";
@@ -959,6 +959,29 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
     setActiveSession(session);
   }, [session]);
   const [mainTab, setMainTab] = useState<WorkspaceTab>("home");
+  const screenOpacity = useRef(new Animated.Value(0)).current;
+  const screenOffset = useRef(new Animated.Value(8)).current;
+
+  useEffect(() => {
+    screenOpacity.setValue(0);
+    screenOffset.setValue(8);
+    const transition = Animated.parallel([
+      Animated.timing(screenOpacity, {
+        toValue: 1,
+        duration: 190,
+        useNativeDriver: true
+      }),
+      Animated.spring(screenOffset, {
+        toValue: 0,
+        speed: 26,
+        bounciness: 2,
+        useNativeDriver: true
+      })
+    ]);
+    transition.start();
+    return () => transition.stop();
+  }, [mainTab, activeSession.user.role, screenOpacity, screenOffset]);
+
   const [appearance, setAppearance] = useState<UiAppearance>("LIGHT");
   const [textSize, setTextSize] = useState<UiTextSize>("STANDARD");
   const isCustomer = activeSession.user.role === "CUSTOMER";
@@ -2148,6 +2171,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
   return (
     <SafeAreaView style={styles.safeArea}>
       <StatusBar style={appearance === "DARK" ? "light" : "dark"} />
+      <Animated.View style={{ flex: 1, opacity: screenOpacity, transform: [{ translateY: screenOffset }] }}>
       <ScrollView
         style={styles.mainScroll}
         scrollEnabled={!((isCustomer && mainTab === "home") || mapGestureActive)}
@@ -2919,6 +2943,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
           </>
         ) : null}
       </ScrollView>
+      </Animated.View>
       {(activeSession.user.role === "CUSTOMER" || activeSession.user.role === "RIDER") && !(isCustomer && (keyboardVisible || activeLocationField !== null)) ? (
         <BottomNavigation role={activeSession.user.role} activeTab={mainTab} onChange={(nextTab) => {
           setMainTab(nextTab);

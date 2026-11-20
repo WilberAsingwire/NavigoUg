@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - feature/customer-map-responsive-flow
+      - feature/navigo-interaction-polish
     paths:
       - "apps/mobile/**"
       - "packages/shared/**"

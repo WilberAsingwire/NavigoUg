@@ -1,15 +1,17 @@
+import { useEffect, useRef } from "react";
 import {
   ActivityIndicator,
+  Animated,
   Image,
   SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
-  TouchableOpacity,
   View
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import { BRAND_COLORS } from "./brand";
+import { InteractiveTouchable as TouchableOpacity } from "./InteractiveTouchable";
 
 type WelcomeScreenProps = {
   onGetStarted: () => void;
@@ -17,10 +19,32 @@ type WelcomeScreenProps = {
 };
 
 export function SplashScreen() {
+  const entrance = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    const animation = Animated.spring(entrance, {
+      toValue: 1,
+      delay: 100,
+      speed: 16,
+      bounciness: 3,
+      useNativeDriver: true
+    });
+    animation.start();
+    return () => animation.stop();
+  }, [entrance]);
+
   return (
     <SafeAreaView style={splashStyles.safeArea}>
       <StatusBar style="light" />
-      <View style={splashStyles.content}>
+      <Animated.View
+        style={[
+          splashStyles.content,
+          {
+            opacity: entrance,
+            transform: [{ scale: entrance.interpolate({ inputRange: [0, 1], outputRange: [0.96, 1] }) }]
+          }
+        ]}
+      >
         <View style={splashStyles.logoGlow}>
           <Image source={require("./assets/icon.png")} style={splashStyles.logoImage} resizeMode="contain" accessibilityLabel="NAVIGO logo" />
         </View>
@@ -30,16 +54,38 @@ export function SplashScreen() {
           <ActivityIndicator size="small" color={BRAND_COLORS.gold} />
           <Text style={splashStyles.loadingText}>Getting things ready...</Text>
         </View>
-      </View>
+      </Animated.View>
       <Text style={splashStyles.footer}>MUNI UNIVERSITY  •  ARUA, UGANDA</Text>
     </SafeAreaView>
   );
 }
 
 export function WelcomeScreen({ onGetStarted, onCreateAccount }: WelcomeScreenProps) {
+  const pageOpacity = useRef(new Animated.Value(0)).current;
+  const pageOffset = useRef(new Animated.Value(12)).current;
+
+  useEffect(() => {
+    const entrance = Animated.parallel([
+      Animated.timing(pageOpacity, {
+        toValue: 1,
+        duration: 260,
+        useNativeDriver: true
+      }),
+      Animated.spring(pageOffset, {
+        toValue: 0,
+        speed: 24,
+        bounciness: 2,
+        useNativeDriver: true
+      })
+    ]);
+    entrance.start();
+    return () => entrance.stop();
+  }, [pageOpacity, pageOffset]);
+
   return (
     <SafeAreaView style={welcomeStyles.safeArea}>
       <StatusBar style="dark" />
+      <Animated.View style={{ flex: 1, opacity: pageOpacity, transform: [{ translateY: pageOffset }] }}>
       <ScrollView
         contentContainerStyle={welcomeStyles.page}
         showsVerticalScrollIndicator={false}
@@ -140,6 +186,7 @@ export function WelcomeScreen({ onGetStarted, onCreateAccount }: WelcomeScreenPr
           </Text>
         </View>
       </ScrollView>
+      </Animated.View>
     </SafeAreaView>
   );
 }
