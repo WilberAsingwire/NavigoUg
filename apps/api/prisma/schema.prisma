@@ -235,6 +235,9 @@ model RideRequest {
   fareAmountUgx         Int        @map("fare_amount_ugx")
   fareBasis             String     @map("fare_basis") @db.VarChar(50)
   estimatedDistanceKm   Decimal?   @map("estimated_distance_km") @db.Decimal(8, 2)
+  routeCoordinates      Json?      @map("route_coordinates") @db.JsonB
+  estimatedDurationSeconds Int?    @map("estimated_duration_seconds")
+  routingProvider       String?    @map("routing_provider") @db.VarChar(40)
   expiresAt             DateTime?  @map("expires_at")
   acceptedAt            DateTime?  @map("accepted_at")
   startedAt             DateTime?  @map("started_at")

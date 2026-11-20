@@ -380,15 +380,33 @@ describe("Motorcycle ride API", () => {
     const now = new Date();
     mocks.userFindUnique.mockResolvedValue({ isActive: true, riderProfile: { approvalStatus: "APPROVED" } });
     mocks.availabilityFindUnique.mockResolvedValue({ isOnline: true, latitude: 3.02, longitude: 30.91, accuracyMeters: 10, lastSeenAt: now });
+    const savedRoute = [
+      { latitude: 3.0205, longitude: 30.9105 },
+      { latitude: 3.024, longitude: 30.914 },
+      { latitude: 3.03, longitude: 30.92 }
+    ];
     mocks.rideFindMany.mockResolvedValue([
       { id: "farther", pickupLatitude: 3.025, pickupLongitude: 30.915, createdAt: now },
-      { id: "nearest", pickupLatitude: 3.0205, pickupLongitude: 30.9105, createdAt: now },
+      {
+        id: "nearest",
+        pickupLatitude: 3.0205,
+        pickupLongitude: 30.9105,
+        createdAt: now,
+        routeCoordinates: savedRoute,
+        estimatedDurationSeconds: 420,
+        routingProvider: "VALHALLA_MOTORCYCLE"
+      },
       { id: "outside", pickupLatitude: 3.15, pickupLongitude: 30.91, createdAt: now }
     ]);
     const response = await request(app).get("/api/v1/rides/available").set("Authorization", `Bearer ${token}`);
     expect(response.status).toBe(200);
     expect(response.body.data.map((ride: { id: string }) => ride.id)).toEqual(["nearest", "farther"]);
     expect(response.body.data[0].pickupDistanceKm).toBeLessThan(response.body.data[1].pickupDistanceKm);
+    expect(response.body.data[0]).toMatchObject({
+      routeCoordinates: savedRoute,
+      estimatedDurationSeconds: 420,
+      routingProvider: "VALHALLA_MOTORCYCLE"
+    });
   });
 
   it("returns an empty queue when the rider is offline", async () => {
@@ -456,6 +474,16 @@ describe("Motorcycle ride API", () => {
 
   it("books the exact signed quote without requesting a second motorcycle route", async () => {
     mocks.fareRuleFindMany.mockResolvedValue([]);
+    mocks.getMotorcycleRoute.mockResolvedValueOnce({
+      distanceKm: 2.5,
+      durationSeconds: 420,
+      coordinates: [
+        { latitude: 3.02, longitude: 30.91 },
+        { latitude: 3.025, longitude: 30.915 },
+        { latitude: 3.03, longitude: 30.92 }
+      ],
+      provider: "VALHALLA_MOTORCYCLE"
+    });
     const customerToken = await accessToken("CUSTOMER");
     const quoteResponse = await request(app)
       .post("/api/v1/rides/fare-quote")
@@ -488,7 +516,14 @@ describe("Motorcycle ride API", () => {
     expect(mocks.rideCreate).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({
         fareAmountUgx: 1300,
-        estimatedDistanceKm: 2.5
+        estimatedDistanceKm: 2.5,
+        routeCoordinates: [
+          { latitude: 3.02, longitude: 30.91 },
+          { latitude: 3.025, longitude: 30.915 },
+          { latitude: 3.03, longitude: 30.92 }
+        ],
+        estimatedDurationSeconds: 420,
+        routingProvider: "VALHALLA_MOTORCYCLE"
       })
     }));
   });
