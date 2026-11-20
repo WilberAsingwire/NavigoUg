@@ -27,11 +27,47 @@ const ARUA_BOUNDS = {
   minLatitude: 2.75,
   maxLatitude: 3.30
 } as const;
-const ROUTE_TIMEOUT_MS = 12_000;
+const ROUTE_TIMEOUT_MS = 18_000;
 const ROUTE_CACHE_TTL_MS = 5 * 60 * 1000;
 const ROUTE_CACHE_MAX_ENTRIES = 500;
+const VALHALLA_MIN_REQUEST_INTERVAL_MS = 1_100;
+const VALHALLA_MAX_ATTEMPTS = 2;
 
 const routeCache = new Map<string, { expiresAt: number; route: MotorcycleRoute }>();
+const inFlightRouteRequests = new Map<string, Promise<MotorcycleRoute>>();
+
+let valhallaQueue: Promise<void> = Promise.resolve();
+let valhallaNextRequestAt = 0;
+
+function wait(milliseconds: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+/**
+ * The public FOSSGIS demo service is shared. Serialize requests from this
+ * Render instance and keep at least 1.1 seconds between requests, as required
+ * by the provider's fair-use limit. A single in-flight queue also prevents
+ * several customers triggering simultaneous requests from one server.
+ */
+function scheduleValhallaRequest<T>(operation: () => Promise<T>): Promise<T> {
+  const scheduled = valhallaQueue.then(async () => {
+    const remaining = valhallaNextRequestAt - Date.now();
+    if (remaining > 0) await wait(remaining);
+    valhallaNextRequestAt = Date.now() + VALHALLA_MIN_REQUEST_INTERVAL_MS;
+    return operation();
+  });
+  valhallaQueue = scheduled.then(() => undefined, () => undefined);
+  return scheduled;
+}
+
+function retryAfterMilliseconds(response: Response): number {
+  const value = response.headers.get("retry-after");
+  if (!value) return 0;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1000;
+  const date = Date.parse(value);
+  return Number.isFinite(date) ? Math.max(0, date - Date.now()) : 0;
+}
 
 function validateAruaCoordinate(point: RouteCoordinate, label: string): void {
   if (
@@ -210,103 +246,175 @@ async function getValhallaMotorcycleRoute(
   destination: RouteCoordinate
 ): Promise<MotorcycleRoute> {
   const baseUrl = (process.env.VALHALLA_BASE_URL || "https://valhalla1.openstreetmap.de")
-    .replace(/\/+$/, "");
+    .replace(/\\/+$/, "");
   const clientId = process.env.VALHALLA_CLIENT_ID || "navigo-arua-pilot";
+  const requestBody = {
+    locations: [
+      { lat: origin.latitude, lon: origin.longitude, type: "break" },
+      { lat: destination.latitude, lon: destination.longitude, type: "break" }
+    ],
+    costing: "motorcycle",
+    costing_options: {
+      motorcycle: {
+        use_highways: 0.5,
+        use_trails: 0.1
+      }
+    },
+    units: "km",
+    language: "en"
+  };
 
-  let response: Response;
-  try {
-    response = await fetch(`${baseUrl}/route`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json",
-        "X-Client-Id": clientId
-      },
-      body: JSON.stringify({
-        locations: [
-          { lat: origin.latitude, lon: origin.longitude, type: "break" },
-          { lat: destination.latitude, lon: destination.longitude, type: "break" }
-        ],
-        costing: "motorcycle",
-        costing_options: {
-          motorcycle: {
-            use_highways: 0.5,
-            use_trails: 0.1
-          }
-        },
-        units: "km",
-        language: "en"
-      }),
-      signal: AbortSignal.timeout(ROUTE_TIMEOUT_MS)
+  return scheduleValhallaRequest(async () => {
+    let lastNetworkError: unknown;
+
+    for (let attempt = 1; attempt <= VALHALLA_MAX_ATTEMPTS; attempt += 1) {
+      let response: Response;
+      try {
+        response = await fetch(`${baseUrl}/route`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Accept: "application/json",
+            "X-Client-Id": clientId,
+            "User-Agent": "NAVIGO/1.0 (+https://github.com/WilberAsingwire/NavigoUg)"
+          },
+          body: JSON.stringify(requestBody),
+          signal: AbortSignal.timeout(ROUTE_TIMEOUT_MS)
+        });
+      } catch (error) {
+        lastNetworkError = error;
+        console.warn("[NAVIGO routing] Valhalla request failed", {
+          attempt,
+          maxAttempts: VALHALLA_MAX_ATTEMPTS,
+          reason: error instanceof Error ? error.name : "unknown"
+        });
+        if (attempt < VALHALLA_MAX_ATTEMPTS) {
+          await wait(VALHALLA_MIN_REQUEST_INTERVAL_MS);
+          continue;
+        }
+        throw new MotorcycleRoutingError(
+          503,
+          "ROUTE_PROVIDER_UNAVAILABLE",
+          "NAVIGO's motorcycle route service did not respond. Please try again in a moment."
+        );
+      }
+
+      if (response.status === 429 || response.status >= 500 || response.status === 408) {
+        const retryAfter = retryAfterMilliseconds(response);
+        console.warn("[NAVIGO routing] Valhalla temporarily rejected a route request", {
+          status: response.status,
+          attempt,
+          maxAttempts: VALHALLA_MAX_ATTEMPTS,
+          retryAfterMs: retryAfter
+        });
+        if (attempt < VALHALLA_MAX_ATTEMPTS) {
+          await wait(Math.max(VALHALLA_MIN_REQUEST_INTERVAL_MS, retryAfter));
+          continue;
+        }
+        throw new MotorcycleRoutingError(
+          503,
+          response.status === 429 ? "ROUTE_PROVIDER_RATE_LIMITED" : "ROUTE_PROVIDER_UNAVAILABLE",
+          response.status === 429
+            ? "The route service is busy. Please wait a moment and tap Show road route & fare again."
+            : "The motorcycle route service is temporarily unavailable. Please try again in a moment."
+        );
+      }
+
+      if (!response.ok) {
+        const details = await response.text().catch(() => "");
+        console.error("[NAVIGO routing] Valhalla rejected a route request", {
+          status: response.status,
+          details: details.slice(0, 240)
+        });
+        throw new MotorcycleRoutingError(
+          422,
+          "NO_MOTORCYCLE_ROUTE",
+          "No suitable motorcycle road route was found between these locations. Try selecting nearby mapped places."
+        );
+      }
+
+      let payload: {
+        trip?: {
+          status?: number;
+          status_message?: string;
+          summary?: { length?: number; time?: number };
+          legs?: Array<{ shape?: string }>;
+        };
+      };
+      try {
+        payload = await response.json() as typeof payload;
+      } catch {
+        console.error("[NAVIGO routing] Valhalla returned invalid JSON.");
+        throw new MotorcycleRoutingError(
+          503,
+          "INVALID_ROUTE_RESPONSE",
+          "The route service returned an incomplete response. Please try again."
+        );
+      }
+
+      const trip = payload.trip;
+      const distanceKm = Number(trip?.summary?.length);
+      const durationSeconds = Number(trip?.summary?.time);
+      if (
+        !trip ||
+        (trip.status !== undefined && trip.status !== 0) ||
+        !Number.isFinite(distanceKm) ||
+        !Number.isFinite(durationSeconds) ||
+        !Array.isArray(trip.legs)
+      ) {
+        const providerMessage = trip?.status_message?.trim();
+        console.warn("[NAVIGO routing] Valhalla could not find a motorcycle route", {
+          status: trip?.status,
+          statusMessage: providerMessage?.slice(0, 180)
+        });
+        throw new MotorcycleRoutingError(
+          422,
+          "NO_MOTORCYCLE_ROUTE",
+          providerMessage
+            ? `No motorcycle road route was found: ${providerMessage.slice(0, 150)}`
+            : "No suitable motorcycle road route was found between these locations. Try choosing nearby mapped places."
+        );
+      }
+
+      let coordinates: RouteCoordinate[];
+      try {
+        coordinates = trip.legs.flatMap((leg) =>
+          typeof leg.shape === "string" ? decodePolyline(leg.shape, 6) : []
+        );
+      } catch {
+        console.error("[NAVIGO routing] Valhalla returned invalid route geometry.");
+        throw new MotorcycleRoutingError(
+          503,
+          "INVALID_ROUTE_GEOMETRY",
+          "The route service returned invalid road geometry. Please try again."
+        );
+      }
+
+      if (coordinates.length < 2) {
+        throw new MotorcycleRoutingError(
+          422,
+          "NO_MOTORCYCLE_ROUTE",
+          "No suitable motorcycle road route was found between these locations. Try choosing nearby mapped places."
+        );
+      }
+
+      return {
+        distanceKm,
+        durationSeconds,
+        coordinates: simplifyCoordinates(coordinates),
+        provider: "VALHALLA_MOTORCYCLE"
+      };
+    }
+
+    console.error("[NAVIGO routing] Valhalla retries exhausted.", {
+      reason: lastNetworkError instanceof Error ? lastNetworkError.name : "unknown"
     });
-  } catch {
     throw new MotorcycleRoutingError(
       503,
       "ROUTE_PROVIDER_UNAVAILABLE",
-      "The motorcycle road-routing service could not be reached. Please try again."
+      "NAVIGO's motorcycle route service is temporarily unavailable. Please try again."
     );
-  }
-
-  if (!response.ok) {
-    throw new MotorcycleRoutingError(
-      503,
-      "ROUTE_PROVIDER_UNAVAILABLE",
-      "The motorcycle road route is temporarily unavailable. Please try again."
-    );
-  }
-
-  const payload = await response.json() as {
-    trip?: {
-      status?: number;
-      status_message?: string;
-      summary?: { length?: number; time?: number };
-      legs?: Array<{ shape?: string }>;
-    };
-  };
-  const trip = payload.trip;
-  const distanceKm = Number(trip?.summary?.length);
-  const durationSeconds = Number(trip?.summary?.time);
-  if (
-    !trip ||
-    (trip.status !== undefined && trip.status !== 0) ||
-    !Number.isFinite(distanceKm) ||
-    !Number.isFinite(durationSeconds) ||
-    !Array.isArray(trip.legs)
-  ) {
-    throw new MotorcycleRoutingError(
-      422,
-      "NO_MOTORCYCLE_ROUTE",
-      "No suitable motorcycle road route was found between these locations. Try choosing nearby mapped points."
-    );
-  }
-
-  let coordinates: RouteCoordinate[];
-  try {
-    coordinates = trip.legs.flatMap((leg) =>
-      typeof leg.shape === "string" ? decodePolyline(leg.shape, 6) : []
-    );
-  } catch {
-    throw new MotorcycleRoutingError(
-      503,
-      "INVALID_ROUTE_GEOMETRY",
-      "The road-routing service returned an invalid route. Please try again."
-    );
-  }
-
-  if (coordinates.length < 2) {
-    throw new MotorcycleRoutingError(
-      422,
-      "NO_MOTORCYCLE_ROUTE",
-      "No suitable motorcycle road route was found between these locations. Try choosing nearby mapped points."
-    );
-  }
-
-  return {
-    distanceKm,
-    durationSeconds,
-    coordinates: simplifyCoordinates(coordinates),
-    provider: "VALHALLA_MOTORCYCLE"
-  };
+  });
 }
 
 /**
@@ -328,26 +436,49 @@ export async function getMotorcycleRoute(
   if (cached && cached.expiresAt > Date.now()) return cached.route;
   if (cached) routeCache.delete(key);
 
-  const googleApiKey = process.env.GOOGLE_MAPS_API_KEY?.trim();
-  const route = googleApiKey
-    ? await getGoogleTwoWheelerRoute(origin, destination, googleApiKey)
-    : await getValhallaMotorcycleRoute(origin, destination);
+  const inFlight = inFlightRouteRequests.get(key);
+  if (inFlight) return inFlight;
 
-  if (!Number.isFinite(route.distanceKm) || route.distanceKm <= 0 || route.coordinates.length < 2) {
-    throw new MotorcycleRoutingError(
-      422,
-      "NO_MOTORCYCLE_ROUTE",
-      "No suitable motorcycle road route was found between these locations."
-    );
-  }
+  const pendingRoute = (async () => {
+    const googleApiKey = process.env.GOOGLE_MAPS_API_KEY?.trim();
+    let route: MotorcycleRoute;
 
-  if (routeCache.size >= ROUTE_CACHE_MAX_ENTRIES) {
-    const oldestKey = routeCache.keys().next().value;
-    if (oldestKey) routeCache.delete(oldestKey);
+    if (googleApiKey) {
+      try {
+        route = await getGoogleTwoWheelerRoute(origin, destination, googleApiKey);
+      } catch (googleError) {
+        console.warn("[NAVIGO routing] Google motorcycle routing failed; trying OpenStreetMap Valhalla.", {
+          reason: googleError instanceof MotorcycleRoutingError ? googleError.code : "unknown"
+        });
+        route = await getValhallaMotorcycleRoute(origin, destination);
+      }
+    } else {
+      route = await getValhallaMotorcycleRoute(origin, destination);
+    }
+
+    if (!Number.isFinite(route.distanceKm) || route.distanceKm <= 0 || route.coordinates.length < 2) {
+      throw new MotorcycleRoutingError(
+        422,
+        "NO_MOTORCYCLE_ROUTE",
+        "No suitable motorcycle road route was found between these locations."
+      );
+    }
+
+    if (routeCache.size >= ROUTE_CACHE_MAX_ENTRIES) {
+      const oldestKey = routeCache.keys().next().value;
+      if (oldestKey) routeCache.delete(oldestKey);
+    }
+    routeCache.set(key, {
+      expiresAt: Date.now() + ROUTE_CACHE_TTL_MS,
+      route
+    });
+    return route;
+  })();
+
+  inFlightRouteRequests.set(key, pendingRoute);
+  try {
+    return await pendingRoute;
+  } finally {
+    inFlightRouteRequests.delete(key);
   }
-  routeCache.set(key, {
-    expiresAt: Date.now() + ROUTE_CACHE_TTL_MS,
-    route
-  });
-  return route;
 }
