@@ -74,18 +74,6 @@ describe("Arua final-place geocoding", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
-  it("returns a clear temporary-busy error when both public providers rate-limit NAVIGO", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => new Response("rate limited", {
-      status: 429,
-      headers: { "Retry-After": "0" }
-    })) as typeof fetch);
-
-    await expect(geocodeAruaPlace("Arua geocoder rate limit test")).rejects.toMatchObject({
-      statusCode: 503,
-      code: "LOCATION_PROVIDER_BUSY"
-    });
-  });
-
   it("rejects results outside the Arua pilot boundary", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = new URL(String(input));
@@ -111,5 +99,26 @@ describe("Arua final-place geocoding", () => {
       statusCode: 404,
       code: "LOCATION_NOT_FOUND"
     });
+  });
+
+  it("backs off Nominatim after a rate-limit response instead of calling it repeatedly", async () => {
+    const fetchMock = vi.fn(async () => new Response("rate limited", {
+      status: 429,
+      headers: { "Retry-After": "0" }
+    }));
+    vi.stubGlobal("fetch", fetchMock as typeof fetch);
+
+    await expect(geocodeAruaPlace("Arua geocoder rate limit test")).rejects.toMatchObject({
+      statusCode: 503,
+      code: "LOCATION_PROVIDER_BUSY"
+    });
+    await expect(geocodeAruaPlace("Second lookup during provider cooldown")).rejects.toMatchObject({
+      statusCode: 503,
+      code: "LOCATION_PROVIDER_BUSY"
+    });
+
+    // The first attempt contacts Photon and Nominatim. During cooldown only
+    // Photon is contacted; Nominatim is not repeatedly queried while blocked.
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 });
