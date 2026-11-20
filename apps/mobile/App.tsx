@@ -235,6 +235,13 @@ export default function App() {
   useEffect(() => {
     let mounted = true;
 
+    // Do not leave the app on the opening screen forever if Android secure storage stalls.
+    const restoreTimeout = setTimeout(() => {
+      if (!mounted) return;
+      setError("Your previous session could not be restored. Please sign in again.");
+      setRestoring(false);
+    }, 10000);
+
     SecureStore.getItemAsync(SESSION_KEY)
       .then((stored) => {
         if (!mounted || !stored) return;
@@ -253,19 +260,21 @@ export default function App() {
         if (mounted) setError("Unable to restore your saved session.");
       })
       .finally(() => {
+        clearTimeout(restoreTimeout);
         if (mounted) setRestoring(false);
       });
 
     return () => {
       mounted = false;
+      clearTimeout(restoreTimeout);
     };
   }, []);
 
   useEffect(() => {
-    if (restoring) return;
+    // Keep the branded intro visible briefly, without depending on storage restore.
     const timer = setTimeout(() => setIntroComplete(true), 2600);
     return () => clearTimeout(timer);
-  }, [restoring]);
+  }, []);
 
   function explainPasswordRecovery() {
     Alert.alert(
@@ -572,7 +581,7 @@ export default function App() {
 function BrandSplash() {
   return (
     <View style={styles.splashScreen}>
-      <StatusBar hidden />
+      <StatusBar style="dark" backgroundColor="#B9D8FA" />
       <Svg
         width="100%"
         height="100%"
@@ -591,6 +600,7 @@ function BrandSplash() {
         <Circle cx="318" cy="132" r="86" fill="#FFFFFF" opacity="0.14" />
         <Circle cx="60" cy="260" r="60" fill="#FFFFFF" opacity="0.12" />
 
+        <G transform="translate(0 60)">
         <Path
           d="M0 608 L0 565 L18 565 L18 535 L36 535 L36 556 L51 556 L51 505 L72 505 L72 559 L86 559 L86 480 L106 480 L106 558 L123 558 L123 524 L143 524 L143 566 L160 566 L160 506 L183 506 L183 564 L201 564 L201 462 L220 462 L220 562 L238 562 L238 526 L258 526 L258 565 L277 565 L277 498 L300 498 L300 559 L316 559 L316 525 L337 525 L337 564 L352 564 L352 512 L370 512 L370 563 L390 563 L390 632 Z"
           fill="#76A9E8"
@@ -623,6 +633,7 @@ function BrandSplash() {
         <Path d="M188 625 L164 652 L191 662" fill="none" stroke="#08275C" strokeWidth="12" strokeLinecap="round" strokeLinejoin="round" />
         <Path d="M181 592 L205 601" fill="none" stroke="#08275C" strokeWidth="10" strokeLinecap="round" />
         <Path d="M190 557 L202 561 L205 574 L190 577 Z" fill="#08275C" />
+        </G>
         <Path d="M0 812 C105 784 173 813 248 800 C312 788 358 770 390 760 L390 844 L0 844 Z" fill="#062657" />
       </Svg>
 
@@ -701,9 +712,9 @@ function Detail({ label, value }: { label: string; value: string }) {
 
 const styles = StyleSheet.create({
   splashScreen: { flex: 1, backgroundColor: "#DCEEFF", overflow: "hidden" },
-  splashBrand: { position: "absolute", top: "10%", left: 0, right: 0, alignItems: "center" },
-  splashLogoImage: { width: 112, height: 112, borderRadius: 56, marginBottom: 5 },
-  splashWordmark: { color: "#0B2E6B", fontSize: 35, fontWeight: "900", fontStyle: "italic", letterSpacing: 1.2 },
+  splashBrand: { position: "absolute", top: "16%", left: 0, right: 0, alignItems: "center" },
+  splashLogoImage: { width: 140, height: 140, borderRadius: 70, marginBottom: 0 },
+  splashWordmark: { color: "#0B2E6B", fontSize: 35, fontWeight: "900", fontStyle: "italic", letterSpacing: 1.2, marginTop: 85 },
   splashTagline: { color: "#0B2E6B", fontSize: 14, fontWeight: "700", fontStyle: "italic", marginTop: 1 },
   brandLogo: { width: 58, height: 58, borderRadius: 16, marginBottom: 7 },
   safeArea: { flex: 1, backgroundColor: "#F3F6FA" },
