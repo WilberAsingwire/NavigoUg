@@ -1,0 +1,66 @@
+name: NAVIGO preview APK
+
+on:
+  push:
+    branches:
+      - feature/customer-map-responsive-flow
+    paths:
+      - "apps/mobile/package.json"
+      - "apps/mobile/app.config.ts"
+      - "apps/mobile/eas.json"
+      - ".github/workflows/navigo-preview-apk.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: navigou-preview-apk
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-preview-apk:
+    name: Build the NAVIGO Android preview
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check whether Expo publishing is configured
+        id: expo-token
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          if [ -n "$EXPO_TOKEN" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Explain how to enable cloud builds
+        if: steps.expo-token.outputs.configured != 'true'
+        run: |
+          echo "::notice::Add the EXPO_TOKEN repository secret in GitHub Settings > Secrets and variables > Actions to enable cloud APK builds."
+
+      - name: Check out repository
+        if: steps.expo-token.outputs.configured == 'true'
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        if: steps.expo-token.outputs.configured == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Set up EAS CLI
+        if: steps.expo-token.outputs.configured == 'true'
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Install workspace dependencies
+        if: steps.expo-token.outputs.configured == 'true'
+        run: npm install
+
+      - name: Build Android preview APK
+        if: steps.expo-token.outputs.configured == 'true'
+        working-directory: apps/mobile
+        run: eas build --platform android --profile preview --non-interactive --wait

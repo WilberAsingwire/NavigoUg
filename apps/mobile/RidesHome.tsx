@@ -1,29 +1,463 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { forwardRef, useCallback, useEffect, useRef, useState, type ComponentProps, type ComponentRef } from "react";
 import * as SecureStore from "expo-secure-store";
 import * as Location from "expo-location";
 import {
   AppState,
   ActivityIndicator,
+  Keyboard,
   Animated,
   Dimensions,
+  Image,
   Linking,
   PanResponder,
+  Platform,
   SafeAreaView,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
-  TouchableOpacity,
   View
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
-import MapView, { Marker, Polyline } from "react-native-maps";
+import NativeMapView, { Marker, Polyline } from "react-native-maps";
+import { BRAND_COLORS } from "./brand";
+import { InteractiveTouchable as TouchableOpacity } from "./InteractiveTouchable";
 
 type UiAppearance = "LIGHT" | "DARK";
 type UiTextSize = "COMPACT" | "STANDARD" | "LARGE";
 type UiPreferences = { appearance: UiAppearance; textSize: UiTextSize };
 const UI_PREFERENCES_KEY = "navigo.uiPreferences";
 
+// Android uses an OTA-safe raster OpenStreetMap renderer. This avoids
+// mounting the native Google Maps view that is not configured in the installed APK.
+type OsmRegion = { latitude: number; longitude: number; latitudeDelta: number; longitudeDelta: number };
+type NativeRegionChangeHandler = NonNullable<ComponentProps<typeof NativeMapView>["onRegionChangeComplete"]>;
+type OsmMarker = { coordinate?: RouteCoordinate | null; title?: string; pinColor?: string };
+type SafeMapViewProps = Omit<ComponentProps<typeof NativeMapView>, "region" | "initialRegion" | "onRegionChangeComplete"> & {
+  region?: OsmRegion;
+  initialRegion?: OsmRegion;
+  onRegionChangeComplete?: NativeRegionChangeHandler;
+  routeCoordinates?: RouteCoordinate[] | null;
+  markers?: OsmMarker[];
+  onInteractionStart?: () => void;
+  onInteractionEnd?: () => void;
+};
+
+const OSM_TILE_SIZE = 256;
+const OSM_TILE_URL = "https://tile.openstreetmap.org";
+const OSM_TILE_HEADERS = {
+  "User-Agent": "NAVIGO/1.0 (+https://github.com/WilberAsingwire/NavigoUg)"
+};
+const DEFAULT_OSM_REGION: OsmRegion = {
+  latitude: 3.02,
+  longitude: 30.92,
+  latitudeDelta: 0.035,
+  longitudeDelta: 0.035
+};
+
+function osmCoordinateToPixel(point: RouteCoordinate, zoom: number) {
+  const worldSize = OSM_TILE_SIZE * 2 ** zoom;
+  const latitude = Math.max(-85.05112878, Math.min(85.05112878, point.latitude));
+  const sinLatitude = Math.sin((latitude * Math.PI) / 180);
+  return {
+    x: ((point.longitude + 180) / 360) * worldSize,
+    y: (0.5 - Math.log((1 + sinLatitude) / (1 - sinLatitude)) / (4 * Math.PI)) * worldSize
+  };
+}
+
+function osmPixelToCoordinate(point: { x: number; y: number }, zoom: number): RouteCoordinate {
+  const worldSize = OSM_TILE_SIZE * 2 ** zoom;
+  const longitude = (point.x / worldSize) * 360 - 180;
+  const mercatorY = Math.PI - (2 * Math.PI * point.y) / worldSize;
+  const latitude = (180 / Math.PI) * Math.atan(Math.sinh(mercatorY));
+  return { latitude, longitude };
+}
+
+function osmZoomForRegion(region: OsmRegion, width: number) {
+  const safeWidth = Math.max(width, 320);
+  return Math.max(3, Math.min(19, Math.round(Math.log2((360 * safeWidth) / (OSM_TILE_SIZE * Math.max(region.longitudeDelta, 0.00001))))));
+}
+
+function OpenStreetMapRasterView({
+  style,
+  region,
+  initialRegion,
+  routeCoordinates,
+  markers,
+  onRegionChangeComplete,
+  onMapReady,
+  onInteractionStart,
+  onInteractionEnd,
+  scrollEnabled,
+  zoomEnabled
+}: {
+  style?: ComponentProps<typeof NativeMapView>["style"];
+  region?: OsmRegion;
+  initialRegion?: OsmRegion;
+  routeCoordinates?: RouteCoordinate[] | null;
+  markers?: OsmMarker[];
+  onRegionChangeComplete?: NativeRegionChangeHandler;
+  onMapReady?: () => void;
+  onInteractionStart?: () => void;
+  onInteractionEnd?: () => void;
+  scrollEnabled?: boolean;
+  zoomEnabled?: boolean;
+}) {
+  const [layout, setLayout] = useState({ width: 0, height: 0 });
+  const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
+  const [localRegion, setLocalRegion] = useState<OsmRegion>(initialRegion ?? DEFAULT_OSM_REGION);
+  const controlledRegionRef = useRef(region !== undefined);
+  controlledRegionRef.current = region !== undefined;
+  const currentRegion = region ?? localRegion;
+  const regionRef = useRef(currentRegion);
+  regionRef.current = currentRegion;
+  const layoutRef = useRef(layout);
+  layoutRef.current = layout;
+  const onRegionChangeRef = useRef<NativeRegionChangeHandler | undefined>(onRegionChangeComplete);
+  onRegionChangeRef.current = onRegionChangeComplete;
+  const applyRegionChange = (nextRegion: OsmRegion) => {
+    if (!controlledRegionRef.current) setLocalRegion(nextRegion);
+    onRegionChangeRef.current?.(nextRegion, { isGesture: true });
+  };
+  const zoom = osmZoomForRegion(currentRegion, layout.width || 360);
+  const zoomRef = useRef(zoom);
+  zoomRef.current = zoom;
+  const pinchStartRef = useRef<{ distance: number; zoom: number; region: OsmRegion } | null>(null);
+  const pinchLastZoomRef = useRef<number | null>(null);
+  const pinchWasUsedRef = useRef(false);
+  const readyRef = useRef(false);
+  const centerPixel = osmCoordinateToPixel(currentRegion, zoom);
+  const worldTileCount = 2 ** zoom;
+
+  const startPinch = (touches: ReadonlyArray<{ pageX: number; pageY: number }>) => {
+    const first = touches[0];
+    const second = touches[1];
+    if (!first || !second) return;
+    const distance = Math.hypot(second.pageX - first.pageX, second.pageY - first.pageY);
+    if (!Number.isFinite(distance) || distance < 8) return;
+    pinchStartRef.current = {
+      distance,
+      zoom: zoomRef.current,
+      region: regionRef.current
+    };
+    pinchLastZoomRef.current = zoomRef.current;
+    pinchWasUsedRef.current = true;
+  };
+
+  const panResponder = useRef(PanResponder.create({
+    onStartShouldSetPanResponder: () => false,
+    onMoveShouldSetPanResponderCapture: (event, gesture) =>
+      scrollEnabled !== false && (
+        event.nativeEvent.touches.length >= 2 ||
+        Math.abs(gesture.dx) > 7 ||
+        Math.abs(gesture.dy) > 7
+      ),
+    onMoveShouldSetPanResponder: (event, gesture) =>
+      scrollEnabled !== false && (
+        event.nativeEvent.touches.length >= 2 ||
+        Math.abs(gesture.dx) > 7 ||
+        Math.abs(gesture.dy) > 7
+      ),
+    onPanResponderGrant: (event) => {
+      setDragOffset({ x: 0, y: 0 });
+      pinchStartRef.current = null;
+      pinchLastZoomRef.current = null;
+      pinchWasUsedRef.current = false;
+      if (event.nativeEvent.touches.length >= 2) {
+        startPinch(event.nativeEvent.touches);
+      }
+    },
+    onPanResponderMove: (event, gesture) => {
+      const touches = event.nativeEvent.touches;
+      if (touches.length >= 2) {
+        // Two fingers control zoom. The integer tile zoom changes as the
+        // pinch crosses each level, and the map stays centred on the route.
+        setDragOffset({ x: 0, y: 0 });
+        if (!pinchStartRef.current) startPinch(touches);
+        const pinch = pinchStartRef.current;
+        const first = touches[0];
+        const second = touches[1];
+        if (!pinch || !first || !second) return;
+        const distance = Math.hypot(second.pageX - first.pageX, second.pageY - first.pageY);
+        if (!Number.isFinite(distance) || distance < 8) return;
+        const scale = distance / pinch.distance;
+        const targetZoom = Math.max(3, Math.min(19, Math.round(pinch.zoom + Math.log2(scale))));
+        if (targetZoom !== pinchLastZoomRef.current) {
+          const factor = 2 ** (pinch.zoom - targetZoom);
+          applyRegionChange({
+            ...pinch.region,
+            latitudeDelta: Math.max(0.001, pinch.region.latitudeDelta * factor),
+            longitudeDelta: Math.max(0.001, pinch.region.longitudeDelta * factor)
+          });
+          pinchLastZoomRef.current = targetZoom;
+        }
+        return;
+      }
+
+      if (pinchWasUsedRef.current) {
+        setDragOffset({ x: 0, y: 0 });
+        return;
+      }
+
+      // One finger moves the visible tile layer with the finger immediately.
+      setDragOffset({ x: gesture.dx, y: gesture.dy });
+    },
+    onPanResponderTerminationRequest: () => false,
+    onPanResponderRelease: (_event, gesture) => {
+      const size = layoutRef.current;
+      const moved = Math.abs(gesture.dx) >= 3 || Math.abs(gesture.dy) >= 3;
+      if (!pinchWasUsedRef.current && size.width > 0 && size.height > 0 && moved) {
+        const activeZoom = zoomRef.current;
+        const oldCenter = osmCoordinateToPixel(regionRef.current, activeZoom);
+        const nextCenter = {
+          x: oldCenter.x - gesture.dx,
+          y: oldCenter.y - gesture.dy
+        };
+        const nextCoordinate = osmPixelToCoordinate(nextCenter, activeZoom);
+        const north = osmPixelToCoordinate({ x: nextCenter.x, y: nextCenter.y - size.height / 2 }, activeZoom);
+        const south = osmPixelToCoordinate({ x: nextCenter.x, y: nextCenter.y + size.height / 2 }, activeZoom);
+        applyRegionChange({
+          latitude: nextCoordinate.latitude,
+          longitude: nextCoordinate.longitude,
+          latitudeDelta: Math.max(0.001, Math.abs(north.latitude - south.latitude)),
+          longitudeDelta: Math.max(0.001, (size.width / (OSM_TILE_SIZE * 2 ** activeZoom)) * 360)
+        });
+      }
+      pinchStartRef.current = null;
+      pinchLastZoomRef.current = null;
+      pinchWasUsedRef.current = false;
+      setDragOffset({ x: 0, y: 0 });
+    },
+    onPanResponderTerminate: () => {
+      pinchStartRef.current = null;
+      pinchLastZoomRef.current = null;
+      pinchWasUsedRef.current = false;
+      setDragOffset({ x: 0, y: 0 });
+    }
+  })).current;
+
+  const tiles: Array<{ key: string; uri: string; left: number; top: number }> = [];
+  if (layout.width > 0 && layout.height > 0) {
+    // One tile of short-range look-ahead keeps the viewport covered while a
+    // user pans, without prefetching areas outside normal map interaction.
+    const minTileX = Math.floor((centerPixel.x - layout.width / 2) / OSM_TILE_SIZE) - 1;
+    const maxTileX = Math.floor((centerPixel.x + layout.width / 2) / OSM_TILE_SIZE) + 1;
+    const minTileY = Math.floor((centerPixel.y - layout.height / 2) / OSM_TILE_SIZE) - 1;
+    const maxTileY = Math.floor((centerPixel.y + layout.height / 2) / OSM_TILE_SIZE) + 1;
+    for (let tileY = minTileY; tileY <= maxTileY; tileY += 1) {
+      if (tileY < 0 || tileY >= worldTileCount) continue;
+      for (let unwrappedTileX = minTileX; unwrappedTileX <= maxTileX; unwrappedTileX += 1) {
+        const tileX = ((unwrappedTileX % worldTileCount) + worldTileCount) % worldTileCount;
+        tiles.push({
+          key: zoom + "/" + tileX + "/" + tileY,
+          uri: OSM_TILE_URL + "/" + zoom + "/" + tileX + "/" + tileY + ".png",
+          left: unwrappedTileX * OSM_TILE_SIZE - centerPixel.x + layout.width / 2,
+          top: tileY * OSM_TILE_SIZE - centerPixel.y + layout.height / 2
+        });
+      }
+    }
+  }
+
+  const toScreenPoint = (coordinate: RouteCoordinate) => {
+    const pixel = osmCoordinateToPixel(coordinate, zoom);
+    return {
+      x: pixel.x - centerPixel.x + layout.width / 2,
+      y: pixel.y - centerPixel.y + layout.height / 2
+    };
+  };
+
+  const routePoints = routeCoordinates?.length
+    ? routeCoordinates.filter((_point, index) => {
+        const stride = Math.max(1, Math.ceil(routeCoordinates.length / 120));
+        return index % stride === 0 || index === routeCoordinates.length - 1;
+      }).map(toScreenPoint)
+    : [];
+  const validMarkers = (markers ?? []).filter(
+    (marker): marker is OsmMarker & { coordinate: RouteCoordinate } => Boolean(marker.coordinate)
+  );
+
+  const changeZoom = (amount: number) => {
+    const nextZoom = Math.max(3, Math.min(19, zoom + amount));
+    if (nextZoom === zoom) return;
+    const factor = 2 ** (zoom - nextZoom);
+    applyRegionChange({
+      ...currentRegion,
+      latitudeDelta: Math.max(0.001, currentRegion.latitudeDelta * factor),
+      longitudeDelta: Math.max(0.001, currentRegion.longitudeDelta * factor)
+    });
+  };
+
+  return (
+    <View
+      style={[style, { overflow: "hidden", backgroundColor: "#E8F0F4" }]}
+      onLayout={(event) => {
+        const next = {
+          width: event.nativeEvent.layout.width,
+          height: event.nativeEvent.layout.height
+        };
+        setLayout((previous) =>
+          previous.width === next.width && previous.height === next.height ? previous : next
+        );
+        if (!readyRef.current) {
+          readyRef.current = true;
+          onMapReady?.();
+        }
+      }}
+      onTouchStart={onInteractionStart}
+      onTouchEnd={(event) => {
+        if (event.nativeEvent.touches.length === 0) onInteractionEnd?.();
+      }}
+      onTouchCancel={onInteractionEnd}
+      {...panResponder.panHandlers}
+    >
+      <View
+        pointerEvents="none"
+        style={{
+          position: "absolute",
+          left: 0,
+          right: 0,
+          top: 0,
+          bottom: 0,
+          transform: [{ translateX: dragOffset.x }, { translateY: dragOffset.y }]
+        }}
+      >
+      {tiles.map((tile) => (
+        <Image
+          key={tile.key}
+          source={{ uri: tile.uri, headers: OSM_TILE_HEADERS }}
+          resizeMode="stretch"
+          fadeDuration={0}
+          style={{
+            position: "absolute",
+            left: tile.left,
+            top: tile.top,
+            width: OSM_TILE_SIZE,
+            height: OSM_TILE_SIZE
+          }}
+        />
+      ))}
+      {routePoints.slice(1).map((point, index) => {
+        const previous = routePoints[index];
+        if (!previous) return null;
+        const dx = point.x - previous.x;
+        const dy = point.y - previous.y;
+        const length = Math.sqrt(dx * dx + dy * dy);
+        if (!Number.isFinite(length) || length < 1) return null;
+        return (
+          <View
+            key={"route-" + index}
+            pointerEvents="none"
+            style={{
+              position: "absolute",
+              left: (previous.x + point.x - length) / 2,
+              top: (previous.y + point.y) / 2 - 2.5,
+              width: length,
+              height: 5,
+              borderRadius: 3,
+              backgroundColor: BRAND_COLORS.orange,
+              transform: [{ rotate: Math.atan2(dy, dx) + "rad" }]
+            }}
+          />
+        );
+      })}
+      {validMarkers.map((marker, index) => {
+        const point = toScreenPoint(marker.coordinate);
+        if (point.x < -40 || point.x > layout.width + 40 || point.y < -50 || point.y > layout.height + 40) return null;
+        return (
+          <View
+            key={"marker-" + index}
+            pointerEvents="none"
+            style={{
+              position: "absolute",
+              left: point.x - 9,
+              top: point.y - 19,
+              alignItems: "center"
+            }}
+          >
+            <View
+              style={{
+                width: 18,
+                height: 18,
+                borderRadius: 9,
+                backgroundColor: marker.pinColor ?? BRAND_COLORS.blue,
+                borderColor: "#FFFFFF",
+                borderWidth: 2,
+                elevation: 4
+              }}
+            />
+            {marker.title ? (
+              <View style={{ backgroundColor: "#FFFFFF", borderRadius: 6, paddingHorizontal: 5, paddingVertical: 2, marginTop: 2, elevation: 2 }}>
+                <Text style={{ color: "#344054", fontSize: 8, fontWeight: "800" }}>{marker.title}</Text>
+              </View>
+            ) : null}
+          </View>
+        );
+      })}
+      </View>
+      <View
+        pointerEvents="none"
+        style={{
+          position: "absolute",
+          right: 7,
+          bottom: 7,
+          backgroundColor: "rgba(255,255,255,0.92)",
+          borderRadius: 5,
+          paddingHorizontal: 6,
+          paddingVertical: 3
+        }}
+      >
+        <Text style={{ color: "#344054", fontSize: 8, fontWeight: "700" }}>© OpenStreetMap contributors</Text>
+      </View>
+      {zoomEnabled !== false ? (
+        <View style={{ position: "absolute", left: 12, top: 118, backgroundColor: "#FFFFFF", borderRadius: 13, elevation: 7, overflow: "hidden", zIndex: 10, borderWidth: 1, borderColor: "#DCE3EB" }}>
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel="Zoom in" onPress={() => changeZoom(1)} style={{ width: 48, height: 46, alignItems: "center", justifyContent: "center" }}>
+            <Text style={{ color: BRAND_COLORS.navy, fontSize: 28, fontWeight: "800", lineHeight: 32 }}>+</Text>
+          </TouchableOpacity>
+          <View style={{ height: 1, backgroundColor: "#E5EAF0" }} />
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel="Zoom out" onPress={() => changeZoom(-1)} style={{ width: 48, height: 46, alignItems: "center", justifyContent: "center" }}>
+            <Text style={{ color: BRAND_COLORS.navy, fontSize: 28, fontWeight: "800", lineHeight: 32 }}>−</Text>
+          </TouchableOpacity>
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+const SafeMapView = forwardRef<ComponentRef<typeof NativeMapView>, SafeMapViewProps>(
+  function SafeMapView({ routeCoordinates, markers, onInteractionStart, onInteractionEnd, children, style, region, initialRegion, ...nativeProps }, ref) {
+    if (Platform.OS === "android") {
+      return (
+        <OpenStreetMapRasterView
+          style={style}
+          region={region}
+          initialRegion={initialRegion}
+          routeCoordinates={routeCoordinates}
+          markers={markers}
+          onRegionChangeComplete={nativeProps.onRegionChangeComplete}
+          onMapReady={nativeProps.onMapReady}
+          onInteractionStart={onInteractionStart}
+          onInteractionEnd={onInteractionEnd}
+          scrollEnabled={nativeProps.scrollEnabled}
+          zoomEnabled={nativeProps.zoomEnabled}
+        />
+      );
+    }
+
+    return (
+      <NativeMapView
+        ref={ref}
+        style={style}
+        region={region}
+        initialRegion={initialRegion}
+        {...nativeProps}
+      >
+        {children}
+      </NativeMapView>
+    );
+  }
+);
+
+SafeMapView.displayName = "SafeMapView";
 type Session = {
   accessToken: string;
   refreshToken: string;
@@ -56,6 +490,9 @@ type Ride = {
   pickupLongitude?: number | string;
   destinationLatitude?: number | string;
   destinationLongitude?: number | string;
+  routeCoordinates?: RouteCoordinate[] | null;
+  estimatedDurationSeconds?: number | null;
+  routingProvider?: "GOOGLE_TWO_WHEELER" | "VALHALLA_MOTORCYCLE" | null;
   riderArrivalEstimateMinutes?: number | null;
   riderArrivalEstimateUpdatedAt?: string | null;
   customer?: { fullName: string } | null;
@@ -79,6 +516,7 @@ type RouteCoordinate = {
 };
 
 type Quote = {
+  quoteToken: string;
   fareAmountUgx: number;
   distanceKm: number;
   fareBasis: "LANDMARK_FARE" | "DISTANCE_RULE";
@@ -95,20 +533,60 @@ function coordinateFromValues(latitude: number | string | undefined, longitude: 
   return { latitude: parsedLatitude, longitude: parsedLongitude };
 }
 
-function routeMapRegion(coordinates: RouteCoordinate[]) {
-  const latitudes = coordinates.map((point) => point.latitude);
-  const longitudes = coordinates.map((point) => point.longitude);
+function routeCoordinatesFromUnknown(value: unknown): RouteCoordinate[] | null {
+  if (!Array.isArray(value) || value.length < 2 || value.length > 500) return null;
+  const coordinates: RouteCoordinate[] = [];
+  for (const point of value) {
+    if (typeof point !== "object" || point === null || Array.isArray(point)) return null;
+    const candidate = point as { latitude?: unknown; longitude?: unknown };
+    const latitude = Number(candidate.latitude);
+    const longitude = Number(candidate.longitude);
+    if (
+      !Number.isFinite(latitude) ||
+      !Number.isFinite(longitude) ||
+      latitude < -90 || latitude > 90 ||
+      longitude < -180 || longitude > 180
+    ) return null;
+    coordinates.push({ latitude, longitude });
+  }
+  return coordinates;
+}
+
+function routeMapRegion(coordinates: RouteCoordinate[], bottomSheetInset = 0) {
+  const validCoordinates = coordinates.filter((point) =>
+    Number.isFinite(point.latitude) &&
+    Number.isFinite(point.longitude) &&
+    point.latitude >= -85.05112878 &&
+    point.latitude <= 85.05112878 &&
+    point.longitude >= -180 &&
+    point.longitude <= 180
+  );
+  if (validCoordinates.length < 2) return DEFAULT_OSM_REGION;
+
+  const latitudes = validCoordinates.map((point) => point.latitude);
+  const longitudes = validCoordinates.map((point) => point.longitude);
   const minLatitude = Math.min(...latitudes);
   const maxLatitude = Math.max(...latitudes);
   const minLongitude = Math.min(...longitudes);
   const maxLongitude = Math.max(...longitudes);
-
-  return {
+  const baseRegion: OsmRegion = {
     latitude: (minLatitude + maxLatitude) / 2,
     longitude: (minLongitude + maxLongitude) / 2,
     latitudeDelta: Math.max(0.008, (maxLatitude - minLatitude) * 1.7),
     longitudeDelta: Math.max(0.008, (maxLongitude - minLongitude) * 1.7)
   };
+
+  if (bottomSheetInset <= 0) return baseRegion;
+
+  // Shift the map centre slightly south so the route sits in the visible map
+  // area above the fare review panel instead of underneath the panel.
+  const zoom = osmZoomForRegion(baseRegion, Dimensions.get("window").width);
+  const centerPixel = osmCoordinateToPixel(baseRegion, zoom);
+  const adjustedCenter = osmPixelToCoordinate({
+    x: centerPixel.x,
+    y: centerPixel.y + bottomSheetInset / 2
+  }, zoom);
+  return { ...baseRegion, latitude: adjustedCenter.latitude };
 }
 
 type ParcelSize = "SMALL" | "MEDIUM" | "LARGE";
@@ -221,6 +699,14 @@ const NEXT_RIDER_STATUS: Record<string, "ARRIVED_AT_PICKUP" | "IN_PROGRESS" | "C
   ARRIVED_AT_PICKUP: "IN_PROGRESS",
   IN_PROGRESS: "COMPLETED"
 };
+
+const CUSTOMER_RIDE_PROGRESS = [
+  { status: "PENDING", label: "Finding a rider" },
+  { status: "ACCEPTED", label: "Rider assigned" },
+  { status: "ARRIVED_AT_PICKUP", label: "Rider at pickup" },
+  { status: "IN_PROGRESS", label: "Trip in progress" },
+  { status: "COMPLETED", label: "Trip completed" }
+];
 
 const ARUA_LOCATION_SUGGESTIONS: LocationSuggestion[] = [
   { label: "Muni Site", category: "Local area", searchTerms: ["Muni", "Muni Hill", "Muni Cell"] },
@@ -411,22 +897,6 @@ type LocationSuggestion = {
   searchQuery?: string;
 };
 
-type PhotonFeature = {
-  geometry?: { coordinates?: number[] };
-  properties?: {
-    name?: string;
-    street?: string;
-    district?: string;
-    city?: string;
-    county?: string;
-    state?: string;
-    country?: string;
-    osm_key?: string;
-    osm_value?: string;
-    extra?: Record<string, string | number | boolean | null>;
-  };
-};
-
 async function apiRequest<T>(
   path: string,
   token: string,
@@ -466,187 +936,27 @@ function formatDistance(value: number | string | null): string {
   return Number.isFinite(parsed) ? `${parsed.toFixed(2)} km estimated` : "Distance estimate unavailable";
 }
 
-function describeMapFeature(
-  key?: string,
-  value?: string,
-  extra?: Record<string, string | number | boolean | null>
-): string {
-  const tag = (value ?? "").toLowerCase();
-  const normalizedKey = (key ?? "").toLowerCase();
-  const bridge = String(extra?.bridge ?? "").toLowerCase();
-  const ford = String(extra?.ford ?? "").toLowerCase();
-  const tunnel = String(extra?.tunnel ?? "").toLowerCase();
-
-  if (bridge && bridge !== "no") return "Bridge / road crossing";
-  if (ford && ford !== "no") return "Ford / water crossing";
-  if (tunnel && tunnel !== "no") return "Tunnel";
-
-  if (normalizedKey === "waterway") {
-    const labels: Record<string, string> = {
-      river: "River",
-      stream: "Stream",
-      canal: "Canal",
-      drain: "Drainage channel",
-      ditch: "Ditch",
-      waterfall: "Waterfall",
-      dam: "Dam",
-      weir: "Weir",
-      riverbank: "River bank",
-      lock: "Canal lock"
-    };
-    return labels[tag] ?? "Waterway";
-  }
-
-  if (normalizedKey === "natural") {
-    const labels: Record<string, string> = {
-      peak: "Hill / peak",
-      hill: "Hill",
-      ridge: "Ridge",
-      saddle: "Mountain pass",
-      isthmus: "Land passage",
-      volcano: "Volcano",
-      valley: "Valley",
-      cliff: "Cliff",
-      spring: "Spring",
-      water: "Water body",
-      wetland: "Wetland",
-      bay: "Bay",
-      beach: "Beach",
-      wood: "Woodland",
-      scrub: "Scrubland",
-      heath: "Heath",
-      grassland: "Grassland"
-    };
-    return labels[tag] ?? "Natural feature";
-  }
-
-  if (normalizedKey === "place") {
-    const labels: Record<string, string> = {
-      city: "City",
-      town: "Town",
-      village: "Village",
-      suburb: "Suburb",
-      neighbourhood: "Neighbourhood",
-      quarter: "Neighbourhood",
-      hamlet: "Hamlet",
-      locality: "Locality",
-      district: "District"
-    };
-    return labels[tag] ?? "Area";
-  }
-
-  if (normalizedKey === "highway") {
-    if (tag === "bus_stop") return "Bus stop";
-    if (tag === "path" || tag === "footway" || tag === "pedestrian") return "Path / footway";
-    if (tag === "track") return "Track";
-    if (tag === "steps") return "Steps";
-    if (tag === "crossing") return "Road crossing";
-    return "Road";
-  }
-
-  if (normalizedKey === "bridge" || (normalizedKey === "man_made" && tag === "bridge")) return "Bridge";
-  if (normalizedKey === "ford") return "River crossing / ford";
-  if (normalizedKey === "water") {
-    const labels: Record<string, string> = {
-      lake: "Lake",
-      pond: "Pond",
-      reservoir: "Reservoir",
-      river: "River",
-      basin: "Water basin"
-    };
-    return labels[tag] ?? "Water feature";
-  }
-  if (normalizedKey === "barrier") return "Access barrier / crossing control";
-  if (normalizedKey === "railway") return "Railway feature";
-  if (normalizedKey === "aeroway") return "Airport / airfield feature";
-  if (normalizedKey === "amenity") return tag ? tag.replace(/_/g, " ") : "Public facility";
-  if (normalizedKey === "shop") return tag ? `${tag.replace(/_/g, " ")} shop` : "Shop";
-  if (normalizedKey === "office") return tag ? `${tag.replace(/_/g, " ")} office` : "Office";
-  if (normalizedKey === "tourism") {
-    const labels: Record<string, string> = {
-      hostel: "Student hostel",
-      guest_house: "Guest house",
-      hotel: "Hotel",
-      motel: "Motel",
-      apartment: "Serviced accommodation",
-      chalet: "Chalet",
-      camp_site: "Camp site",
-      caravan_site: "Caravan site"
-    };
-    return labels[tag] ?? (tag ? tag.replace(/_/g, " ") : "Place to visit");
-  }
-  if (normalizedKey === "amenity" && (tag === "dormitory" || tag === "student_accommodation")) {
-    return "Student accommodation";
-  }
-  if (normalizedKey === "leisure") return tag ? tag.replace(/_/g, " ") : "Recreation";
-  if (normalizedKey === "building") return "Building";
-  if (normalizedKey === "landuse") return "Land use";
-  if (normalizedKey === "boundary") return "Boundary / administrative area";
-
-  return tag ? tag.replace(/_/g, " ") : "Mapped place";
-}
-
-async function geocodeAruaAddress(value: string): Promise<RideLocation> {
+async function geocodeAruaAddress(
+  value: string,
+  accessToken: string,
+  refreshAccessToken: () => Promise<string>
+): Promise<RideLocation> {
   const trimmed = value.trim();
   if (trimmed.length < 3) throw new Error("Enter a pickup or destination address.");
 
-  // Use the same Arua-bounded Photon map search as autocomplete.
-  // Address geocoding must not depend on Android device-location permission.
-  const query = /uganda/i.test(trimmed) ? trimmed : `${trimmed}, Arua, Uganda`;
-  const params = [
-    `q=${encodeURIComponent(query)}`,
-    "lat=3.02",
-    "lon=30.92",
-    "zoom=11",
-    "location_bias_scale=0.2",
-    "limit=5",
-    "lang=en",
-    "countrycode=UG",
-    "bbox=30.55,2.75,31.25,3.30"
-  ].join("&");
-
-  let response: Response;
-  try {
-    response = await fetch(`https://photon.komoot.io/api/?${params}`, {
-      headers: { Accept: "application/json" }
-    });
-  } catch {
-    throw new Error("Unable to search the Arua map right now. Check your internet connection and try again.");
-  }
-
-  if (!response.ok) {
-    throw new Error("The Arua location service is temporarily unavailable. Please try again.");
-  }
-
-  const payload = await response.json() as { features?: PhotonFeature[] };
-  const candidates = (payload.features ?? []).flatMap((feature) => {
-    const coordinates = feature.geometry?.coordinates;
-    if (!coordinates || coordinates.length < 2) return [];
-    const longitude = Number(coordinates[0]);
-    const latitude = Number(coordinates[1]);
-
-    // Enforce the service area even if a provider returns an out-of-area match.
-    if (
-      !Number.isFinite(latitude) ||
-      !Number.isFinite(longitude) ||
-      longitude < 30.55 ||
-      longitude > 31.25 ||
-      latitude < 2.75 ||
-      latitude > 3.30
-    ) return [];
-
-    return [{ latitude, longitude }];
-  });
-
-  const firstResult = candidates[0];
-  if (!firstResult) {
-    throw new Error(`We couldn't find "${trimmed}" on the Arua map. Choose one of the suggested places or add a nearby landmark and try again.`);
-  }
+  const result = await apiRequest<{ data: RideLocation }>(
+    "/api/v1/rides/geocode",
+    accessToken,
+    {
+      method: "POST",
+      body: JSON.stringify({ query: trimmed })
+    },
+    refreshAccessToken
+  );
 
   return {
-    latitude: firstResult.latitude,
-    longitude: firstResult.longitude,
-    description: trimmed
+    ...result.data,
+    description: result.data.description || trimmed
   };
 }
 
@@ -657,6 +967,30 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
     setActiveSession(session);
   }, [session]);
   const [mainTab, setMainTab] = useState<WorkspaceTab>("home");
+  const [workspaceViewport, setWorkspaceViewport] = useState({ width: 0, height: 0 });
+  const screenOpacity = useRef(new Animated.Value(0)).current;
+  const screenOffset = useRef(new Animated.Value(8)).current;
+
+  useEffect(() => {
+    screenOpacity.setValue(0);
+    screenOffset.setValue(8);
+    const transition = Animated.parallel([
+      Animated.timing(screenOpacity, {
+        toValue: 1,
+        duration: 190,
+        useNativeDriver: true
+      }),
+      Animated.spring(screenOffset, {
+        toValue: 0,
+        speed: 26,
+        bounciness: 2,
+        useNativeDriver: true
+      })
+    ]);
+    transition.start();
+    return () => transition.stop();
+  }, [mainTab, activeSession.user.role, screenOpacity, screenOffset]);
+
   const [appearance, setAppearance] = useState<UiAppearance>("LIGHT");
   const [textSize, setTextSize] = useState<UiTextSize>("STANDARD");
   const isCustomer = activeSession.user.role === "CUSTOMER";
@@ -793,6 +1127,11 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
   const [riderJobTab, setRiderJobTab] = useState<"rides" | "parcels">("rides");
   const [pickup, setPickup] = useState("");
   const [destination, setDestination] = useState("");
+  const pickupInputRef = useRef<ComponentRef<typeof TextInput> | null>(null);
+  const destinationInputRef = useRef<ComponentRef<typeof TextInput> | null>(null);
+  const itemDescriptionInputRef = useRef<ComponentRef<typeof TextInput> | null>(null);
+  const recipientNameInputRef = useRef<ComponentRef<typeof TextInput> | null>(null);
+  const recipientPhoneInputRef = useRef<ComponentRef<typeof TextInput> | null>(null);
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("CASH");
   const [quote, setQuote] = useState<Quote | null>(null);
   const [locations, setLocations] = useState<{ pickup: RideLocation; destination: RideLocation } | null>(null);
@@ -802,13 +1141,23 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
   const [selectedDestinationSearchQuery, setSelectedDestinationSearchQuery] = useState("");
   const [rides, setRides] = useState<Ride[]>([]);
   const [availableRides, setAvailableRides] = useState<Ride[]>([]);
+  const observedAvailableRideIds = useRef(new Set<string>());
   const [riderOnline, setRiderOnline] = useState(false);
   const [riderDeviceLocation, setRiderDeviceLocation] = useState<RideLocation | null>(null);
   const [availableParcels, setAvailableParcels] = useState<RiderParcel[]>([]);
   const [assignedParcels, setAssignedParcels] = useState<RiderParcel[]>([]);
   const [sentParcels, setSentParcels] = useState<RiderParcel[]>([]);
   const hasActiveCustomerRides = isCustomer && rides.some((ride) => !["COMPLETED", "CANCELLED", "EXPIRED"].includes(ride.status));
+  const hasActiveCustomerParcels = isCustomer && sentParcels.some((parcel) => !["DELIVERED", "CANCELLED", "EXPIRED"].includes(parcel.status));
+  const activeCustomerTrackingParcelIds = isCustomer
+    ? sentParcels
+      .filter((parcel) => ACTIVE_TRACKING_STATUSES.includes(parcel.status) && Boolean(parcel.rider))
+      .map((parcel) => parcel.id)
+      .sort()
+      .join("|")
+    : "";
   const activeRiderRide = rides.find((ride) => ["ACCEPTED", "ARRIVED_AT_PICKUP", "IN_PROGRESS"].includes(ride.status));
+  const activeRiderRideNextStatus = activeRiderRide ? NEXT_RIDER_STATUS[activeRiderRide.status] : undefined;
   const activeRiderParcel = assignedParcels.find((parcel) => ["ACCEPTED", "ARRIVED_AT_PICKUP", "COLLECTED", "IN_TRANSIT", "ARRIVED_AT_DESTINATION"].includes(parcel.status));
   const riderMapPickup = activeRiderRide
     ? coordinateFromValues(activeRiderRide.pickupLatitude, activeRiderRide.pickupLongitude)
@@ -819,6 +1168,17 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
     ? coordinateFromValues(activeRiderRide.destinationLatitude, activeRiderRide.destinationLongitude)
     : activeRiderParcel
       ? coordinateFromValues(activeRiderParcel.destinationLatitude, activeRiderParcel.destinationLongitude)
+      : null;
+  // New ride requests carry the exact motorcycle route used for the customer's
+  // quote. Older rides have no historical snapshot, so we show their endpoints
+  // without drawing a misleading straight-line "road route".
+  const riderMapStoredRoute = activeRiderRide
+    ? routeCoordinatesFromUnknown(activeRiderRide.routeCoordinates)
+    : null;
+  const riderMapRouteCoordinates = activeRiderRide
+    ? riderMapStoredRoute
+    : riderMapPickup && riderMapDestination
+      ? [riderMapPickup, riderMapDestination]
       : null;
   const riderMapJobKey = activeRiderRide?.id ?? activeRiderParcel?.id ?? null;
   const riderMapNavigationTarget = activeRiderRide
@@ -855,9 +1215,80 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
   const [working, setWorking] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [dashboardLoadError, setDashboardLoadError] = useState("");
   const [activeLocationField, setActiveLocationField] = useState<"pickup" | "destination" | null>(null);
+
+  function focusLocationField(field: "pickup" | "destination") {
+    setActiveLocationField(field);
+    setMapSheetExpanded(true);
+  }
+
+  function selectLocationSuggestion(field: "pickup" | "destination", suggestion: LocationSuggestion) {
+    const selectedPoint: RideLocation | null =
+      suggestion.latitude !== undefined && suggestion.longitude !== undefined
+        ? {
+            latitude: suggestion.latitude,
+            longitude: suggestion.longitude,
+            description: suggestion.label
+          }
+        : null;
+
+    const nextPickup = field === "pickup" ? suggestion.label : pickup;
+    const nextDestination = field === "destination" ? suggestion.label : destination;
+    const nextPickupPoint = field === "pickup" ? selectedPoint : selectedPickupLocation;
+    const nextDestinationPoint = field === "destination" ? selectedPoint : selectedDestinationLocation;
+
+    if (field === "pickup") {
+      setPickup(suggestion.label);
+      setSelectedPickupLocation(selectedPoint);
+      setSelectedPickupSearchQuery(suggestion.searchQuery ?? "");
+      setQuote(null);
+      setLocations(null);
+      setParcelQuote(null);
+      setParcelLocations(null);
+    } else {
+      setDestination(suggestion.label);
+      setSelectedDestinationLocation(selectedPoint);
+      setSelectedDestinationSearchQuery(suggestion.searchQuery ?? "");
+      setQuote(null);
+      setLocations(null);
+      setParcelQuote(null);
+      setParcelLocations(null);
+    }
+
+    const otherPlaceIsReady = field === "pickup" ? Boolean(destination.trim()) : Boolean(pickup.trim());
+    if (otherPlaceIsReady) {
+      setActiveLocationField(null);
+      setMapSheetExpanded(true);
+      Keyboard.dismiss();
+      const overrides = {
+        pickup: nextPickupPoint,
+        destination: nextDestinationPoint,
+        pickupText: nextPickup,
+        destinationText: nextDestination
+      };
+      if (tab === "parcel") void getParcelFareEstimate(overrides);
+      else void getFareEstimate(overrides);
+      return;
+    }
+
+    const nextField = field === "pickup" ? "destination" : "pickup";
+    setActiveLocationField(nextField);
+    setMapSheetExpanded(true);
+    requestAnimationFrame(() => {
+      if (nextField === "pickup") pickupInputRef.current?.focus();
+      else destinationInputRef.current?.focus();
+    });
+  }
   const [deviceLocation, setDeviceLocation] = useState<RideLocation | null>(null);
   const [locationStatus, setLocationStatus] = useState<"locating" | "ready" | "denied" | "unavailable">("locating");
+  const riderMapRef = useRef<ComponentRef<typeof NativeMapView> | null>(null);
+  const pendingRiderMapCenter = useRef<RideLocation | null>(null);
+  const riderMapCentering = useRef(false);
+  const [riderMapReady, setRiderMapReady] = useState(false);
+  const [riderMapCenteringUi, setRiderMapCenteringUi] = useState(false);
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
+  const [mapGestureActive, setMapGestureActive] = useState(false);
   const locationDetectionStarted = useRef(false);
   const [mapRegion, setMapRegion] = useState({
     latitude: 3.02,
@@ -865,11 +1296,22 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
     latitudeDelta: 0.035,
     longitudeDelta: 0.035
   });
-  const [mapSelectionField, setMapSelectionField] = useState<"pickup" | "destination" | null>(null);
-  const mapSheetCollapsedHeight = 168;
-  const mapSheetExpandedHeight = Math.min(Dimensions.get("window").height * 0.72, 590);
-  const [mapSheetExpanded, setMapSheetExpanded] = useState(false);
+  const dashboardViewportHeight = workspaceViewport.height || Math.max(360, Dimensions.get("window").height - 150);
+  const mapSheetCollapsedHeight = Math.min(176, Math.max(148, dashboardViewportHeight * 0.28));
+  const mapSheetExpandedHeight = Math.min(dashboardViewportHeight * 0.72, 520);
+  const mapSheetSearchHeight = Math.min(dashboardViewportHeight * 0.92, dashboardViewportHeight - 12, 680);
+  const mapSheetRouteReviewHeight = Math.min(dashboardViewportHeight * 0.54, 390);
+  const dashboardHorizontalGutter = workspaceViewport.width > 0 && workspaceViewport.width < 360
+    ? 14
+    : workspaceViewport.width >= 600 ? 26 : 19;
+  const riderMapHeight = Math.max(220, Math.min(dashboardViewportHeight * 0.42, 360));
+  const [mapSheetExpanded, setMapSheetExpanded] = useState(true);
   const mapSheetHeight = useRef(new Animated.Value(mapSheetCollapsedHeight)).current;
+  const mapSheetTargetHeight = activeLocationField !== null
+    ? mapSheetSearchHeight
+    : (quote && locations) || (parcelQuote && parcelLocations)
+      ? mapSheetRouteReviewHeight
+      : mapSheetExpanded ? mapSheetExpandedHeight : mapSheetCollapsedHeight;
   const mapSheetPanResponder = useRef(PanResponder.create({
     onStartShouldSetPanResponder: () => false,
     onMoveShouldSetPanResponder: (_event, gesture) => Math.abs(gesture.dy) > 8,
@@ -881,23 +1323,39 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
 
   useEffect(() => {
     const animation = Animated.spring(mapSheetHeight, {
-      toValue: mapSheetExpanded ? mapSheetExpandedHeight : mapSheetCollapsedHeight,
+      toValue: mapSheetTargetHeight,
       useNativeDriver: false,
       tension: 64,
       friction: 13
     });
     animation.start();
     return () => animation.stop();
-  }, [mapSheetExpanded, mapSheetExpandedHeight, mapSheetCollapsedHeight, mapSheetHeight]);
+  }, [mapSheetTargetHeight, mapSheetHeight]);
+
+  useEffect(() => {
+    if (activeSession.user.role === "RIDER" && mainTab !== "home") {
+      setRiderMapReady(false);
+    }
+  }, [activeSession.user.role, mainTab]);
+
+  useEffect(() => {
+    const showSubscription = Keyboard.addListener("keyboardDidShow", () => setKeyboardVisible(true));
+    const hideSubscription = Keyboard.addListener("keyboardDidHide", () => setKeyboardVisible(false));
+    return () => {
+      showSubscription.remove();
+      hideSubscription.remove();
+    };
+  }, []);
 
   useEffect(() => {
     if (!isApprovedRider || mainTab !== "home" || !riderMapPickup || !riderMapDestination) return;
-    setMapRegion(routeMapRegion([riderMapPickup, riderMapDestination]));
-  }, [isApprovedRider, mainTab, riderMapJobKey, riderMapPickup?.latitude, riderMapPickup?.longitude, riderMapDestination?.latitude, riderMapDestination?.longitude]);
+    setMapRegion(routeMapRegion(riderMapStoredRoute ?? [riderMapPickup, riderMapDestination]));
+  }, [isApprovedRider, mainTab, riderMapJobKey, riderMapPickup?.latitude, riderMapPickup?.longitude, riderMapDestination?.latitude, riderMapDestination?.longitude, activeRiderRide?.routeCoordinates]);
 
   const loadDashboard = useCallback(async () => {
     setLoading(true);
     setError("");
+    setDashboardLoadError("");
     if (activeSession.user.role === "ADMIN") {
       try {
         const riderQuery = adminRiderFilter === "ALL" ? "" : `?status=${adminRiderFilter}`;
@@ -913,7 +1371,9 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
         setAssignedParcels([]);
         setSentParcels([]);
       } catch (loadError) {
-        setError(loadError instanceof Error ? loadError.message : "Unable to load administrator data.");
+        const message = loadError instanceof Error ? loadError.message : "Unable to load administrator data.";
+        setDashboardLoadError(message);
+        setError(message);
       } finally {
         setLoading(false);
       }
@@ -948,7 +1408,9 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
         setSentParcels([]);
       }
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "Unable to load your rides.");
+      const message = loadError instanceof Error ? loadError.message : "Unable to load your rides.";
+      setDashboardLoadError(message);
+      setError(message);
     } finally {
       setLoading(false);
     }
@@ -974,105 +1436,167 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
   }, [isApprovedRider, riderOnline, refreshAvailableRides]);
 
   useEffect(() => {
+    if (!isApprovedRider || !riderOnline || activeRiderRide || availableRides.length === 0) return;
+    const hasUnseenRide = availableRides.some((ride) => !observedAvailableRideIds.current.has(ride.id));
+    availableRides.forEach((ride) => observedAvailableRideIds.current.add(ride.id));
+    if (hasUnseenRide && mainTab === "home") {
+      setRiderRequestTab("rides");
+      setMainTab("requests");
+      setMessage("A new nearby ride request is waiting for you.");
+    }
+  }, [isApprovedRider, riderOnline, activeRiderRide?.id, availableRides, mainTab]);
+
+  useEffect(() => {
     if (!hasActiveCustomerRides) return undefined;
     let disposed = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let refreshing = false;
+
     const refreshCustomerRides = async () => {
+      if (disposed || refreshing || AppState.currentState !== "active") return;
+      refreshing = true;
       try {
         const result = await apiRequest<{ data: Ride[] }>("/api/v1/rides/mine", activeSession.accessToken, undefined, refreshAccessToken);
         if (!disposed) setRides(result.data ?? []);
       } catch {
-        // Continue showing the last server-confirmed state when temporarily offline.
+        // Keep the last server-confirmed ride status when connectivity is interrupted.
+      } finally {
+        refreshing = false;
+        if (!disposed && AppState.currentState === "active") {
+          timer = setTimeout(() => void refreshCustomerRides(), 8_000);
+        }
       }
     };
-    const timer = setInterval(() => void refreshCustomerRides(), 8_000);
-    return () => { disposed = true; clearInterval(timer); };
+
+    const subscription = AppState.addEventListener("change", (nextState) => {
+      if (nextState === "active") {
+        if (timer) clearTimeout(timer);
+        timer = undefined;
+        void refreshCustomerRides();
+      } else if (timer) {
+        clearTimeout(timer);
+        timer = undefined;
+      }
+    });
+    if (AppState.currentState === "active") void refreshCustomerRides();
+
+    return () => {
+      disposed = true;
+      if (timer) clearTimeout(timer);
+      subscription.remove();
+    };
   }, [hasActiveCustomerRides, activeSession.accessToken, refreshAccessToken]);
 
   useEffect(() => {
-    if (!isCustomer) return undefined;
-    const activeParcels = sentParcels.filter((parcel) =>
-      ACTIVE_TRACKING_STATUSES.includes(parcel.status) && Boolean(parcel.rider)
-    );
+    if (!hasActiveCustomerParcels) return undefined;
     let disposed = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let refreshing = false;
 
-    const refreshTracking = async () => {
-      const results = await Promise.all(activeParcels.map(async (parcel) => {
-        try {
-          const response = await apiRequest<{ data: ParcelTracking }>(
-            `/api/v1/parcels/${parcel.id}/tracking`,
-            activeSession.accessToken,
-            undefined,
-            refreshAccessToken
-          );
-          return [parcel.id, response.data] as const;
-        } catch {
-          return null;
+    const refreshCustomerParcels = async () => {
+      if (disposed || refreshing || AppState.currentState !== "active") return;
+      refreshing = true;
+      try {
+        const result = await apiRequest<{ data: RiderParcel[] }>("/api/v1/parcels/mine", activeSession.accessToken, undefined, refreshAccessToken);
+        if (!disposed) setSentParcels(result.data ?? []);
+      } catch {
+        // Retain the last confirmed delivery status; a later poll will retry.
+      } finally {
+        refreshing = false;
+        if (!disposed && AppState.currentState === "active") {
+          timer = setTimeout(() => void refreshCustomerParcels(), 10_000);
         }
-      }));
-      if (disposed) return;
-      setParcelTrackings((current) => {
-        const next: Record<string, ParcelTracking> = {};
-        for (const result of results) {
-          if (result) next[result[0]] = result[1];
-        }
-        return next;
-      });
+      }
     };
 
-    if (activeParcels.length) {
-      void refreshTracking();
-      const timer = setInterval(() => void refreshTracking(), 10_000);
-      return () => {
-        disposed = true;
-        clearInterval(timer);
-      };
-    }
-    setParcelTrackings({});
-    return () => { disposed = true; };
-  }, [isCustomer, sentParcels, activeSession.accessToken, refreshAccessToken]);
+    const subscription = AppState.addEventListener("change", (nextState) => {
+      if (nextState === "active") {
+        if (timer) clearTimeout(timer);
+        timer = undefined;
+        void refreshCustomerParcels();
+      } else if (timer) {
+        clearTimeout(timer);
+        timer = undefined;
+      }
+    });
+    if (AppState.currentState === "active") void refreshCustomerParcels();
 
-  async function selectCustomerMapPoint(coordinate: { latitude: number; longitude: number }) {
-    const target = mapSelectionField;
-    if (!target) return;
+    return () => {
+      disposed = true;
+      if (timer) clearTimeout(timer);
+      subscription.remove();
+    };
+  }, [hasActiveCustomerParcels, activeSession.accessToken, refreshAccessToken]);
 
-    let description = `${coordinate.latitude.toFixed(5)}, ${coordinate.longitude.toFixed(5)}`;
-    try {
-      const reverse = await Location.reverseGeocodeAsync(coordinate);
-      const place = reverse[0];
-      const resolved = [
-        place?.name,
-        place?.street,
-        place?.district,
-        place?.city,
-        place?.region
-      ].filter(Boolean).filter((value, index, all) => all.indexOf(value) === index).join(", ");
-      if (resolved) description = resolved;
-    } catch {
-      // Coordinates remain valid even when reverse geocoding is unavailable.
+  useEffect(() => {
+    if (!isCustomer) return undefined;
+    const activeParcelIds = activeCustomerTrackingParcelIds
+      ? activeCustomerTrackingParcelIds.split("|")
+      : [];
+    if (!activeParcelIds.length) {
+      setParcelTrackings({});
+      return undefined;
     }
 
-    const selected: RideLocation = { ...coordinate, description };
-    if (target === "pickup") {
-      setPickup(description);
-      setSelectedPickupLocation(selected);
-      setSelectedPickupSearchQuery("");
-      setQuote(null);
-      setLocations(null);
-      setParcelQuote(null);
-      setParcelLocations(null);
-    } else {
-      setDestination(description);
-      setSelectedDestinationLocation(selected);
-      setSelectedDestinationSearchQuery("");
-      setQuote(null);
-      setLocations(null);
-      setParcelQuote(null);
-      setParcelLocations(null);
-    }
-    setActiveLocationField(null);
-    setMapSelectionField(null);
-    setMessage(`${target === "pickup" ? "Pickup" : "Destination"} selected on the map.`);
-  }
+    let disposed = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let refreshing = false;
+
+    const refreshTracking = async () => {
+      if (disposed || refreshing || AppState.currentState !== "active") return;
+      refreshing = true;
+      try {
+        const results = await Promise.all(activeParcelIds.map(async (parcelId) => {
+          try {
+            const response = await apiRequest<{ data: ParcelTracking }>(
+              "/api/v1/parcels/" + parcelId + "/tracking",
+              activeSession.accessToken,
+              undefined,
+              refreshAccessToken
+            );
+            return [parcelId, response.data] as const;
+          } catch {
+            return null;
+          }
+        }));
+        if (!disposed) {
+          setParcelTrackings((current) => {
+            const next: Record<string, ParcelTracking> = {};
+            for (const parcelId of activeParcelIds) {
+              if (current[parcelId]) next[parcelId] = current[parcelId];
+            }
+            for (const result of results) {
+              if (result) next[result[0]] = result[1];
+            }
+            return next;
+          });
+        }
+      } finally {
+        refreshing = false;
+        if (!disposed && AppState.currentState === "active") {
+          timer = setTimeout(() => void refreshTracking(), 10_000);
+        }
+      }
+    };
+
+    const subscription = AppState.addEventListener("change", (nextState) => {
+      if (nextState === "active") {
+        if (timer) clearTimeout(timer);
+        timer = undefined;
+        void refreshTracking();
+      } else if (timer) {
+        clearTimeout(timer);
+        timer = undefined;
+      }
+    });
+    if (AppState.currentState === "active") void refreshTracking();
+
+    return () => {
+      disposed = true;
+      if (timer) clearTimeout(timer);
+      subscription.remove();
+    };
+  }, [isCustomer, activeCustomerTrackingParcelIds, activeSession.accessToken, refreshAccessToken]);
 
   const detectPickupLocation = useCallback(async (allowReplace = false) => {
     setLocationStatus("locating");
@@ -1125,16 +1649,44 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
     }
   }, [isCustomer]);
 
+  function animateRiderMapTo(point: RideLocation) {
+    setMapRegion({ latitude: point.latitude, longitude: point.longitude, latitudeDelta: 0.045, longitudeDelta: 0.045 });
+    if (!riderMapReady || !riderMapRef.current) {
+      pendingRiderMapCenter.current = point;
+      return;
+    }
+    riderMapRef.current.animateToRegion({
+      latitude: point.latitude,
+      longitude: point.longitude,
+      latitudeDelta: 0.045,
+      longitudeDelta: 0.045
+    }, 650);
+  }
+
   async function centerRiderMap() {
+    if (riderMapCentering.current) return;
+    riderMapCentering.current = true;
+    setRiderMapCenteringUi(true);
+    setError("");
     try {
       const permission = await Location.requestForegroundPermissionsAsync();
       if (permission.status !== "granted") throw new Error("Allow location access while using NAVIGO to center the rider map.");
-      const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High, mayShowUserSettingsDialog: true });
-      const point: RideLocation = { latitude: position.coords.latitude, longitude: position.coords.longitude, description: "Your current location" };
+      const position = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.High,
+        mayShowUserSettingsDialog: true
+      });
+      const point: RideLocation = {
+        latitude: position.coords.latitude,
+        longitude: position.coords.longitude,
+        description: "Your current location"
+      };
       setRiderDeviceLocation(point);
-      setMapRegion({ latitude: point.latitude, longitude: point.longitude, latitudeDelta: 0.045, longitudeDelta: 0.045 });
+      animateRiderMapTo(point);
     } catch (locationError) {
       setError(locationError instanceof Error ? locationError.message : "Unable to find your current location.");
+    } finally {
+      riderMapCentering.current = false;
+      setRiderMapCenteringUi(false);
     }
   }
 
@@ -1144,7 +1696,10 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
       return;
     }
     const { latitude, longitude } = riderMapNavigationTarget;
-    const url = `https://www.google.com/maps/dir/?api=1&destination=${latitude},${longitude}&travelmode=driving`;
+    const origin = riderDeviceLocation;
+    const url = origin
+      ? `https://www.openstreetmap.org/directions?engine=fossgis_osrm_car&route=${origin.latitude}%2C${origin.longitude}%3B${latitude}%2C${longitude}`
+      : `https://www.openstreetmap.org/?mlat=${latitude}&mlon=${longitude}#map=16/${latitude}/${longitude}`;
     try {
       await Linking.openURL(url);
     } catch {
@@ -1161,6 +1716,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
         await apiRequest("/api/v1/rides/availability/offline", activeSession.accessToken, { method: "POST" }, refreshAccessToken);
         setRiderOnline(false);
         setAvailableRides([]);
+        setMainTab("home");
         setMessage("You are offline. NAVIGO will no longer send nearby ride requests to this device.");
       } else {
         const permission = await Location.requestForegroundPermissionsAsync();
@@ -1174,9 +1730,11 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
         }, refreshAccessToken);
         const riderLocation = { latitude: position.coords.latitude, longitude: position.coords.longitude, description: "Your current location" };
         setRiderDeviceLocation(riderLocation);
-        setMapRegion({ latitude: riderLocation.latitude, longitude: riderLocation.longitude, latitudeDelta: 0.055, longitudeDelta: 0.055 });
         setRiderOnline(true);
-        setMessage("You are online. NAVIGO will show you ride requests near your current location.");
+        setRiderRequestTab("rides");
+        setMainTab("requests");
+        animateRiderMapTo(riderLocation);
+        setMessage("You are online. New ride requests will appear here automatically.");
       }
     } catch (availabilityError) {
       setError(availabilityError instanceof Error ? availabilityError.message : "Unable to update your rider availability.");
@@ -1185,29 +1743,72 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
     }
   }
 
-  async function getFareEstimate() {
+  async function getFareEstimate(overrides?: {
+    pickup?: RideLocation | null;
+    destination?: RideLocation | null;
+    pickupText?: string;
+    destinationText?: string;
+  }) {
     setWorking(true);
     setError("");
     setMessage("");
     setQuote(null);
     setLocations(null);
     try {
+      const pickupPoint = overrides && Object.prototype.hasOwnProperty.call(overrides, "pickup")
+        ? overrides.pickup
+        : selectedPickupLocation;
+      const destinationPoint = overrides && Object.prototype.hasOwnProperty.call(overrides, "destination")
+        ? overrides.destination
+        : selectedDestinationLocation;
+      const pickupText = overrides?.pickupText ?? (selectedPickupSearchQuery || pickup);
+      const destinationText = overrides?.destinationText ?? (selectedDestinationSearchQuery || destination);
       const [pickupLocation, destinationLocation] = await Promise.all([
-        selectedPickupLocation ?? geocodeAruaAddress(selectedPickupSearchQuery || pickup),
-        selectedDestinationLocation ?? geocodeAruaAddress(selectedDestinationSearchQuery || destination)
+        pickupPoint ?? geocodeAruaAddress(pickupText, activeSession.accessToken, refreshAccessToken),
+        destinationPoint ?? geocodeAruaAddress(destinationText, activeSession.accessToken, refreshAccessToken)
       ]);
       const result = await apiRequest<{ data: Quote }>("/api/v1/rides/fare-quote", activeSession.accessToken, {
         method: "POST",
         body: JSON.stringify({ pickup: pickupLocation, destination: destinationLocation })
       }, refreshAccessToken);
+      if (!Array.isArray(result.data?.routeCoordinates) || result.data.routeCoordinates.length < 2) {
+        throw new Error("NAVIGO received the fare but not a complete road route. Please try selecting the suggested pickup and destination again.");
+      }
       setLocations({ pickup: pickupLocation, destination: destinationLocation });
       setQuote(result.data);
-      setMapRegion(routeMapRegion(result.data.routeCoordinates));
+      setMapRegion(routeMapRegion(result.data.routeCoordinates, mapSheetRouteReviewHeight));
+      setActiveLocationField(null);
+      setMapSheetExpanded(false);
     } catch (quoteError) {
+      setActiveLocationField(null);
+      setMapSheetExpanded(true);
       setError(quoteError instanceof Error ? quoteError.message : "Unable to calculate the fare.");
     } finally {
       setWorking(false);
     }
+  }
+
+  function previewRideRoute() {
+    if (!pickup.trim()) {
+      setError("Enter a pickup location before viewing the route.");
+      setMapSheetExpanded(true);
+      focusLocationField("pickup");
+      requestAnimationFrame(() => pickupInputRef.current?.focus());
+      return;
+    }
+    if (!destination.trim()) {
+      setError("Enter a destination before viewing the route.");
+      setMapSheetExpanded(true);
+      focusLocationField("destination");
+      requestAnimationFrame(() => destinationInputRef.current?.focus());
+      return;
+    }
+    setError("");
+    setMessage("");
+    setActiveLocationField(null);
+    setMapSheetExpanded(true);
+    Keyboard.dismiss();
+    void getFareEstimate();
   }
 
   async function requestRide() {
@@ -1218,7 +1819,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
     try {
       await apiRequest<{ data: Ride }>("/api/v1/rides", activeSession.accessToken, {
         method: "POST",
-        body: JSON.stringify({ ...locations, paymentMethod })
+        body: JSON.stringify({ ...locations, paymentMethod, quoteToken: quote.quoteToken })
       }, refreshAccessToken);
       setMessage("Your request is in. NAVIGO is finding a nearby rider. Follow the progress under My rides.");
       setQuote(null);
@@ -1229,13 +1830,64 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
       setCustomerActivityTab("rides");
       await loadDashboard();
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "Unable to create the ride request.");
+      const errorMessage = requestError instanceof Error
+        ? requestError.message
+        : "Unable to create the ride request.";
+      let customerMessage = errorMessage;
+      if (/fare quote has expired/i.test(errorMessage)) {
+        setQuote(null);
+        setLocations(null);
+        setMapSheetExpanded(true);
+        customerMessage = "Your fare estimate has expired. Please recalculate the route and fare before confirming.";
+      } else if (/pickup or destination has changed/i.test(errorMessage)) {
+        setQuote(null);
+        setLocations(null);
+        setMapSheetExpanded(true);
+        customerMessage = "Your locations have changed. Please review the route and get a fresh fare estimate.";
+      }
+      setError(customerMessage);
     } finally {
       setWorking(false);
     }
   }
 
-  async function getParcelFareEstimate() {
+  async function getParcelFareEstimate(overrides?: {
+    pickup?: RideLocation | null;
+    destination?: RideLocation | null;
+    pickupText?: string;
+    destinationText?: string;
+  }) {
+    const pickupPoint = overrides && Object.prototype.hasOwnProperty.call(overrides, "pickup")
+      ? overrides.pickup
+      : selectedPickupLocation;
+    const destinationPoint = overrides && Object.prototype.hasOwnProperty.call(overrides, "destination")
+      ? overrides.destination
+      : selectedDestinationLocation;
+    const pickupText = overrides?.pickupText ?? (selectedPickupSearchQuery || pickup);
+    const destinationText = overrides?.destinationText ?? (selectedDestinationSearchQuery || destination);
+
+    if (!pickupText.trim()) {
+      setError("Enter a pickup location before calculating the delivery fee.");
+      setMapSheetExpanded(true);
+      focusLocationField("pickup");
+      requestAnimationFrame(() => pickupInputRef.current?.focus());
+      return;
+    }
+    if (!destinationText.trim()) {
+      setError("Enter a delivery location before calculating the delivery fee.");
+      setMapSheetExpanded(true);
+      focusLocationField("destination");
+      requestAnimationFrame(() => destinationInputRef.current?.focus());
+      return;
+    }
+    if (itemDescription.trim().length < 3) {
+      setError("Describe the item in at least 3 characters before calculating the delivery fee.");
+      setMapSheetExpanded(true);
+      Keyboard.dismiss();
+      requestAnimationFrame(() => itemDescriptionInputRef.current?.focus());
+      return;
+    }
+
     setWorking(true);
     setError("");
     setMessage("");
@@ -1244,8 +1896,8 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
     setCreatedParcel(null);
     try {
       const [pickupLocation, destinationLocation] = await Promise.all([
-        selectedPickupLocation ?? geocodeAruaAddress(selectedPickupSearchQuery || pickup),
-        selectedDestinationLocation ?? geocodeAruaAddress(selectedDestinationSearchQuery || destination)
+        pickupPoint ?? geocodeAruaAddress(pickupText, activeSession.accessToken, refreshAccessToken),
+        destinationPoint ?? geocodeAruaAddress(destinationText, activeSession.accessToken, refreshAccessToken)
       ]);
       const result = await apiRequest<{ data: ParcelQuote }>("/api/v1/parcels/fare-quote", activeSession.accessToken, {
         method: "POST",
@@ -1263,6 +1915,34 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
 
   async function requestParcel() {
     if (!parcelQuote || !parcelLocations) return;
+
+    const trimmedRecipientName = recipientName.trim();
+    const trimmedRecipientPhone = recipientPhone.trim();
+    if (trimmedRecipientName.length < 2) {
+      setError("Enter the recipient's name using at least 2 characters.");
+      setMapSheetExpanded(true);
+      requestAnimationFrame(() => recipientNameInputRef.current?.focus());
+      return;
+    }
+    if (trimmedRecipientName.length > 100) {
+      setError("The recipient's name must be 100 characters or fewer.");
+      setMapSheetExpanded(true);
+      requestAnimationFrame(() => recipientNameInputRef.current?.focus());
+      return;
+    }
+    if (trimmedRecipientPhone.length < 7 || trimmedRecipientPhone.length > 20) {
+      setError("Enter a recipient phone number between 7 and 20 characters.");
+      setMapSheetExpanded(true);
+      requestAnimationFrame(() => recipientPhoneInputRef.current?.focus());
+      return;
+    }
+    if (itemDescription.trim().length < 3 || itemDescription.trim().length > 300) {
+      setError("Describe the item using 3 to 300 characters.");
+      setMapSheetExpanded(true);
+      requestAnimationFrame(() => itemDescriptionInputRef.current?.focus());
+      return;
+    }
+
     setWorking(true);
     setError("");
     setMessage("");
@@ -1272,9 +1952,9 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
         body: JSON.stringify({
           ...parcelLocations,
           sizeCategory: parcelSize,
-          recipientName,
-          recipientPhone,
-          parcelDescription: itemDescription,
+          recipientName: trimmedRecipientName,
+          recipientPhone: trimmedRecipientPhone,
+          parcelDescription: itemDescription.trim(),
           paymentMethod
         })
       }, refreshAccessToken);
@@ -1650,6 +2330,13 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
     }
   }
 
+  const showCollectionError = Boolean(dashboardLoadError) && (
+    (isCustomer && mainTab === "activity" && (customerActivityTab === "parcels" ? sentParcels.length === 0 : rides.length === 0)) ||
+    (isApprovedRider && mainTab === "requests" && (riderRequestTab === "rides" ? availableRides.length === 0 : availableParcels.length === 0)) ||
+    (isApprovedRider && mainTab === "jobs" && (riderJobTab === "rides" ? rides.length === 0 : assignedParcels.length === 0)) ||
+    (activeSession.user.role === "ADMIN" && ((adminTab === "riders" && adminRiders.length === 0) || (adminTab === "fares" && adminFareRules.length === 0)))
+  );
+
   async function performRideAction(rideId: string, action: "accept" | "cancel" | "ARRIVED_AT_PICKUP" | "IN_PROGRESS" | "COMPLETED") {
     setWorking(true);
     setError("");
@@ -1665,7 +2352,13 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
           body: JSON.stringify({ status: action })
         }, refreshAccessToken);
       }
-      setMessage(action === "accept" ? "Ride accepted. The customer can now see your assignment." : "Ride status updated.");
+      if (isApprovedRider && action !== "cancel") {
+        setRiderJobTab("rides");
+        setMainTab("home");
+      }
+      setMessage(action === "accept"
+        ? "Ride accepted. Follow the map and complete each ride step from this screen."
+        : "Ride status updated. Your next ride step is ready below the map.");
       await loadDashboard();
     } catch (actionError) {
       setError(actionError instanceof Error ? actionError.message : "Unable to update this ride.");
@@ -1677,22 +2370,44 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
   return (
     <SafeAreaView style={styles.safeArea}>
       <StatusBar style={appearance === "DARK" ? "light" : "dark"} />
+      <Animated.View
+        style={{ flex: 1, opacity: screenOpacity, transform: [{ translateY: screenOffset }] }}
+        onLayout={(event) => {
+          const { width, height } = event.nativeEvent.layout;
+          setWorkspaceViewport((current) =>
+            Math.abs(current.width - width) > 1 || Math.abs(current.height - height) > 1
+              ? { width, height }
+              : current
+          );
+        }}
+      >
       <ScrollView
         style={styles.mainScroll}
-        contentContainerStyle={[styles.page, isCustomer && mainTab === "home" ? styles.mapHomePage : null]}
+        scrollEnabled={!((isCustomer && mainTab === "home") || mapGestureActive)}
+        contentContainerStyle={[
+          styles.page,
+          { paddingHorizontal: isCustomer && mainTab === "home" ? 0 : dashboardHorizontalGutter },
+          isCustomer && mainTab === "home" ? styles.mapHomePage : null
+        ]}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
         {!(isCustomer && mainTab === "home") ? (
         <View style={styles.topBar}>
           <View>
-            <Text style={styles.brandSmall}>NAVIGO</Text>
-            <Text style={styles.greeting}>Hello, {session.user.fullName.split(" ")[0]}</Text>
+            <View style={styles.brandHeader}>
+              <Image source={require("./assets/icon.png")} style={styles.brandSmallLogo} resizeMode="contain" accessibilityLabel="NAVIGO logo" />
+              <Text style={styles.brandSmall}>NAVIGO</Text>
+            </View>
+            <Text style={[
+              styles.greeting,
+              workspaceViewport.width > 0 && workspaceViewport.width < 360 ? styles.greetingCompact : null
+            ]}>Hello, {session.user.fullName.split(" ")[0]}</Text>
             <Text style={styles.muted}>{isCustomer ? "Your ride starts here" : "Your rider workspace"}</Text>
           </View>
 {activeSession.user.role === "ADMIN" ? (
             <TouchableOpacity style={styles.signOut} onPress={onSignOut} disabled={signingOut}>
-              {signingOut ? <ActivityIndicator color="#174A72" /> : <Text style={styles.signOutText}>Sign out</Text>}
+              {signingOut ? <ActivityIndicator color={BRAND_COLORS.navy} /> : <Text style={styles.signOutText}>Sign out</Text>}
             </TouchableOpacity>
           ) : null}
         </View>
@@ -1702,14 +2417,16 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
           <>
             {mainTab === "home" ? (
               <>
-            <View style={styles.customerMapFrame}>
-              <MapView
+            <View style={[styles.customerMapFrame, { height: dashboardViewportHeight }]}>
+              <SafeMapView
                 style={styles.customerMap}
                 region={mapRegion}
+                routeCoordinates={quote?.routeCoordinates ?? parcelQuote?.routeCoordinates}
+                markers={[
+                  { coordinate: locations?.pickup ?? parcelLocations?.pickup ?? selectedPickupLocation ?? deviceLocation, title: "Pickup", pinColor: "#21865B" },
+                  { coordinate: locations?.destination ?? parcelLocations?.destination ?? selectedDestinationLocation, title: "Destination", pinColor: "#C54848" }
+                ]}
                 onRegionChangeComplete={setMapRegion}
-                onPress={(event) => {
-                  if (mapSelectionField) void selectCustomerMapPoint(event.nativeEvent.coordinate);
-                }}
                 customMapStyle={LIGHT_MAP_STYLE}
                 showsCompass={false}
                 showsScale={false}
@@ -1718,9 +2435,9 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                 toolbarEnabled={false}
               >
                 {quote && locations ? (
-                  <Polyline coordinates={quote.routeCoordinates} strokeColor="#1F76A8" strokeWidth={5} />
+                  <Polyline coordinates={quote.routeCoordinates} strokeColor={BRAND_COLORS.orange} strokeWidth={5} />
                 ) : parcelQuote && parcelLocations ? (
-                  <Polyline coordinates={parcelQuote.routeCoordinates} strokeColor="#1F76A8" strokeWidth={5} />
+                  <Polyline coordinates={parcelQuote.routeCoordinates} strokeColor={BRAND_COLORS.orange} strokeWidth={5} />
                 ) : null}
                 {(locations?.pickup ?? parcelLocations?.pickup ?? selectedPickupLocation ?? deviceLocation) ? (
                   <Marker
@@ -1738,41 +2455,21 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                     pinColor="#C54848"
                   />
                 ) : null}
-              </MapView>
+              </SafeMapView>
               <View style={styles.mapBrandPill}>
+                <Image source={require("./assets/icon.png")} style={styles.mapBrandLogo} resizeMode="contain" accessibilityLabel="NAVIGO logo" />
                 <Text style={styles.mapBrandText}>NAVIGO  •  ARUA</Text>
               </View>
-              <View style={styles.mapSelectionControls}>
-                <TouchableOpacity
-                  style={[styles.mapSelectionButton, mapSelectionField === "pickup" ? styles.mapSelectionButtonActive : null]}
-                  onPress={() => setMapSelectionField(mapSelectionField === "pickup" ? null : "pickup")}
-                >
-                  <Text style={[styles.mapSelectionButtonText, mapSelectionField === "pickup" ? styles.mapSelectionButtonTextActive : null]}>Set pickup</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                  style={[styles.mapSelectionButton, mapSelectionField === "destination" ? styles.mapSelectionButtonActive : null]}
-                  onPress={() => setMapSelectionField(mapSelectionField === "destination" ? null : "destination")}
-                >
-                  <Text style={[styles.mapSelectionButtonText, mapSelectionField === "destination" ? styles.mapSelectionButtonTextActive : null]}>Set destination</Text>
-                </TouchableOpacity>
-              </View>
-              {!mapSelectionField ? (
-                <TouchableOpacity style={styles.customerMapRecenterButton} onPress={() => void detectPickupLocation(false)}>
-                  <Text style={styles.mapRecenterText}>◎</Text>
-                </TouchableOpacity>
-              ) : null}
-              {mapSelectionField ? (
-                <View style={[styles.mapSelectionHint, styles.mapSelectionHintAboveSheet]}>
-                  <Text style={styles.mapSelectionHintText}>Tap the map to choose your {mapSelectionField} point</Text>
-                  <TouchableOpacity onPress={() => setMapSelectionField(null)}><Text style={styles.mapSelectionCancel}>Cancel</Text></TouchableOpacity>
-                </View>
-              ) : null}
+              <TouchableOpacity style={styles.customerMapRecenterButton} onPress={() => void detectPickupLocation(false)}>
+                <Text style={styles.mapRecenterText}>◎</Text>
+              </TouchableOpacity>
               {locationStatus !== "ready" ? (
                 <TouchableOpacity style={[styles.locationRetryPill, styles.mapLocationRetryPill]} onPress={() => void detectPickupLocation(true)}>
                   <Text style={styles.locationRetryText}>{locationStatus === "locating" ? "Locating..." : "Use my location"}</Text>
                 </TouchableOpacity>
               ) : null}
             <Animated.View style={[styles.customerMapSheet, { height: mapSheetHeight }]}>
+              {activeLocationField === null ? (
               <View style={styles.mapSheetDragArea} {...mapSheetPanResponder.panHandlers}>
                 <View style={styles.mapSheetGrip} />
                 <TouchableOpacity style={styles.mapSheetWhereTo} onPress={() => setMapSheetExpanded((expanded) => !expanded)}>
@@ -1782,7 +2479,16 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                   </Text>
                 </TouchableOpacity>
               </View>
+              ) : (
+                <View style={styles.locationSearchHeader}>
+                  <TouchableOpacity accessibilityRole="button" accessibilityLabel="Back to booking map" style={styles.locationSearchBackButton} onPress={() => { setActiveLocationField(null); Keyboard.dismiss(); }}>
+                    <Text style={styles.locationSearchBackText}>‹</Text>
+                  </TouchableOpacity>
+                  <Text style={styles.locationSearchTitle}>Pickup & Drop Off</Text>
+                </View>
+              )}
               <ScrollView style={styles.mapSheetScroll} contentContainerStyle={styles.mapSheetContent} keyboardShouldPersistTaps="handled" nestedScrollEnabled showsVerticalScrollIndicator={false}>
+            {activeLocationField === null ? <>
             <View style={styles.serviceHeading}>
               <Text style={styles.serviceHeadingTitle}>Where can we help you go?</Text>
               <Text style={styles.serviceHeadingSubtitle}>Choose a service</Text>
@@ -1799,12 +2505,13 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                 <Text style={styles.serviceDescription}>Pickup and delivery</Text>
               </TouchableOpacity>
             </View>
+            </> : null}
 
 
             {tab === "parcel" ? (
               <View style={styles.card}>
-                <Text style={styles.cardTitle}>Send an item</Text>
-                <Text style={styles.bodyText}>We'll collect your item and deliver it to the person you choose.</Text>
+                {activeLocationField === null ? <Text style={styles.cardTitle}>Send an item</Text> : null}
+                {activeLocationField === null ? <Text style={styles.bodyText}>We'll collect your item and deliver it to the person you choose.</Text> : null}
                 {createdParcel ? (
                   <View style={styles.codePanel}>
                     <Text style={styles.quoteLabel}>REQUEST CREATED</Text>
@@ -1818,13 +2525,56 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                 ) : (
                   <>
                     <Text style={styles.label}>Pickup location</Text>
-                    <TextInput style={styles.addressInput} value={pickup} onFocus={() => setActiveLocationField("pickup")} onChangeText={(value) => { setPickup(value); setSelectedPickupLocation(null); setSelectedPickupSearchQuery(""); setParcelQuote(null); setParcelLocations(null); }} placeholder="Where should we collect the item?" placeholderTextColor="#98A2B3" />
-                    <LocationSuggestions visible={activeLocationField === "pickup"} query={pickup} onSelect={(suggestion) => { setPickup(suggestion.label); setSelectedPickupLocation(suggestion.latitude !== undefined && suggestion.longitude !== undefined ? { latitude: suggestion.latitude, longitude: suggestion.longitude, description: suggestion.label } : null); setSelectedPickupSearchQuery(suggestion.searchQuery ?? ""); setActiveLocationField(null); setParcelQuote(null); setParcelLocations(null); }} />
+                    <TextInput
+                      ref={pickupInputRef}
+                      style={styles.addressInput}
+                      value={pickup}
+                      accessibilityLabel="Item pickup location"
+                      accessibilityHint="Enter or choose the place where the item should be collected."
+                      onFocus={() => focusLocationField("pickup")}
+                      onChangeText={(value) => { setPickup(value); setSelectedPickupLocation(null); setSelectedPickupSearchQuery(""); setParcelQuote(null); setParcelLocations(null); setError(""); }}
+                      placeholder="Where should we collect the item?"
+                      placeholderTextColor="#98A2B3"
+                      returnKeyType="next"
+                      onSubmitEditing={() => destinationInputRef.current?.focus()}
+                    />
+                    {activeLocationField === "pickup" ? <TouchableOpacity style={styles.locationSearchLocationAction} onPress={() => void detectPickupLocation(true)}><Text style={styles.locationSearchLocationActionText}>◎  Use current location</Text></TouchableOpacity> : null}
+                    <LocationSuggestions visible={activeLocationField === "pickup"} query={pickup} onSelect={(suggestion) => selectLocationSuggestion("pickup", suggestion)} />
                     <Text style={styles.label}>Delivery location</Text>
-                    <TextInput style={styles.addressInput} value={destination} onFocus={() => setActiveLocationField("destination")} onChangeText={(value) => { setDestination(value); setSelectedDestinationLocation(null); setSelectedDestinationSearchQuery(""); setParcelQuote(null); setParcelLocations(null); }} placeholder="Where should we deliver it?" placeholderTextColor="#98A2B3" />
-                    <LocationSuggestions visible={activeLocationField === "destination"} query={destination} onSelect={(suggestion) => { setDestination(suggestion.label); setSelectedDestinationLocation(suggestion.latitude !== undefined && suggestion.longitude !== undefined ? { latitude: suggestion.latitude, longitude: suggestion.longitude, description: suggestion.label } : null); setSelectedDestinationSearchQuery(suggestion.searchQuery ?? ""); setActiveLocationField(null); setParcelQuote(null); setParcelLocations(null); }} />
+                    <TextInput
+                      ref={destinationInputRef}
+                      style={styles.addressInput}
+                      value={destination}
+                      accessibilityLabel="Item delivery location"
+                      accessibilityHint="Enter or choose where the item should be delivered."
+                      onFocus={() => focusLocationField("destination")}
+                      onChangeText={(value) => { setDestination(value); setSelectedDestinationLocation(null); setSelectedDestinationSearchQuery(""); setParcelQuote(null); setParcelLocations(null); setError(""); }}
+                      placeholder="Where should we deliver it?"
+                      placeholderTextColor="#98A2B3"
+                      returnKeyType="done"
+                      onSubmitEditing={() => {
+                        setActiveLocationField(null);
+                        setMapSheetExpanded(false);
+                        Keyboard.dismiss();
+                        void getParcelFareEstimate();
+                      }}
+                    />
+                    <LocationSuggestions visible={activeLocationField === "destination"} query={destination} onSelect={(suggestion) => selectLocationSuggestion("destination", suggestion)} />
                     <Text style={styles.label}>What are you sending?</Text>
-                    <TextInput style={styles.addressInput} value={itemDescription} onChangeText={(value) => { setItemDescription(value); setParcelQuote(null); }} placeholder="e.g. Documents, clothes, phone" placeholderTextColor="#98A2B3" />
+                    <TextInput
+                      ref={itemDescriptionInputRef}
+                      style={styles.addressInput}
+                      value={itemDescription}
+                      accessibilityLabel="Item description"
+                      accessibilityHint="Briefly describe the item being sent."
+                      onChangeText={(value) => { setItemDescription(value); setParcelQuote(null); setError(""); }}
+                      placeholder="e.g. Documents, clothes, phone"
+                      placeholderTextColor="#98A2B3"
+                      autoCapitalize="sentences"
+                      maxLength={300}
+                      returnKeyType="next"
+                      onSubmitEditing={() => recipientNameInputRef.current?.focus()}
+                    />
                     <Text style={styles.label}>Item size</Text>
                     <View style={styles.paymentRow}>
                       <ChoiceButton label="Small" selected={parcelSize === "SMALL"} onPress={() => { setParcelSize("SMALL"); setParcelQuote(null); }} />
@@ -1832,9 +2582,35 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                       <ChoiceButton label="Large" selected={parcelSize === "LARGE"} onPress={() => { setParcelSize("LARGE"); setParcelQuote(null); }} />
                     </View>
                     <Text style={styles.label}>Recipient's name</Text>
-                    <TextInput style={styles.addressInput} value={recipientName} onChangeText={setRecipientName} placeholder="Person receiving the item" placeholderTextColor="#98A2B3" />
+                    <TextInput
+                      ref={recipientNameInputRef}
+                      style={styles.addressInput}
+                      value={recipientName}
+                      accessibilityLabel="Recipient name"
+                      accessibilityHint="Enter the name of the person receiving the item."
+                      onChangeText={(value) => { setRecipientName(value); setError(""); }}
+                      placeholder="Person receiving the item"
+                      placeholderTextColor="#98A2B3"
+                      autoCapitalize="words"
+                      maxLength={100}
+                      returnKeyType="next"
+                      onSubmitEditing={() => recipientPhoneInputRef.current?.focus()}
+                    />
                     <Text style={styles.label}>Recipient's phone number</Text>
-                    <TextInput style={styles.addressInput} value={recipientPhone} onChangeText={setRecipientPhone} keyboardType="phone-pad" placeholder="e.g. 07XXXXXXXX" placeholderTextColor="#98A2B3" />
+                    <TextInput
+                      ref={recipientPhoneInputRef}
+                      style={styles.addressInput}
+                      value={recipientPhone}
+                      accessibilityLabel="Recipient phone number"
+                      accessibilityHint="Enter a phone number with 7 to 20 characters."
+                      onChangeText={(value) => { setRecipientPhone(value); setError(""); }}
+                      keyboardType="phone-pad"
+                      maxLength={20}
+                      placeholder="e.g. 07XXXXXXXX"
+                      placeholderTextColor="#98A2B3"
+                      returnKeyType="done"
+                      onSubmitEditing={() => Keyboard.dismiss()}
+                    />
                     <Text style={styles.label}>Payment preference</Text>
                     <View style={styles.paymentRow}>
                       <ChoiceButton label="Cash" selected={paymentMethod === "CASH"} onPress={() => setPaymentMethod("CASH")} />
@@ -1843,11 +2619,11 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                     {parcelQuote && parcelLocations ? (
                       <>
                         <View style={styles.routeMapFrame}>
-                          <MapView style={styles.routeMap} initialRegion={routeMapRegion(parcelQuote.routeCoordinates)} scrollEnabled={false} zoomEnabled={false} rotateEnabled={false} pitchEnabled={false} toolbarEnabled={false} showsCompass={false} showsScale={false}>
-                            <Polyline coordinates={parcelQuote.routeCoordinates} strokeColor="#1F76A8" strokeWidth={5} />
+                          <SafeMapView style={styles.routeMap} initialRegion={routeMapRegion(parcelQuote.routeCoordinates)} routeCoordinates={parcelQuote.routeCoordinates} markers={[{ coordinate: parcelLocations.pickup, title: "Pickup", pinColor: "#21865B" }, { coordinate: parcelLocations.destination, title: "Delivery", pinColor: "#C54848" }]} scrollEnabled={false} zoomEnabled={false} rotateEnabled={false} pitchEnabled={false} toolbarEnabled={false} showsCompass={false} showsScale={false}>
+                            <Polyline coordinates={parcelQuote.routeCoordinates} strokeColor={BRAND_COLORS.orange} strokeWidth={5} />
                             <Marker coordinate={parcelLocations.pickup} title="Pickup" pinColor="#21865B" />
                             <Marker coordinate={parcelLocations.destination} title="Delivery" pinColor="#C54848" />
-                          </MapView>
+                          </SafeMapView>
                         </View>
                         <View style={styles.quoteCard}>
                           <Text style={styles.quoteLabel}>ITEM DELIVERY FEE</Text>
@@ -1862,7 +2638,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                 {error ? <Notice tone="error" text={error} /> : null}
                 {message ? <Notice tone="success" text={message} /> : null}
                 {!createdParcel ? (
-                  <PrimaryButton label={parcelQuote ? "Confirm item delivery" : "Calculate delivery fee"} loading={working} onPress={parcelQuote ? requestParcel : getParcelFareEstimate} disabled={working || !pickup.trim() || !destination.trim() || !itemDescription.trim() || !recipientName.trim() || !recipientPhone.trim()} />
+                  <PrimaryButton label={parcelQuote ? "Confirm item delivery" : "Calculate delivery fee"} loading={working} onPress={parcelQuote ? requestParcel : getParcelFareEstimate} disabled={working} />
                 ) : (
                   <PrimaryButton label="Send another item" loading={false} onPress={() => { setCreatedParcel(null); setPickup(""); setDestination(""); setItemDescription(""); setRecipientName(""); setRecipientPhone(""); setSelectedPickupLocation(null); setSelectedDestinationLocation(null); setParcelQuote(null); }} />
                 )}
@@ -1870,121 +2646,132 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
 
             ) : (
               <View style={styles.card}>
-                <Text style={styles.cardTitle}>Plan your trip</Text>
-                <Text style={styles.label}>Pickup location</Text>
-                <TextInput
-                  style={styles.addressInput}
-                  value={pickup}
-                  onFocus={() => setActiveLocationField("pickup")}
-                  onChangeText={(value) => {
-                    setPickup(value);
-                    setSelectedPickupLocation(null);
-                    setSelectedPickupSearchQuery("");
-                    setQuote(null);
-                    setLocations(null);
-                  }}
-                  placeholder="e.g. Muni University or Arua Main Market"
-                  placeholderTextColor="#98A2B3"
-                />
-                <LocationSuggestions
-                  visible={activeLocationField === "pickup"}
-                  query={pickup}
-                  onSelect={(suggestion) => {
-                    setPickup(suggestion.label);
-                    setSelectedPickupLocation(
-                      suggestion.latitude !== undefined && suggestion.longitude !== undefined
-                        ? { latitude: suggestion.latitude, longitude: suggestion.longitude, description: suggestion.label }
-                        : null
-                    );
-                    setSelectedPickupSearchQuery(suggestion.searchQuery ?? "");
-                    setActiveLocationField(null);
-                    setQuote(null);
-                    setLocations(null);
-                  }}
-                />
-                <Text style={styles.label}>Destination</Text>
-                <TextInput
-                  style={styles.addressInput}
-                  value={destination}
-                  onFocus={() => setActiveLocationField("destination")}
-                  onChangeText={(value) => {
-                    setDestination(value);
-                    setSelectedDestinationLocation(null);
-                    setSelectedDestinationSearchQuery("");
-                    setQuote(null);
-                    setLocations(null);
-                  }}
-                  placeholder="e.g. Muni Site or Arua Hill"
-                  placeholderTextColor="#98A2B3"
-                />
-                <LocationSuggestions
-                  visible={activeLocationField === "destination"}
-                  query={destination}
-                  onSelect={(suggestion) => {
-                    setDestination(suggestion.label);
-                    setSelectedDestinationLocation(
-                      suggestion.latitude !== undefined && suggestion.longitude !== undefined
-                        ? { latitude: suggestion.latitude, longitude: suggestion.longitude, description: suggestion.label }
-                        : null
-                    );
-                    setSelectedDestinationSearchQuery(suggestion.searchQuery ?? "");
-                    setActiveLocationField(null);
-                    setQuote(null);
-                    setLocations(null);
-                  }}
-                />
-
-                <Text style={styles.label}>Payment preference</Text>
-                <View style={styles.paymentRow}>
-                  <ChoiceButton label="Cash" selected={paymentMethod === "CASH"} onPress={() => setPaymentMethod("CASH")} />
-                  <ChoiceButton label="Mobile Money" selected={paymentMethod === "MOBILE_MONEY"} onPress={() => setPaymentMethod("MOBILE_MONEY")} />
-                </View>
-
-                {quote && locations && (
+                {quote && locations ? (
                   <>
-                    <View style={styles.routeMapFrame}>
-                      <MapView
-                        style={styles.routeMap}
-                        initialRegion={routeMapRegion(quote.routeCoordinates)}
-                        scrollEnabled={false}
-                        zoomEnabled={false}
-                        rotateEnabled={false}
-                        pitchEnabled={false}
-                        toolbarEnabled={false}
-                        showsCompass={false}
-                        showsScale={false}
-                        loadingEnabled
-                      >
-                        <Polyline
-                          coordinates={quote.routeCoordinates}
-                          strokeColor="#1F76A8"
-                          strokeWidth={5}
-                        />
-                        <Marker coordinate={locations.pickup} title="Pickup" pinColor="#21865B" />
-                        <Marker coordinate={locations.destination} title="Destination" pinColor="#C54848" />
-                      </MapView>
+                    <Text style={styles.quoteLabel}>ROUTE READY FOR REVIEW</Text>
+                    <Text style={styles.cardTitle}>Your ride details</Text>
+                    <View style={styles.routeReviewLocations}>
+                      <View style={styles.routeReviewStop}>
+                        <View style={styles.pickupDot} />
+                        <View style={styles.routeReviewStopCopy}>
+                          <Text style={styles.quoteMetricLabel}>PICKUP</Text>
+                          <Text style={styles.routeReviewAddress}>{locations.pickup.description || pickup}</Text>
+                        </View>
+                      </View>
+                      <View style={styles.routeReviewStop}>
+                        <View style={styles.destinationDot} />
+                        <View style={styles.routeReviewStopCopy}>
+                          <Text style={styles.quoteMetricLabel}>DESTINATION</Text>
+                          <Text style={styles.routeReviewAddress}>{locations.destination.description || destination}</Text>
+                        </View>
+                      </View>
                     </View>
-                    {quote.routingProvider === "VALHALLA_MOTORCYCLE" ? (
-                      <Text style={styles.attributionText}>Road route data © OpenStreetMap contributors</Text>
-                    ) : null}
                     <View style={styles.quoteCard}>
-                      <Text style={styles.quoteLabel}>ESTIMATED FARE</Text>
+                      <Text style={styles.quoteLabel}>ESTIMATED RIDE FARE</Text>
                       <Text style={styles.quoteAmount}>{money(quote.fareAmountUgx)}</Text>
-                      <Text style={styles.quoteNote}>{quote.distanceKm.toFixed(2)} km by motorcycle road route</Text>
-                      <Text style={styles.quoteNote}>About {Math.max(1, Math.ceil(quote.durationSeconds / 60))} minutes estimated travel time</Text>
-                      <Text style={styles.quoteNote}>Route and time are estimates. Road conditions and diversions may change the actual journey.</Text>
+                      <View style={styles.quoteDivider} />
+                      <View style={styles.quoteMetricRow}>
+                        <Text style={styles.quoteMetricLabel}>Road distance</Text>
+                        <Text style={styles.quoteMetricValue}>{quote.distanceKm.toFixed(2)} km</Text>
+                      </View>
+                      <View style={styles.quoteMetricRow}>
+                        <Text style={styles.quoteMetricLabel}>Estimated travel time</Text>
+                        <Text style={styles.quoteMetricValue}>About {Math.max(1, Math.ceil(quote.durationSeconds / 60))} min</Text>
+                      </View>
+                      <Text style={styles.quoteNote}>The orange line on the map shows the suggested motorcycle road route. This is an estimate; actual travel time can change with road conditions.</Text>
+                      <Text style={styles.quoteNote}>This quoted fare is held for 5 minutes. Recalculate the route and fare if it expires before you confirm.</Text>
                     </View>
+                    <Text style={styles.label}>Choose how to pay</Text>
+                    <View style={styles.paymentRow}>
+                      <ChoiceButton label="Cash" selected={paymentMethod === "CASH"} onPress={() => setPaymentMethod("CASH")} />
+                      <ChoiceButton label="Mobile Money" selected={paymentMethod === "MOBILE_MONEY"} onPress={() => setPaymentMethod("MOBILE_MONEY")} />
+                    </View>
+                    <TouchableOpacity
+                      accessibilityRole="button"
+                      style={styles.quoteEditButton}
+                      onPress={() => {
+                        setQuote(null);
+                        setLocations(null);
+                        setMapSheetExpanded(true);
+                        setActiveLocationField("pickup");
+                        requestAnimationFrame(() => pickupInputRef.current?.focus());
+                      }}
+                    >
+                      <Text style={styles.quoteEditButtonText}>Change pickup or destination</Text>
+                    </TouchableOpacity>
+                    <PrimaryButton
+                      label={`Confirm ride · ${money(quote.fareAmountUgx)}`}
+                      loading={working}
+                      onPress={requestRide}
+                      disabled={working}
+                    />
+                  </>
+                ) : (
+                  <>
+                    {activeLocationField === null ? <Text style={styles.cardTitle}>Plan your trip</Text> : null}
+                    {activeLocationField === null ? <Text style={styles.bodyText}>Choose where your ride starts and where you are going. NAVIGO will show the motorcycle road route and estimated fare before you confirm.</Text> : null}
+                    <Text style={styles.label}>Pickup location</Text>
+                    <TextInput
+                      ref={pickupInputRef}
+                      style={styles.addressInput}
+                      value={pickup}
+                      accessibilityLabel="Ride pickup location"
+                      accessibilityHint="Enter or choose where your ride should pick you up."
+                      onFocus={() => focusLocationField("pickup")}
+                      onChangeText={(value) => {
+                        setPickup(value);
+                        setSelectedPickupLocation(null);
+                        setSelectedPickupSearchQuery("");
+                        setQuote(null);
+                        setLocations(null);
+                        setError("");
+                      }}
+                      placeholder="e.g. Muni University or Arua Main Market"
+                      placeholderTextColor="#98A2B3"
+                    />
+                    {activeLocationField === "pickup" ? <TouchableOpacity style={styles.locationSearchLocationAction} onPress={() => void detectPickupLocation(true)}><Text style={styles.locationSearchLocationActionText}>◎  Use current location</Text></TouchableOpacity> : null}
+                    <LocationSuggestions
+                      visible={activeLocationField === "pickup"}
+                      query={pickup}
+                      onSelect={(suggestion) => selectLocationSuggestion("pickup", suggestion)}
+                    />
+                    <Text style={styles.label}>Destination</Text>
+                    <TextInput
+                      ref={destinationInputRef}
+                      style={styles.addressInput}
+                      value={destination}
+                      accessibilityLabel="Ride destination"
+                      accessibilityHint="Enter or choose where you want to travel."
+                      onFocus={() => focusLocationField("destination")}
+                      onChangeText={(value) => {
+                        setDestination(value);
+                        setSelectedDestinationLocation(null);
+                        setSelectedDestinationSearchQuery("");
+                        setQuote(null);
+                        setLocations(null);
+                        setError("");
+                      }}
+                      placeholder="e.g. Muni Site or Arua Hill"
+                      placeholderTextColor="#98A2B3"
+                      returnKeyType="done"
+                      onSubmitEditing={previewRideRoute}
+                    />
+                    <LocationSuggestions
+                      visible={activeLocationField === "destination"}
+                      query={destination}
+                      onSelect={(suggestion) => selectLocationSuggestion("destination", suggestion)}
+                    />
+                    <PrimaryButton
+                      label="Show road route & fare"
+                      loading={working}
+                      onPress={previewRideRoute}
+                      disabled={working}
+                    />
+                    <Text style={styles.quoteNote}>Step 1: choose both places. Step 2: review the route and price. Step 3: confirm only when you are happy with the fare.</Text>
                   </>
                 )}
-
                 {error ? <Notice tone="error" text={error} /> : null}
                 {message ? <Notice tone="success" text={message} /> : null}
-
-                {!quote ? (
-                  <PrimaryButton label="Calculate fare" loading={working} onPress={getFareEstimate} disabled={working || !pickup.trim() || !destination.trim()} />
-                ) : (
-                  <PrimaryButton label="Confirm ride request" loading={working} onPress={requestRide} disabled={working} />
-                )}
               </View>
 
             )}
@@ -1995,9 +2782,20 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
             ) : mainTab === "activity" ? (
               <View style={styles.section}>
                 <SectionHeader title="Your activity" onRefresh={loadDashboard} loading={loading} />
+                <Text style={styles.activityIntro}>Follow your ride requests and item deliveries, including their latest status and rider details.</Text>
+                <View style={styles.activitySummaryRow}>
+                  <View style={styles.activitySummaryCard}>
+                    <Text style={styles.activitySummaryValue}>{rides.filter((ride) => !["COMPLETED", "CANCELLED", "EXPIRED"].includes(ride.status)).length}</Text>
+                    <Text style={styles.activitySummaryLabel}>Active rides</Text>
+                  </View>
+                  <View style={styles.activitySummaryCard}>
+                    <Text style={styles.activitySummaryValue}>{sentParcels.filter((parcel) => !["DELIVERED", "CANCELLED", "EXPIRED"].includes(parcel.status)).length}</Text>
+                    <Text style={styles.activitySummaryLabel}>Active deliveries</Text>
+                  </View>
+                </View>
                 <View style={styles.tabRow}>
-                  <TabButton label="Rides" selected={customerActivityTab === "rides"} onPress={() => setCustomerActivityTab("rides")} />
-                  <TabButton label="Item deliveries" selected={customerActivityTab === "parcels"} onPress={() => setCustomerActivityTab("parcels")} />
+                  <TabButton label={`Rides · ${rides.length}`} selected={customerActivityTab === "rides"} onPress={() => setCustomerActivityTab("rides")} />
+                  <TabButton label={`Item deliveries · ${sentParcels.length}`} selected={customerActivityTab === "parcels"} onPress={() => setCustomerActivityTab("parcels")} />
                 </View>
                 {customerActivityTab === "parcels" ? (
                   <>
@@ -2009,7 +2807,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                     busy={working}
                     onCancel={["PENDING", "ACCEPTED", "ARRIVED_AT_PICKUP"].includes(parcel.status) ? () => performParcelAction(parcel.id, "cancel") : undefined}
                   />
-                )) : <EmptyState title="No item deliveries yet" text="Items you send will appear here with their delivery progress." />}
+                )) : <CollectionState loading={loading} error={dashboardLoadError} emptyTitle="No item deliveries yet" emptyText="Items you send will appear here with their delivery progress." onRetry={() => void loadDashboard()} label="Loading your item deliveries" />}
                   </>
                 ) : (
                   <>
@@ -2021,10 +2819,10 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                     busy={working}
                     onCancel={() => performRideAction(ride.id, "cancel")}
                   />
-                )) : <EmptyState title="No rides yet" text="Your ride requests and trip history will appear here." />}
+                )) : <CollectionState loading={loading} error={dashboardLoadError} emptyTitle="No rides yet" emptyText="Your ride requests and trip history will appear here." onRetry={() => void loadDashboard()} label="Loading your rides" />}
                   </>
                 )}
-                {error ? <Notice tone="error" text={error} /> : null}
+                {error && !showCollectionError ? <Notice tone="error" text={error} /> : null}
                 {message ? <Notice tone="success" text={message} /> : null}
               </View>
             ) : (
@@ -2049,11 +2847,31 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
               </View>
             ) : mainTab === "home" ? (
               <>
-                <View style={styles.riderMapFrame}>
-                  <MapView
+                <View style={[styles.riderMapFrame, { height: riderMapHeight }]}>
+                  <SafeMapView
+                    ref={riderMapRef}
                     style={styles.customerMap}
                     region={mapRegion}
                     onRegionChangeComplete={setMapRegion}
+                    routeCoordinates={riderMapRouteCoordinates}
+                    markers={[{ coordinate: riderDeviceLocation, title: "You", pinColor: BRAND_COLORS.blue }, { coordinate: riderMapPickup, title: "Pickup", pinColor: "#21865B" }, { coordinate: riderMapDestination, title: "Destination", pinColor: "#C54848" }]}
+                    onInteractionStart={() => setMapGestureActive(true)}
+                    onInteractionEnd={() => setMapGestureActive(false)}
+                    onMapReady={() => {
+                      setRiderMapReady(true);
+                      const pendingCenter = pendingRiderMapCenter.current;
+                      if (pendingCenter) {
+                        pendingRiderMapCenter.current = null;
+                        requestAnimationFrame(() => {
+                          riderMapRef.current?.animateToRegion({
+                            latitude: pendingCenter.latitude,
+                            longitude: pendingCenter.longitude,
+                            latitudeDelta: 0.045,
+                            longitudeDelta: 0.045
+                          }, 650);
+                        });
+                      }
+                    }}
                     customMapStyle={LIGHT_MAP_STYLE}
                     showsCompass={false}
                     showsScale={false}
@@ -2061,13 +2879,30 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                     showsMyLocationButton={false}
                     toolbarEnabled={false}
                   >
-                    {riderDeviceLocation ? <Marker coordinate={riderDeviceLocation} title="Your current location" pinColor="#236B9A" /> : null}
+                    {riderMapRouteCoordinates && riderMapRouteCoordinates.length >= 2
+                      ? <Polyline coordinates={riderMapRouteCoordinates} strokeColor={BRAND_COLORS.orange} strokeWidth={5} />
+                      : null}
+                    {!riderOnline && riderDeviceLocation ? <Marker coordinate={riderDeviceLocation} title="Your current location" pinColor={BRAND_COLORS.blue} /> : null}
                     {riderMapPickup ? <Marker coordinate={riderMapPickup} title="Accepted job pickup" description="Shown after this job is assigned to you" pinColor="#21865B" /> : null}
                     {riderMapDestination ? <Marker coordinate={riderMapDestination} title="Accepted job destination" description="Shown after this job is assigned to you" pinColor="#C54848" /> : null}
-                  </MapView>
-                  <View style={styles.mapBrandPill}><Text style={styles.mapBrandText}>NAVIGO • RIDER MAP</Text></View>
-                  <TouchableOpacity style={[styles.mapRecenterButton, styles.riderMapRecenterButton]} onPress={() => void centerRiderMap()}>
-                    <Text style={styles.mapRecenterText}>◎</Text>
+                  </SafeMapView>
+                  <View style={styles.mapBrandPill}>
+                    <Text style={styles.mapBrandText}>
+                      {activeRiderRide
+                        ? riderMapStoredRoute ? "NAVIGO • SAVED MOTORCYCLE ROUTE" : "NAVIGO • OLDER RIDE · ROUTE NOT SAVED"
+                        : "NAVIGO • RIDER MAP"}
+                    </Text>
+                  </View>
+                  <TouchableOpacity
+                    accessibilityRole="button"
+                    accessibilityLabel="Center rider map on current location"
+                    style={[styles.mapRecenterButton, styles.riderMapRecenterButton]}
+                    onPress={() => void centerRiderMap()}
+                    disabled={riderMapCenteringUi}
+                  >
+                    {riderMapCenteringUi
+                      ? <ActivityIndicator color={BRAND_COLORS.navy} size="small" />
+                      : <Text style={styles.mapRecenterText}>◎</Text>}
                   </TouchableOpacity>
                   {riderMapNavigationTarget ? (
                     <TouchableOpacity style={styles.riderDirectionsButton} onPress={() => void openRiderMapDirections()}>
@@ -2078,6 +2913,27 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                   ) : null}
                   <View style={styles.riderMapStatus}><View style={[styles.riderOnlineDot, riderOnline ? styles.riderOnlineDotActive : null]} /><Text style={styles.riderMapStatusText}>{riderOnline ? "You are online" : "You are offline"}</Text></View>
                 </View>
+                {activeRiderRide ? (
+                  <View style={styles.section}>
+                    <View style={styles.sectionHeader}>
+                      <Text style={styles.sectionTitle}>Your active ride</Text>
+                      <Text style={styles.refreshText}>
+                        {activeRiderRide.status === "ACCEPTED" ? "Heading to pickup" : activeRiderRide.status === "ARRIVED_AT_PICKUP" ? "At pickup" : "Journey started"}
+                      </Text>
+                    </View>
+                    <Text style={styles.trackingPrivacyText}>
+                      Keep this screen open. Your next ride action is available here, so you do not need to switch to My Jobs.
+                    </Text>
+                    <RideCard
+                      ride={activeRiderRide}
+                      busy={working}
+                      riderView
+                      onAdvance={activeRiderRideNextStatus
+                        ? () => performRideAction(activeRiderRide.id, activeRiderRideNextStatus)
+                        : undefined}
+                    />
+                  </View>
+                ) : null}
                 <View style={styles.trackingControlPanel}>
                   <Text style={styles.sectionTitle}>Rider availability</Text>
                   <Text style={styles.trackingPrivacyText}>
@@ -2087,21 +2943,25 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                   </Text>
                   <PrimaryButton label={riderOnline ? "Go offline" : "Go online"} loading={working} onPress={toggleRiderAvailability} disabled={working} />
                 </View>
-                <View style={styles.heroCard}>
-                  <Text style={styles.heroEyebrow}>RIDER REQUESTS</Text>
-                  <Text style={styles.heroTitle}>{riderOnline ? "Nearby rides." : "Ready for your next ride?"}</Text>
-                  <Text style={styles.heroText}>{riderOnline ? "Ride requests are matched to your fresh location and shown nearest first." : "Go online to receive ride requests close to you."}</Text>
-                </View>
-                <View style={styles.quickAccessRow}>
-                  <TouchableOpacity style={styles.quickAccessCard} onPress={() => setMainTab("requests")}>
-                    <Text style={styles.quickAccessTitle}>Find requests</Text>
-                    <Text style={styles.quickAccessText}>View nearby rides and item deliveries</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity style={styles.quickAccessCard} onPress={() => setMainTab("jobs")}>
-                    <Text style={styles.quickAccessTitle}>My jobs</Text>
-                    <Text style={styles.quickAccessText}>Manage work you have accepted</Text>
-                  </TouchableOpacity>
-                </View>
+                {!activeRiderRide ? (
+                  <>
+                    <View style={styles.heroCard}>
+                      <Text style={styles.heroEyebrow}>RIDER REQUESTS</Text>
+                      <Text style={styles.heroTitle}>{riderOnline ? "Nearby rides." : "Ready for your next ride?"}</Text>
+                      <Text style={styles.heroText}>{riderOnline ? "Ride requests are matched to your fresh location and shown nearest first." : "Go online to receive ride requests close to you."}</Text>
+                    </View>
+                    <View style={styles.quickAccessRow}>
+                      <TouchableOpacity style={styles.quickAccessCard} onPress={() => setMainTab("requests")}>
+                        <Text style={styles.quickAccessTitle}>Find requests</Text>
+                        <Text style={styles.quickAccessText}>View nearby rides and item deliveries</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity style={styles.quickAccessCard} onPress={() => setMainTab("jobs")}>
+                        <Text style={styles.quickAccessTitle}>My jobs</Text>
+                        <Text style={styles.quickAccessText}>Manage work you have accepted</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </>
+                ) : null}
               </>
             ) : mainTab === "requests" ? (
               <View style={styles.section}>
@@ -2120,16 +2980,20 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                     riderView
                     onAccept={() => performRideAction(ride.id, "accept")}
                   />
-                )) : <EmptyState
-                  title={riderOnline ? "No nearby rides yet" : "You are offline"}
-                  text={riderOnline ? "There are no ride requests within your current matching area. NAVIGO will keep checking for nearby requests." : "Go online to see ride requests near your current location."}
+                )) : <CollectionState
+                  loading={loading}
+                  error={dashboardLoadError}
+                  emptyTitle={riderOnline ? "No nearby rides yet" : "You are offline"}
+                  emptyText={riderOnline ? "There are no ride requests within your current matching area. NAVIGO will keep checking for nearby requests." : "Go online to see ride requests near your current location."}
+                  onRetry={() => void loadDashboard()}
+                  label="Loading nearby ride requests"
                 />}
                   </>
                 ) : (
                   <>
                     {availableParcels.length ? availableParcels.map((parcel) => (
                   <ParcelRiderCard key={parcel.id} parcel={parcel} busy={working} onAccept={() => performParcelAction(parcel.id, "accept")} />
-                )) : <EmptyState title="No available item deliveries" text="New customer item requests will appear here." />}
+                )) : <CollectionState loading={loading} error={dashboardLoadError} emptyTitle="No available item deliveries" emptyText="New customer item requests will appear here." onRetry={() => void loadDashboard()} label="Loading available item deliveries" />}
                   </>
                 )}
               </View>
@@ -2156,7 +3020,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                       onRecordPayment={ride.status === "COMPLETED" && ride.payment?.status === "UNPAID" ? () => recordManualPayment("ride", ride.id) : undefined}
                     />
                   );
-                }) : <EmptyState title="No assigned rides" text="Rides you accept will appear here." />}
+                }) : <CollectionState loading={loading} error={dashboardLoadError} emptyTitle="No assigned rides" emptyText="Rides you accept will appear here." onRetry={() => void loadDashboard()} label="Loading your assigned rides" />}
                   </>
                 ) : (
                   <>
@@ -2185,14 +3049,14 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                         : startParcelLocationSharing(parcel.id)
                       : undefined}
                   />
-                )) : <EmptyState title="No assigned item deliveries" text="Item deliveries you accept will appear here." />}
+                )) : <CollectionState loading={loading} error={dashboardLoadError} emptyTitle="No assigned item deliveries" emptyText="Item deliveries you accept will appear here." onRetry={() => void loadDashboard()} label="Loading your assigned item deliveries" />}
                   </>
                 )}
               </View>
             ) : (
               <ProfilePanel session={activeSession} onSignOut={onSignOut} signingOut={signingOut} onSaveProfile={saveOwnProfile} onChangePassword={changeOwnPassword} onSwitchWorkspace={switchWorkspace} onApplyRider={applyForRider} refreshAccessToken={refreshAccessToken} appearance={appearance} textSize={textSize} onUpdateUiPreferences={updateUiPreferences} />
             )}
-            {error ? <Notice tone="error" text={error} /> : null}
+            {error && !showCollectionError ? <Notice tone="error" text={error} /> : null}
             {message ? <Notice tone="success" text={message} /> : null}
           </>
         ) : activeSession.user.role === "ADMIN" ? (
@@ -2278,7 +3142,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                       ) : null}
                     </View>
                   </View>
-                )) : <EmptyState title="No rider applications here" text={adminRiderFilter === "PENDING" ? "New rider applications will appear here for review." : "There are no riders under this filter."} />}
+                )) : <CollectionState loading={loading} error={dashboardLoadError} emptyTitle="No rider applications here" emptyText={adminRiderFilter === "PENDING" ? "New rider applications will appear here for review." : "There are no riders under this filter."} onRetry={() => void loadDashboard()} label="Loading rider applications" />}
               </View>
             ) : (
               <View style={styles.section}>
@@ -2343,10 +3207,10 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                       </View>
                     </View>
                   );
-                }) : <EmptyState title="No fare rules configured" text="Create a fare rule above. Item delivery quotes will remain unavailable for sizes and distances without an active rule." />}
+                }) : <CollectionState loading={loading} error={dashboardLoadError} emptyTitle="No fare rules configured" emptyText="Create a fare rule above. Item delivery quotes will remain unavailable for sizes and distances without an active rule." onRetry={() => void loadDashboard()} label="Loading fare rules" />}
               </View>
             )}
-            {error ? <Notice tone="error" text={error} /> : null}
+            {error && !showCollectionError ? <Notice tone="error" text={error} /> : null}
             {message ? <Notice tone="success" text={message} /> : null}
           </>
         ) : (
@@ -2360,7 +3224,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
           <>
             {loading && (
               <View style={styles.loadingRow}>
-                <ActivityIndicator color="#174A72" />
+                <ActivityIndicator color={BRAND_COLORS.navy} />
                 <Text style={styles.muted}>Loading your NAVIGO workspace...</Text>
               </View>
             )}
@@ -2368,7 +3232,8 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
           </>
         ) : null}
       </ScrollView>
-      {activeSession.user.role === "CUSTOMER" || activeSession.user.role === "RIDER" ? (
+      </Animated.View>
+      {(activeSession.user.role === "CUSTOMER" || activeSession.user.role === "RIDER") && !(isCustomer && (keyboardVisible || activeLocationField !== null)) ? (
         <BottomNavigation role={activeSession.user.role} activeTab={mainTab} onChange={(nextTab) => {
           setMainTab(nextTab);
           if (nextTab === "home" && activeSession.user.role === "CUSTOMER") setTab("book");
@@ -2431,6 +3296,7 @@ function ProfilePanel({
   const [notifications, setNotifications] = useState<ProfileNotification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [notificationsLoading, setNotificationsLoading] = useState(false);
+  const [notificationsRetry, setNotificationsRetry] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -2444,6 +3310,7 @@ function ProfilePanel({
     if (page !== "notifications" && page !== "home") return;
     let active = true;
     setNotificationsLoading(true);
+    setError("");
     apiRequest<{ data: { items: ProfileNotification[]; unreadCount: number } }>(
       "/api/v1/notifications",
       session.accessToken,
@@ -2460,7 +3327,7 @@ function ProfilePanel({
       if (active) setNotificationsLoading(false);
     });
     return () => { active = false; };
-  }, [page, session.accessToken, refreshAccessToken]);
+  }, [page, session.accessToken, refreshAccessToken, notificationsRetry]);
 
   async function saveProfile() {
     setBusy(true);
@@ -2824,7 +3691,7 @@ function ProfilePanel({
                 ) : null}
               </View>
               {notificationsLoading ? (
-                <ActivityIndicator color="#174A72" style={{ marginVertical: 22 }} />
+                <LoadingSkeleton count={2} compact label="Loading notifications" />
               ) : notifications.length ? notifications.map((item) => (
                 <TouchableOpacity
                   key={item.id}
@@ -2842,7 +3709,16 @@ function ProfilePanel({
                     {"  •  "}{new Date(item.createdAt).toLocaleString()}
                   </Text>
                 </TouchableOpacity>
-              )) : (
+              )) : error ? (
+                <CollectionState
+                  loading={false}
+                  error={error}
+                  emptyTitle="You're all caught up"
+                  emptyText="Ride and item-delivery updates will appear here."
+                  onRetry={() => setNotificationsRetry((current) => current + 1)}
+                  label="Loading notifications"
+                />
+              ) : (
                 <EmptyState title="You're all caught up" text="Ride and item-delivery updates will appear here." />
               )}
             </View>
@@ -2892,7 +3768,7 @@ function ProfilePanel({
             </>
           ) : null}
 
-          {error ? <Notice tone="error" text={error} /> : null}
+          {error && page !== "notifications" ? <Notice tone="error" text={error} /> : null}
           {success ? <Notice tone="success" text={success} /> : null}
         </>
       )}
@@ -2931,7 +3807,7 @@ function BottomNavigation({ role, activeTab, onChange }: {
       {items.map((item) => {
         const selected = activeTab === item.key;
         return (
-          <TouchableOpacity key={item.key} accessibilityRole="button" accessibilityLabel={item.label} accessibilityState={{ selected }} style={styles.bottomNavItem} onPress={() => onChange(item.key)}>
+          <TouchableOpacity key={item.key} accessibilityRole="button" accessibilityLabel={item.label} accessibilityState={{ selected }} style={[styles.bottomNavItem, selected && styles.bottomNavItemSelected]} onPress={() => onChange(item.key)}>
             <Text style={[styles.bottomNavIcon, selected && styles.bottomNavIconSelected]}>{item.icon}</Text>
             <Text style={[styles.bottomNavLabel, selected && styles.bottomNavLabelSelected]}>{item.label}</Text>
           </TouchableOpacity>
@@ -2950,97 +3826,10 @@ function LocationSuggestions({
   query: string;
   onSelect: (suggestion: LocationSuggestion) => void;
 }) {
-  const [remoteMatches, setRemoteMatches] = useState<LocationSuggestion[]>([]);
-  const [searching, setSearching] = useState(false);
-  const [searchFailed, setSearchFailed] = useState(false);
-
-  useEffect(() => {
-    const term = query.trim();
-    if (!visible || !term) {
-      setRemoteMatches([]);
-      setSearching(false);
-      setSearchFailed(false);
-      return undefined;
-    }
-
-    let cancelled = false;
-    const controller = new AbortController();
-    setSearching(true);
-    setSearchFailed(false);
-
-    const timer = setTimeout(async () => {
-      try {
-        const params = [
-          `q=${encodeURIComponent(term)}`,
-          "lat=3.02",
-          "lon=30.92",
-          "zoom=11",
-          "location_bias_scale=0.2",
-          "limit=12",
-          "lang=en",
-          "countrycode=UG",
-          "bbox=30.55,2.75,31.25,3.30"
-        ].join("&");
-        const response = await fetch(`https://photon.komoot.io/api/?${params}`, {
-          headers: { Accept: "application/json" },
-          signal: controller.signal
-        });
-        if (!response.ok) throw new Error("Location search is temporarily unavailable.");
-
-        const payload = await response.json() as { features?: PhotonFeature[] };
-        const mapped = (payload.features ?? []).flatMap((feature): LocationSuggestion[] => {
-          const properties = feature.properties;
-          const coordinates = feature.geometry?.coordinates;
-          if (!properties || !coordinates || coordinates.length < 2) return [];
-          const longitude = Number(coordinates[0]);
-          const latitude = Number(coordinates[1]);
-          if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return [];
-
-          const primary = properties.name || properties.street || properties.district || properties.city;
-          if (!primary) return [];
-          const details = [
-            properties.district,
-            properties.city,
-            properties.county,
-            properties.state,
-            properties.country
-          ].filter((part): part is string => Boolean(part) && part !== primary);
-          const uniqueDetails = [...new Set(details)];
-          const category = describeMapFeature(
-            properties.osm_key,
-            properties.osm_value,
-            properties.extra
-          );
-          return [{
-            label: [primary, ...uniqueDetails].join(", "),
-            category,
-            latitude,
-            longitude
-          }];
-        });
-
-        if (!cancelled) setRemoteMatches(mapped);
-      } catch (error) {
-        if (!cancelled && !(error instanceof Error && error.name === "AbortError")) {
-          setSearchFailed(true);
-          setRemoteMatches([]);
-        }
-      } finally {
-        if (!cancelled) setSearching(false);
-      }
-    }, 350);
-
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-      controller.abort();
-    };
-  }, [query, visible]);
-
   if (!visible || !query.trim()) return null;
 
   const normalized = query.trim().toLowerCase();
-  const localMatches = ARUA_LOCATION_SUGGESTIONS
+  const matches = ARUA_LOCATION_SUGGESTIONS
     .filter((location) => [
       location.label,
       location.category,
@@ -3051,18 +3840,13 @@ function LocationSuggestions({
       const bStarts = b.label.toLowerCase().startsWith(normalized) ? 0 : 1;
       return aStarts - bStarts || a.label.localeCompare(b.label);
     });
-  const combined = [...localMatches, ...remoteMatches];
-  const uniqueMatches = combined.filter((item, index, all) =>
-    all.findIndex((candidate) => candidate.label.toLowerCase() === item.label.toLowerCase()) === index
-  );
 
   return (
     <View style={styles.suggestionList}>
       <View style={styles.suggestionTitleRow}>
-        <Text style={styles.suggestionHeading}>PLACES NEAR ARUA</Text>
-        {searching ? <Text style={styles.suggestionLoading}>Searching...</Text> : null}
+        <Text style={styles.suggestionHeading}>SUGGESTED ARUA PLACES</Text>
       </View>
-      {uniqueMatches.length ? uniqueMatches.map((suggestion) => (
+      {matches.length ? matches.map((suggestion) => (
         <TouchableOpacity
           key={suggestion.label}
           style={styles.suggestionItem}
@@ -3073,11 +3857,9 @@ function LocationSuggestions({
             <Text style={styles.suggestionCategory}>{suggestion.category}</Text>
           </View>
         </TouchableOpacity>
-      )) : searching ? null : (
+      )) : (
         <Text style={styles.noSuggestionText}>
-          {searchFailed
-            ? "Online place search is unavailable. You can still enter a full location."
-            : "No places matched yet. Try more letters or enter the full location."}
+          No saved suggestion matched. You can still enter the full place name and tap Show road route &amp; fare to search the Arua map.
         </Text>
       )}
       <Text style={styles.attributionText}>Place data © OpenStreetMap contributors</Text>
@@ -3144,6 +3926,15 @@ function RideCard({
   onRecordPayment?: () => void;
 }) {
   const canCancel = customerView && (ride.status === "PENDING" || ride.status === "ACCEPTED");
+  const riderStatusLabels: Record<string, string> = {
+    PENDING: "Nearby ride request",
+    ACCEPTED: "You accepted this ride",
+    ARRIVED_AT_PICKUP: "You are at pickup",
+    IN_PROGRESS: "Journey in progress",
+    COMPLETED: "Ride completed",
+    CANCELLED: "Ride cancelled",
+    EXPIRED: "Ride expired"
+  };
   const nextLabel: Record<string, string> = {
     ACCEPTED: "Confirm arrival at pickup",
     ARRIVED_AT_PICKUP: "Start trip",
@@ -3152,7 +3943,7 @@ function RideCard({
   return (
     <View style={styles.rideCard}>
       <View style={styles.rideTopRow}>
-        <Text style={styles.rideStatus}>{riderView && ride.status === "PENDING" ? "Nearby ride request" : (STATUS_LABELS[ride.status] ?? ride.status)}</Text>
+        <Text style={styles.rideStatus}>{riderView ? (riderStatusLabels[ride.status] ?? ride.status) : (STATUS_LABELS[ride.status] ?? ride.status)}</Text>
         <Text style={styles.rideFare}>{money(ride.fareAmountUgx)}</Text>
       </View>
       <View style={styles.routeRow}>
@@ -3190,6 +3981,21 @@ function RideCard({
           <Text style={styles.rideMeta}>{ride.rider.phone}{ride.rider.riderProfile?.motorcyclePlate ? ` • ${ride.rider.riderProfile.motorcyclePlate}` : ""}</Text>
         </View>
       ) : null}
+      {customerView && CUSTOMER_RIDE_PROGRESS.some((step) => step.status === ride.status) ? (
+        <View style={styles.progressPanel}>
+          <Text style={styles.label}>RIDE PROGRESS</Text>
+          {CUSTOMER_RIDE_PROGRESS.map((step, index) => {
+            const currentStep = CUSTOMER_RIDE_PROGRESS.findIndex((item) => item.status === ride.status);
+            const isDone = index <= currentStep;
+            return (
+              <View key={step.status} style={styles.progressRow}>
+                <View style={[styles.progressDot, isDone ? styles.progressDotDone : null]} />
+                <Text style={[styles.progressText, isDone ? styles.progressTextDone : null]}>{step.label}</Text>
+              </View>
+            );
+          })}
+        </View>
+      ) : null}
       {customerView && ride.status === "PENDING" ? (
         <View style={styles.trackingPanel}>
           <Text style={styles.trackingStatusText}>Finding a nearby rider</Text>
@@ -3203,6 +4009,29 @@ function RideCard({
             ? <Text style={styles.assignedName}>Estimated arrival: about {ride.riderArrivalEstimateMinutes} minute{ride.riderArrivalEstimateMinutes === 1 ? "" : "s"}</Text>
             : <Text style={styles.trackingPrivacyText}>Your rider has accepted the request. An arrival estimate is not available right now.</Text>}
           <Text style={styles.trackingPrivacyText}>This is an estimate based on the motorcycle route and may change with road conditions or delays.</Text>
+        </View>
+      ) : null}
+      {customerView && ride.status === "ARRIVED_AT_PICKUP" ? (
+        <View style={styles.trackingPanel}>
+          <Text style={styles.trackingStatusText}>Your rider has arrived at the pickup point.</Text>
+          <Text style={styles.trackingPrivacyText}>Please meet your rider at the agreed pickup location.</Text>
+        </View>
+      ) : null}
+      {customerView && ride.status === "IN_PROGRESS" ? (
+        <View style={styles.trackingPanel}>
+          <Text style={styles.trackingStatusText}>Your trip is in progress.</Text>
+          <Text style={styles.trackingPrivacyText}>Your rider has started the journey to your destination.</Text>
+        </View>
+      ) : null}
+      {customerView && ride.status === "COMPLETED" ? (
+        <View style={styles.trackingPanel}>
+          <Text style={styles.trackingStatusText}>This ride has been completed.</Text>
+          <Text style={styles.trackingPrivacyText}>{ride.payment?.status === "PAID" ? "Payment is recorded as paid." : "Payment has not yet been recorded."}</Text>
+        </View>
+      ) : null}
+      {customerView && ["CANCELLED", "EXPIRED"].includes(ride.status) ? (
+        <View style={styles.trackingPanel}>
+          <Text style={styles.trackingStatusText}>{ride.status === "CANCELLED" ? "This ride was cancelled." : "This ride request expired."}</Text>
         </View>
       ) : null}
       {riderView && typeof ride.pickupDistanceKm === "number" ? <Text style={styles.rideMeta}>Pickup is about {ride.pickupDistanceKm.toFixed(1)} km away in a straight line</Text> : null}
@@ -3247,6 +4076,11 @@ function CustomerParcelCard({
   };
   const steps = ["PENDING", "ACCEPTED", "ARRIVED_AT_PICKUP", "COLLECTED", "IN_TRANSIT", "ARRIVED_AT_DESTINATION", "DELIVERED"];
   const current = steps.indexOf(parcel.status);
+  const riderUpdatedAt = tracking?.rider ? Date.parse(tracking.rider.updatedAt) : Number.NaN;
+  const riderAgeMs = Number.isFinite(riderUpdatedAt) ? Date.now() - riderUpdatedAt : Number.POSITIVE_INFINITY;
+  const riderLocationFresh = Boolean(tracking?.rider) && riderAgeMs >= -60_000 && riderAgeMs <= 120_000;
+  const visibleRider = riderLocationFresh && tracking?.rider ? tracking.rider : null;
+  const riderAgeMinutes = Number.isFinite(riderAgeMs) ? Math.max(0, Math.floor(riderAgeMs / 60_000)) : null;
   return (
     <View style={styles.rideCard}>
       <View style={styles.rideTopRow}>
@@ -3269,37 +4103,46 @@ function CustomerParcelCard({
           <Text style={styles.routeAddress}>{parcel.destinationDescription}</Text>
         </View>
       </View>
-      {tracking && ACTIVE_TRACKING_STATUSES.includes(parcel.status) ? (
+      {ACTIVE_TRACKING_STATUSES.includes(parcel.status) ? (
         <View style={styles.trackingPanel}>
           <Text style={styles.label}>RIDER LOCATION</Text>
-          <View style={styles.trackingMapFrame}>
-            <MapView
-              style={styles.routeMap}
-              initialRegion={parcelTrackingRegion(tracking)}
-              customMapStyle={LIGHT_MAP_STYLE}
-              scrollEnabled
-              zoomEnabled
-              rotateEnabled={false}
-              pitchEnabled={false}
-              toolbarEnabled={false}
-              showsCompass={false}
-              showsScale={false}
-            >
-              <Marker coordinate={tracking.pickup} title="Pickup point" pinColor="#21865B" />
-              <Marker coordinate={tracking.destination} title="Delivery point" pinColor="#C54848" />
-              {tracking.rider ? (
-                <Marker coordinate={tracking.rider} title="Rider's latest location" description="Last reported GPS position" pinColor="#236B9A" />
-              ) : null}
-            </MapView>
-          </View>
+          {tracking ? (
+            <View style={styles.trackingMapFrame}>
+              <SafeMapView
+                style={styles.routeMap}
+                initialRegion={parcelTrackingRegion({ ...tracking, rider: visibleRider })}
+                markers={[{ coordinate: tracking.pickup, title: "Pickup", pinColor: "#21865B" }, { coordinate: tracking.destination, title: "Delivery", pinColor: "#C54848" }, { coordinate: visibleRider, title: "Rider", pinColor: BRAND_COLORS.blue }]}
+                customMapStyle={LIGHT_MAP_STYLE}
+                scrollEnabled
+                zoomEnabled
+                rotateEnabled={false}
+                pitchEnabled={false}
+                toolbarEnabled={false}
+                showsCompass={false}
+                showsScale={false}
+              >
+                <Marker coordinate={tracking.pickup} title="Pickup point" pinColor="#21865B" />
+                <Marker coordinate={tracking.destination} title="Delivery point" pinColor="#C54848" />
+                {visibleRider ? (
+                  <Marker coordinate={visibleRider} title="Rider's latest location" description="Last reported GPS position" pinColor={BRAND_COLORS.blue} />
+                ) : null}
+              </SafeMapView>
+            </View>
+          ) : null}
           <Text style={styles.trackingStatusText}>
-            {tracking.rider
-              ? `Rider location updated at ${new Date(tracking.rider.updatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
-              : tracking.sharingEnabled
-                ? "Waiting for the rider's next GPS update. Keep this screen open to refresh."
-                : "The rider has not enabled live location sharing yet."}
+            {!tracking
+              ? "Checking the rider's latest location..."
+              : visibleRider
+                ? "Rider location updated " + (riderAgeMinutes === 0 ? "less than a minute ago." : "about " + riderAgeMinutes + " minute" + (riderAgeMinutes === 1 ? "" : "s") + " ago.")
+                : tracking.rider
+                  ? riderAgeMinutes === null
+                    ? "The last GPS update time is unavailable. Waiting for a fresh position."
+                    : "The last GPS update was about " + riderAgeMinutes + " minute" + (riderAgeMinutes === 1 ? "" : "s") + " ago. It is hidden because positions older than two minutes are not shown."
+                  : tracking.sharingEnabled
+                    ? "Live sharing is enabled. Waiting for the rider's next GPS update."
+                    : "The rider has not enabled live location sharing yet."}
           </Text>
-          <Text style={styles.trackingPrivacyText}>Only you, as the sender, can view the rider's shared location. A position older than two minutes is hidden.</Text>
+          <Text style={styles.trackingPrivacyText}>Only you, as the sender, can view the rider's shared location. Positions older than two minutes are hidden, and the map does not draw an unverified road route.</Text>
         </View>
       ) : null}
       <View style={styles.progressPanel}>
@@ -3457,6 +4300,90 @@ function EmptyState({ title, text }: { title: string; text: string }) {
   );
 }
 
+function CollectionState({
+  loading,
+  error,
+  emptyTitle,
+  emptyText,
+  onRetry,
+  label
+}: {
+  loading: boolean;
+  error: string;
+  emptyTitle: string;
+  emptyText: string;
+  onRetry: () => void;
+  label: string;
+}) {
+  if (loading) return <LoadingSkeleton count={2} label={label} />;
+
+  if (error) {
+    return (
+      <View style={styles.emptyState}>
+        <View style={styles.loadErrorMark}>
+          <Text style={styles.loadErrorMarkText}>!</Text>
+        </View>
+        <Text style={styles.emptyTitle}>We couldn't load this information</Text>
+        <Text style={styles.emptyText}>{error}</Text>
+        <TouchableOpacity accessibilityRole="button" onPress={onRetry} style={styles.retryButton}>
+          <Text style={styles.retryButtonText}>Try again</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  return <EmptyState title={emptyTitle} text={emptyText} />;
+}
+
+function LoadingSkeleton({
+  count = 2,
+  compact = false,
+  label = "Loading content"
+}: {
+  count?: number;
+  compact?: boolean;
+  label?: string;
+}) {
+  const opacity = useRef(new Animated.Value(0.58)).current;
+
+  useEffect(() => {
+    const pulse = Animated.loop(
+      Animated.sequence([
+        Animated.timing(opacity, { toValue: 0.92, duration: 850, useNativeDriver: true }),
+        Animated.timing(opacity, { toValue: 0.58, duration: 850, useNativeDriver: true })
+      ])
+    );
+    pulse.start();
+    return () => pulse.stop();
+  }, [opacity]);
+
+  return (
+    <View accessibilityRole="progressbar" accessibilityLabel={label} style={styles.skeletonStack}>
+      <Animated.View style={{ opacity }}>
+        {Array.from({ length: count }, (_, index) => (
+          <View key={`skeleton-${index}`} style={[styles.skeletonCard, compact && styles.skeletonCardCompact]}>
+            <View style={styles.skeletonHeader}>
+              <View style={[styles.skeletonLine, { width: compact ? "34%" : "42%", height: 10 }]} />
+              <View style={[styles.skeletonLine, styles.skeletonCircle]} />
+            </View>
+            <View style={[styles.skeletonLine, { width: compact ? "76%" : "68%", height: 13 }]} />
+            <View style={[styles.skeletonLine, { width: "94%", height: 9 }]} />
+            {!compact ? (
+              <>
+                <View style={[styles.skeletonLine, { width: "72%", height: 9 }]} />
+                <View style={styles.skeletonFooter}>
+                  <View style={[styles.skeletonLine, { width: "28%", height: 9 }]} />
+                  <View style={[styles.skeletonLine, styles.skeletonAction]} />
+                </View>
+              </>
+            ) : null}
+          </View>
+        ))}
+      </Animated.View>
+    </View>
+  );
+}
+
 function Notice({ tone, text }: { tone: "error" | "success"; text: string }) {
   return (
     <View style={[styles.notice, tone === "error" ? styles.errorNotice : styles.successNotice]}>
@@ -3484,21 +4411,25 @@ const baseStyles = StyleSheet.create({
   mainScroll: { flex: 1 },
   page: { flexGrow: 1, paddingHorizontal: 19, paddingTop: 20, paddingBottom: 30 },
   topBar: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 20 },
-  brandSmall: { color: "#174A72", fontSize: 12, fontWeight: "900", letterSpacing: 2 },
+  brandHeader: { flexDirection: "row", alignItems: "center", gap: 7, marginBottom: 1 },
+  brandSmallLogo: { width: 29, height: 29, borderRadius: 8, backgroundColor: "#EDF4FF" },
+  brandSmall: { color: BRAND_COLORS.navy, fontSize: 12, fontWeight: "900", letterSpacing: 2 },
   greeting: { color: "#142B3D", fontSize: 24, fontWeight: "800", marginTop: 4 },
+  greetingCompact: { fontSize: 21 },
   muted: { color: "#8793A2", fontSize: 12, marginTop: 4 },
   signOut: { borderWidth: 1, borderColor: "#D5DFE8", paddingHorizontal: 13, paddingVertical: 9, borderRadius: 10, backgroundColor: "#FFFFFF" },
-  signOutText: { color: "#174A72", fontWeight: "700", fontSize: 12 },
+  signOutText: { color: BRAND_COLORS.navy, fontWeight: "700", fontSize: 12 },
   bottomNav: { flexDirection: "row", alignItems: "center", justifyContent: "space-around", backgroundColor: "#FFFFFF", borderTopWidth: 1, borderTopColor: "#E5EAF0", paddingTop: 7, paddingBottom: 8, paddingHorizontal: 8 },
   bottomNavItem: { flex: 1, minHeight: 49, alignItems: "center", justifyContent: "center", gap: 3 },
+  bottomNavItemSelected: { backgroundColor: BRAND_COLORS.goldTint, borderRadius: 11, marginHorizontal: 3 },
   bottomNavIcon: { color: "#98A2B3", fontSize: 20, lineHeight: 22, fontWeight: "700" },
-  bottomNavIconSelected: { color: "#174A72" },
+  bottomNavIconSelected: { color: BRAND_COLORS.navy },
   bottomNavLabel: { color: "#8793A2", fontSize: 10, fontWeight: "600" },
-  bottomNavLabelSelected: { color: "#174A72", fontWeight: "900" },
+  bottomNavLabelSelected: { color: BRAND_COLORS.navy, fontWeight: "900" },
   profilePage: { gap: 13 },
   profileHero: { alignItems: "center", backgroundColor: "#FFFFFF", borderRadius: 18, padding: 22, borderWidth: 1, borderColor: "#E5EAF0" },
   profileAvatar: { width: 66, height: 66, borderRadius: 33, backgroundColor: "#EAF3F9", alignItems: "center", justifyContent: "center", marginBottom: 11 },
-  profileAvatarText: { color: "#174A72", fontSize: 29, fontWeight: "900" },
+  profileAvatarText: { color: BRAND_COLORS.navy, fontSize: 29, fontWeight: "900" },
   profileName: { color: "#142B3D", fontSize: 19, fontWeight: "900" },
   profileRole: { color: "#667085", fontSize: 12, marginTop: 5 },
   profileSectionHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 10 },
@@ -3507,40 +4438,48 @@ const baseStyles = StyleSheet.create({
   profileMenuCopy: { flex: 1 },
   profileMenuTitle: { color: "#243B4D", fontSize: 12, fontWeight: "800" },
   profileMenuDescription: { color: "#8793A2", fontSize: 10, lineHeight: 15, marginTop: 3 },
-  profileMenuBadge: { color: "#FFFFFF", backgroundColor: "#236B9A", overflow: "hidden", borderRadius: 9, paddingHorizontal: 7, paddingVertical: 3, fontSize: 9, fontWeight: "900" },
+  profileMenuBadge: { color: "#FFFFFF", backgroundColor: BRAND_COLORS.blue, overflow: "hidden", borderRadius: 9, paddingHorizontal: 7, paddingVertical: 3, fontSize: 9, fontWeight: "900" },
   profileMenuArrow: { color: "#98A2B3", fontSize: 23, fontWeight: "400" },
   profileBack: { alignSelf: "flex-start", paddingVertical: 5, paddingRight: 12 },
-  profileBackText: { color: "#236B9A", fontSize: 12, fontWeight: "800" },
+  profileBackText: { color: BRAND_COLORS.blue, fontSize: 12, fontWeight: "800" },
   profileSubTitle: { color: "#142B3D", fontSize: 20, fontWeight: "900", marginBottom: 2 },
   profileChoiceRow: { flexDirection: "row", gap: 7, marginTop: 11, marginBottom: 9 },
   profileChoiceButton: { flex: 1, minHeight: 40, borderRadius: 10, borderWidth: 1, borderColor: "#DCE3EB", backgroundColor: "#FBFCFE", alignItems: "center", justifyContent: "center", paddingHorizontal: 5 },
-  profileChoiceButtonSelected: { borderColor: "#236B9A", backgroundColor: "#EAF3F9" },
+  profileChoiceButtonSelected: { borderColor: BRAND_COLORS.gold, backgroundColor: BRAND_COLORS.goldTint },
   profileChoiceText: { color: "#667085", fontSize: 11, fontWeight: "700" },
-  profileChoiceTextSelected: { color: "#174A72", fontWeight: "900" },
+  profileChoiceTextSelected: { color: BRAND_COLORS.navy, fontWeight: "900" },
   notificationItem: { paddingVertical: 13, borderTopWidth: 1, borderTopColor: "#F0F2F5" },
   notificationItemUnread: { backgroundColor: "#F7FAFC", marginHorizontal: -4, paddingHorizontal: 4, borderRadius: 8 },
   notificationHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 8 },
   notificationTitle: { color: "#243B4D", fontSize: 12, fontWeight: "800", flex: 1 },
-  notificationUnreadDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: "#236B9A" },
+  notificationUnreadDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: BRAND_COLORS.blue },
   notificationMeta: { color: "#98A2B3", fontSize: 9, marginTop: 7 },
-  profileActionText: { color: "#236B9A", fontSize: 12, fontWeight: "800" },
+  profileActionText: { color: BRAND_COLORS.blue, fontSize: 12, fontWeight: "800" },
   profileHint: { color: "#8793A2", fontSize: 10, lineHeight: 15, marginTop: 7 },
 
   profileDetailRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", gap: 14, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: "#F0F2F5" },
   profileDetailLabel: { color: "#8793A2", fontSize: 11, flex: 1 },
   profileDetailValue: { color: "#344054", fontSize: 11, fontWeight: "700", flex: 1, textAlign: "right" },
   profileInfoCard: { backgroundColor: "#F0F7FC", borderRadius: 14, borderWidth: 1, borderColor: "#D3E6F3", padding: 14 },
-  profileInfoTitle: { color: "#174A72", fontSize: 13, fontWeight: "900" },
+  profileInfoTitle: { color: BRAND_COLORS.navy, fontSize: 13, fontWeight: "900" },
   profileInfoText: { color: "#526779", fontSize: 11, lineHeight: 17, marginTop: 6 },
   profileSignOut: { minHeight: 48, borderRadius: 12, borderWidth: 1, borderColor: "#F2C7C4", backgroundColor: "#FFFFFF", alignItems: "center", justifyContent: "center", marginBottom: 12 },
   profileSignOutText: { color: "#B42318", fontSize: 12, fontWeight: "800" },
   quickAccessRow: { flexDirection: "row", gap: 10, marginTop: 2, marginBottom: 14 },
   quickAccessCard: { flex: 1, minHeight: 92, backgroundColor: "#FFFFFF", borderRadius: 14, borderWidth: 1, borderColor: "#E5EAF0", padding: 13, justifyContent: "center" },
-  quickAccessTitle: { color: "#174A72", fontSize: 13, fontWeight: "900" },
+  quickAccessTitle: { color: BRAND_COLORS.navy, fontSize: 13, fontWeight: "900" },
   quickAccessText: { color: "#667085", fontSize: 10, lineHeight: 15, marginTop: 5 },
   mapHomePage: { flexGrow: 1, paddingHorizontal: 0, paddingTop: 0, paddingBottom: 0 },
-  customerMapFrame: { height: Dimensions.get("window").height - 88, borderRadius: 0, overflow: "hidden", marginBottom: 0, marginHorizontal: 0, marginTop: 0, borderWidth: 0, backgroundColor: "#E9F0F5", position: "relative" },
+  customerMapFrame: { borderRadius: 0, overflow: "hidden", marginBottom: 0, marginHorizontal: 0, marginTop: 0, borderWidth: 0, backgroundColor: "#E9F0F5", position: "relative" },
   customerMapSheet: { position: "absolute", left: 0, right: 0, bottom: 0, backgroundColor: "#FFFFFF", borderTopLeftRadius: 23, borderTopRightRadius: 23, overflow: "hidden", elevation: 18, shadowColor: "#102A43", shadowOpacity: 0.17, shadowRadius: 14 },
+  customerMapSearchMapHidden: { position: "absolute", top: 0, left: 0, right: 0, opacity: 0, zIndex: -1 },
+  customerMapSearchSheet: { marginTop: 0, marginHorizontal: 0, marginBottom: 0, borderRadius: 0, elevation: 2, zIndex: 2, shadowOpacity: 0 },
+  locationSearchHeader: { minHeight: 58, flexDirection: "row", alignItems: "center", justifyContent: "center", paddingHorizontal: 16, borderBottomWidth: 1, borderBottomColor: "#E5EAF0", backgroundColor: "#FFFFFF" },
+  locationSearchBackButton: { position: "absolute", left: 14, top: 4, width: 42, height: 50, justifyContent: "center" },
+  locationSearchBackText: { color: BRAND_COLORS.navy, fontSize: 34, lineHeight: 38, fontWeight: "400" },
+  locationSearchTitle: { color: "#182230", fontSize: 16, fontWeight: "800" },
+  locationSearchLocationAction: { minHeight: 42, justifyContent: "center", paddingHorizontal: 4, marginTop: 4, marginBottom: 4 },
+  locationSearchLocationActionText: { color: BRAND_COLORS.navy, fontSize: 12, fontWeight: "800" },
   mapSheetDragArea: { paddingTop: 10, paddingHorizontal: 16, paddingBottom: 10 },
   mapSheetGrip: { alignSelf: "center", width: 42, height: 5, borderRadius: 3, backgroundColor: "#C8D0D8", marginBottom: 11 },
   mapSheetWhereTo: { minHeight: 54, borderRadius: 14, backgroundColor: "#F4F6F8", paddingHorizontal: 15, paddingVertical: 9, justifyContent: "center" },
@@ -3548,21 +4487,27 @@ const baseStyles = StyleSheet.create({
   mapSheetPickupSummary: { color: "#667085", fontSize: 10, marginTop: 3 },
   mapSheetScroll: { flex: 1 },
   mapSheetContent: { paddingHorizontal: 16, paddingTop: 4, paddingBottom: 24 },
+  routeReviewLocations: { backgroundColor: "#F7F9FB", borderRadius: 13, paddingHorizontal: 12, paddingVertical: 10, marginTop: 9, gap: 10 },
+  routeReviewStop: { flexDirection: "row", alignItems: "center", gap: 10 },
+  routeReviewStopCopy: { flex: 1 },
+  routeReviewAddress: { color: "#344054", fontSize: 12, fontWeight: "700", lineHeight: 17, marginTop: 2 },
+  quoteEditButton: { minHeight: 42, borderRadius: 10, borderWidth: 1, borderColor: "#D5E2EB", alignItems: "center", justifyContent: "center", marginTop: 8, marginBottom: 10, backgroundColor: "#FFFFFF" },
+  quoteEditButtonText: { color: BRAND_COLORS.navy, fontSize: 11, fontWeight: "800" },
   customerMapRecenterButton: { position: "absolute", top: 112, right: 13, width: 42, height: 42, borderRadius: 21, backgroundColor: "#FFFFFF", alignItems: "center", justifyContent: "center", elevation: 4, shadowColor: "#102A43", shadowOpacity: 0.16, shadowRadius: 7 },
   mapLocationRetryPill: { left: 13, right: undefined, top: 61 },
-  riderMapFrame: { height: Dimensions.get("window").height * 0.48, borderRadius: 18, overflow: "hidden", marginTop: 12, marginBottom: 12, backgroundColor: "#E9F0F5", position: "relative" },
+  riderMapFrame: { borderRadius: 18, overflow: "hidden", marginTop: 12, marginBottom: 12, backgroundColor: "#E9F0F5", position: "relative" },
   riderMapStatus: { position: "absolute", left: 13, bottom: 13, backgroundColor: "#FFFFFF", borderRadius: 20, paddingHorizontal: 12, paddingVertical: 9, flexDirection: "row", alignItems: "center", gap: 7, elevation: 3 },
   riderOnlineDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: "#98A2B3" },
   riderOnlineDotActive: { backgroundColor: "#12B76A" },
   riderMapStatusText: { color: "#344054", fontSize: 10, fontWeight: "800" },
   mapSelectionControls: { position: "absolute", top: 13, right: 12, gap: 7, alignItems: "flex-end" },
   mapRecenterButton: { position: "absolute", right: 13, bottom: 80, width: 42, height: 42, borderRadius: 21, backgroundColor: "#FFFFFF", alignItems: "center", justifyContent: "center", elevation: 4, shadowColor: "#102A43", shadowOpacity: 0.16, shadowRadius: 7 },
-  mapRecenterText: { color: "#174A72", fontSize: 23, fontWeight: "800", lineHeight: 26 },
+  mapRecenterText: { color: BRAND_COLORS.navy, fontSize: 23, fontWeight: "800", lineHeight: 26 },
   riderMapRecenterButton: { bottom: 120 },
-  riderDirectionsButton: { position: "absolute", right: 12, bottom: 60, backgroundColor: "#174A72", borderRadius: 20, paddingHorizontal: 13, paddingVertical: 10, elevation: 4 },
+  riderDirectionsButton: { position: "absolute", right: 12, bottom: 60, backgroundColor: BRAND_COLORS.navy, borderRadius: 20, paddingHorizontal: 13, paddingVertical: 10, elevation: 4 },
   riderDirectionsText: { color: "#FFFFFF", fontSize: 10, fontWeight: "800" },
   mapSelectionButton: { backgroundColor: "#FFFFFF", borderRadius: 18, paddingHorizontal: 12, paddingVertical: 9, elevation: 3 },
-  mapSelectionButtonActive: { backgroundColor: "#174A72" },
+  mapSelectionButtonActive: { backgroundColor: BRAND_COLORS.navy },
   mapSelectionButtonText: { color: "#344054", fontSize: 10, fontWeight: "800" },
   mapSelectionButtonTextActive: { color: "#FFFFFF" },
   mapSelectionHint: { position: "absolute", bottom: 78, left: 12, right: 12, backgroundColor: "rgba(23,74,114,0.96)", borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
@@ -3574,42 +4519,50 @@ const baseStyles = StyleSheet.create({
   pickupLocationLabel: { color: "#8793A2", fontSize: 8, fontWeight: "900", letterSpacing: 1 },
   pickupLocationValue: { color: "#142B3D", fontSize: 12, fontWeight: "700", marginTop: 4 },
   locationChangeButton: { backgroundColor: "#EDF5FA", borderRadius: 10, paddingHorizontal: 12, paddingVertical: 9 },
-  locationChangeText: { color: "#174A72", fontSize: 11, fontWeight: "800" },
+  locationChangeText: { color: BRAND_COLORS.navy, fontSize: 11, fontWeight: "800" },
   locationRetryPill: { position: "absolute", top: 57, right: 12, backgroundColor: "#FFFFFF", borderRadius: 18, paddingHorizontal: 12, paddingVertical: 9, elevation: 3 },
-  locationRetryText: { color: "#174A72", fontSize: 10, fontWeight: "800" },
-  customerMap: { width: "100%", height: "100%" },
-  mapBrandPill: { position: "absolute", top: 13, left: 13, backgroundColor: "#FFFFFF", borderRadius: 20, paddingHorizontal: 12, paddingVertical: 8, shadowColor: "#102A43", shadowOpacity: 0.12, shadowRadius: 8, elevation: 3 },
-  mapBrandText: { color: "#174A72", fontSize: 10, fontWeight: "900", letterSpacing: 1.2 },
+  locationRetryText: { color: BRAND_COLORS.navy, fontSize: 10, fontWeight: "800" },
+  customerMap: { width: "100%", height: "100%", backgroundColor: "#E9F0F5" },
+  customerMapLoadingOverlay: { ...StyleSheet.absoluteFill, zIndex: 10, elevation: 10, backgroundColor: "#E9F0F5", alignItems: "center", justifyContent: "center", gap: 8 },
+  customerMapLoadingText: { color: "#526779", fontSize: 11, fontWeight: "700" },
+  mapBrandPill: { position: "absolute", top: 13, left: 13, backgroundColor: "#FFFFFF", borderRadius: 20, paddingHorizontal: 9, paddingVertical: 6, flexDirection: "row", alignItems: "center", gap: 7, shadowColor: "#102A43", shadowOpacity: 0.12, shadowRadius: 8, elevation: 3 },
+  mapBrandLogo: { width: 25, height: 25, borderRadius: 7, backgroundColor: "#EDF4FF" },
+  mapBrandText: { color: BRAND_COLORS.navy, fontSize: 10, fontWeight: "900", letterSpacing: 1.2 },
   mapHintPill: { position: "absolute", bottom: 13, left: 13, right: 13, backgroundColor: "rgba(255,255,255,0.94)", borderRadius: 12, paddingHorizontal: 13, paddingVertical: 10 },
   mapHintText: { color: "#344054", fontSize: 11, fontWeight: "600", textAlign: "center" },
-  serviceHeading: { marginBottom: 11 },
-  serviceHeadingTitle: { color: "#142B3D", fontSize: 19, fontWeight: "900" },
+  serviceHeading: { marginBottom: 10 },
+  serviceHeadingTitle: { color: "#142B3D", fontSize: 18, fontWeight: "900" },
   serviceHeadingSubtitle: { color: "#8793A2", fontSize: 11, marginTop: 4 },
-  serviceChoices: { flexDirection: "row", gap: 10, marginBottom: 17 },
-  serviceTile: { flex: 1, minHeight: 126, borderRadius: 17, padding: 13, borderWidth: 1, position: "relative" },
-  serviceTileActive: { backgroundColor: "#F0F7FC", borderColor: "#8DBBD8" },
-  serviceTileUpcoming: { backgroundColor: "#FFFFFF", borderColor: "#E5EAF0" },
-  serviceEmoji: { fontSize: 23, marginBottom: 8 },
+  serviceChoices: { flexDirection: "row", gap: 9, marginBottom: 13 },
+  serviceTile: { flex: 1, minHeight: 108, borderRadius: 15, padding: 12, borderWidth: 1, position: "relative" },
+  serviceTileActive: { backgroundColor: BRAND_COLORS.blueTint, borderColor: BRAND_COLORS.navy },
+  serviceTileUpcoming: { backgroundColor: BRAND_COLORS.orangeTint, borderColor: "#F1D4B9" },
+  serviceEmoji: { fontSize: 21, marginBottom: 6 },
   serviceTitle: { color: "#182230", fontSize: 13, fontWeight: "900" },
   serviceDescription: { color: "#667085", fontSize: 10, marginTop: 4 },
-  comingSoon: { color: "#236B9A", fontSize: 8, fontWeight: "900", letterSpacing: 0.8, marginTop: 8 },
-  heroCard: { backgroundColor: "#174A72", borderRadius: 20, padding: 20, marginBottom: 18 },
-  heroEyebrow: { color: "#BDD7EA", fontSize: 10, fontWeight: "800", letterSpacing: 1.4 },
+  comingSoon: { color: BRAND_COLORS.orange, fontSize: 8, fontWeight: "900", letterSpacing: 0.8, marginTop: 8 },
+  heroCard: { backgroundColor: BRAND_COLORS.navy, borderRadius: 20, padding: 20, marginBottom: 18 },
+  heroEyebrow: { color: BRAND_COLORS.gold, fontSize: 10, fontWeight: "800", letterSpacing: 1.4 },
   heroTitle: { color: "#FFFFFF", fontSize: 23, fontWeight: "800", marginTop: 8 },
   heroText: { color: "#DCEAF4", fontSize: 12, lineHeight: 19, marginTop: 7 },
+  activityIntro: { color: "#667085", fontSize: 11, lineHeight: 17, marginTop: -3, marginBottom: 12 },
+  activitySummaryRow: { flexDirection: "row", gap: 10, marginBottom: 14 },
+  activitySummaryCard: { flex: 1, backgroundColor: "#F0F7FC", borderRadius: 12, borderWidth: 1, borderColor: "#DCEAF4", padding: 12 },
+  activitySummaryValue: { color: BRAND_COLORS.navy, fontSize: 21, fontWeight: "900" },
+  activitySummaryLabel: { color: "#667085", fontSize: 10, fontWeight: "700", marginTop: 3 },
   tabRow: { flexDirection: "row", backgroundColor: "#E8EEF4", borderRadius: 13, padding: 4, marginBottom: 15 },
   tabButton: { flex: 1, alignItems: "center", paddingVertical: 11, borderRadius: 10 },
   tabButtonSelected: { backgroundColor: "#FFFFFF" },
   tabText: { color: "#667085", fontSize: 12, fontWeight: "700" },
-  tabTextSelected: { color: "#174A72" },
-  card: { backgroundColor: "#FFFFFF", borderRadius: 18, padding: 17, borderWidth: 1, borderColor: "#E5EAF0", marginBottom: 17 },
-  cardTitle: { color: "#182230", fontSize: 17, fontWeight: "800", marginBottom: 16 },
+  tabTextSelected: { color: BRAND_COLORS.navy },
+  card: { backgroundColor: "#FFFFFF", borderRadius: 16, padding: 15, borderWidth: 1, borderColor: "#E5EAF0", marginBottom: 15 },
+  cardTitle: { color: "#182230", fontSize: 17, fontWeight: "800", marginBottom: 5 },
   label: { color: "#344054", fontSize: 12, fontWeight: "700", marginBottom: 7, marginTop: 10 },
-  addressInput: { minHeight: 48, borderWidth: 1, borderColor: "#DCE3EB", borderRadius: 11, paddingHorizontal: 13, color: "#182230", backgroundColor: "#FBFCFE", fontSize: 13 },
+  addressInput: { minHeight: 50, borderWidth: 1, borderColor: "#DCE3EB", borderRadius: 12, paddingHorizontal: 13, color: "#182230", backgroundColor: "#FBFCFE", fontSize: 14 },
   suggestionList: { backgroundColor: "#FFFFFF", borderWidth: 1, borderColor: "#E5EAF0", borderRadius: 11, marginTop: 5, marginBottom: 5, paddingHorizontal: 11, paddingVertical: 8 },
   suggestionTitleRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   suggestionHeading: { color: "#98A2B3", fontSize: 9, fontWeight: "800", letterSpacing: 1, paddingVertical: 5 },
-  suggestionLoading: { color: "#236B9A", fontSize: 9, fontWeight: "700" },
+  suggestionLoading: { color: BRAND_COLORS.blue, fontSize: 9, fontWeight: "700" },
   suggestionItem: { paddingVertical: 10, borderTopWidth: 1, borderTopColor: "#F0F2F5" },
   suggestionCopy: { flex: 1, gap: 3 },
   suggestionText: { color: "#344054", fontSize: 12, fontWeight: "600" },
@@ -3620,14 +4573,14 @@ const baseStyles = StyleSheet.create({
   choiceButton: { flex: 1, alignItems: "center", borderWidth: 1, borderColor: "#DCE3EB", borderRadius: 10, paddingVertical: 11, backgroundColor: "#FFFFFF" },
   choiceButtonSelected: { borderColor: "#2B719F", backgroundColor: "#F0F7FC" },
   choiceText: { color: "#667085", fontSize: 12, fontWeight: "700" },
-  choiceTextSelected: { color: "#174A72" },
+  choiceTextSelected: { color: BRAND_COLORS.navy },
   routeMapFrame: { height: 190, borderRadius: 13, overflow: "hidden", marginTop: 10, borderWidth: 1, borderColor: "#DCE3EB" },
   adminFilterRow: { flexDirection: "row", flexWrap: "wrap", gap: 7, marginTop: 10, marginBottom: 12 },
   adminFilterChip: { borderWidth: 1, borderColor: "#DCE3EB", borderRadius: 20, paddingHorizontal: 10, paddingVertical: 8, backgroundColor: "#FFFFFF" },
-  adminFilterChipSelected: { backgroundColor: "#174A72", borderColor: "#174A72" },
+  adminFilterChipSelected: { backgroundColor: BRAND_COLORS.navy, borderColor: BRAND_COLORS.navy },
   adminFilterText: { color: "#667085", fontSize: 9, fontWeight: "800" },
   adminFilterTextSelected: { color: "#FFFFFF" },
-  adminStatusText: { color: "#236B9A", fontSize: 9, fontWeight: "900", letterSpacing: 0.5 },
+  adminStatusText: { color: BRAND_COLORS.blue, fontSize: 9, fontWeight: "900", letterSpacing: 0.5 },
   adminInfoPanel: { backgroundColor: "#F7F9FB", borderRadius: 10, padding: 10, marginTop: 10 },
   adminActionRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 12 },
   adminApproveButton: { flex: 1, minWidth: 90, minHeight: 40, borderRadius: 10, backgroundColor: "#EAF7F0", borderWidth: 1, borderColor: "#B9E4CB", alignItems: "center", justifyContent: "center", paddingHorizontal: 10 },
@@ -3637,7 +4590,7 @@ const baseStyles = StyleSheet.create({
   trackingMapFrame: { height: 220, borderRadius: 13, overflow: "hidden", marginTop: 8, borderWidth: 1, borderColor: "#DCE3EB" },
   trackingPanel: { backgroundColor: "#F7FAFC", borderRadius: 13, padding: 12, marginTop: 12, borderWidth: 1, borderColor: "#E0E8EF" },
   trackingControlPanel: { backgroundColor: "#F7FAFC", borderRadius: 12, padding: 11, marginTop: 12, borderWidth: 1, borderColor: "#E0E8EF" },
-  trackingStatusText: { color: "#174A72", fontSize: 11, fontWeight: "700", marginTop: 8 },
+  trackingStatusText: { color: BRAND_COLORS.navy, fontSize: 11, fontWeight: "700", marginTop: 8 },
   trackingPrivacyText: { color: "#667085", fontSize: 10, lineHeight: 15, marginTop: 5 },
   routeMap: { width: "100%", height: "100%" },
   progressPanel: { backgroundColor: "#F7F9FB", borderRadius: 12, padding: 12, marginTop: 12, marginBottom: 10 },
@@ -3645,32 +4598,36 @@ const baseStyles = StyleSheet.create({
   progressDot: { width: 9, height: 9, borderRadius: 5, backgroundColor: "#D0D7DE" },
   progressDotDone: { backgroundColor: "#21865B" },
   progressText: { color: "#8793A2", fontSize: 11 },
-  progressTextDone: { color: "#174A72", fontWeight: "800" },
+  progressTextDone: { color: BRAND_COLORS.navy, fontWeight: "800" },
   historyNotes: { backgroundColor: "#F7F9FB", borderRadius: 10, padding: 10, marginTop: 9 },
   codeEntryPanel: { backgroundColor: "#F0F7FC", borderRadius: 12, padding: 12, marginTop: 12, borderWidth: 1, borderColor: "#D3E6F3" },
   codePanel: { backgroundColor: "#F0F7FC", borderRadius: 13, padding: 14, marginTop: 14, marginBottom: 10, borderWidth: 1, borderColor: "#D3E6F3" },
-  codeHeading: { color: "#174A72", fontSize: 14, fontWeight: "900", marginTop: 7, marginBottom: 5 },
+  codeHeading: { color: BRAND_COLORS.navy, fontSize: 14, fontWeight: "900", marginTop: 7, marginBottom: 5 },
   codeValue: { color: "#142B3D", fontSize: 25, fontWeight: "900", letterSpacing: 5, backgroundColor: "#FFFFFF", padding: 12, borderRadius: 10, marginTop: 5, overflow: "hidden" },
-  quoteCard: { backgroundColor: "#F0F7FC", borderWidth: 1, borderColor: "#D3E6F3", borderRadius: 13, padding: 14, marginTop: 6, marginBottom: 13 },
-  quoteLabel: { color: "#497A9B", fontSize: 9, fontWeight: "800", letterSpacing: 1.1 },
-  quoteAmount: { color: "#174A72", fontSize: 25, fontWeight: "900", marginTop: 4 },
+  quoteCard: { backgroundColor: BRAND_COLORS.goldTint, borderWidth: 1, borderColor: "#F0DFB5", borderRadius: 13, padding: 14, marginTop: 6, marginBottom: 13 },
+  quoteDivider: { height: 1, backgroundColor: "#F0DFB5", marginVertical: 10 },
+  quoteMetricRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: 7, gap: 12 },
+  quoteMetricLabel: { color: "#667085", fontSize: 11, flex: 1 },
+  quoteMetricValue: { color: "#344054", fontSize: 11, fontWeight: "800", textAlign: "right" },
+  quoteLabel: { color: BRAND_COLORS.orange, fontSize: 9, fontWeight: "800", letterSpacing: 1.1 },
+  quoteAmount: { color: BRAND_COLORS.navy, fontSize: 25, fontWeight: "900", marginTop: 4 },
   quoteNote: { color: "#667085", fontSize: 10, marginTop: 4 },
-  primaryButton: { minHeight: 49, backgroundColor: "#174A72", borderRadius: 12, alignItems: "center", justifyContent: "center", marginTop: 12, paddingHorizontal: 12 },
+  primaryButton: { minHeight: 49, backgroundColor: BRAND_COLORS.navy, borderRadius: 12, alignItems: "center", justifyContent: "center", marginTop: 12, paddingHorizontal: 12 },
   primaryButtonText: { color: "#FFFFFF", fontWeight: "800", fontSize: 13 },
   disabledButton: { opacity: 0.6 },
   section: { marginTop: 4 },
   sectionHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: 10, marginBottom: 10 },
   sectionTitle: { color: "#182230", fontWeight: "800", fontSize: 16 },
-  refreshText: { color: "#236B9A", fontWeight: "700", fontSize: 12 },
+  refreshText: { color: BRAND_COLORS.blue, fontWeight: "700", fontSize: 12 },
   rideCard: { backgroundColor: "#FFFFFF", borderRadius: 16, padding: 15, borderWidth: 1, borderColor: "#E5EAF0", marginBottom: 12 },
   rideTopRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 13 },
-  rideStatus: { color: "#174A72", fontWeight: "800", fontSize: 12, flex: 1 },
+  rideStatus: { color: BRAND_COLORS.navy, fontWeight: "800", fontSize: 12, flex: 1 },
   rideFare: { color: "#142B3D", fontWeight: "900", fontSize: 14 },
   routeRow: { flexDirection: "row", alignItems: "stretch" },
   routeMarkers: { width: 22, alignItems: "center", paddingTop: 3 },
   pickupDot: { width: 9, height: 9, borderRadius: 5, borderWidth: 2, borderColor: "#25825B", backgroundColor: "#FFFFFF" },
   routeLine: { width: 1, flex: 1, minHeight: 20, backgroundColor: "#C5D0DA", marginVertical: 3 },
-  destinationDot: { width: 9, height: 9, borderRadius: 5, backgroundColor: "#174A72" },
+  destinationDot: { width: 9, height: 9, borderRadius: 5, backgroundColor: BRAND_COLORS.navy },
   routeTexts: { flex: 1, paddingBottom: 2 },
   routeLabel: { color: "#98A2B3", fontSize: 8, fontWeight: "800", letterSpacing: 1 },
   routeAddress: { color: "#344054", fontSize: 12, fontWeight: "600", marginTop: 3, marginBottom: 8 },
@@ -3682,8 +4639,20 @@ const baseStyles = StyleSheet.create({
   cancelButton: { alignItems: "center", paddingVertical: 11, marginTop: 4 },
   cancelText: { color: "#B42318", fontWeight: "700", fontSize: 12 },
   emptyState: { backgroundColor: "#FFFFFF", borderRadius: 14, borderWidth: 1, borderColor: "#E5EAF0", padding: 19, alignItems: "center", marginBottom: 13 },
-  emptyTitle: { color: "#344054", fontSize: 13, fontWeight: "800" },
+  emptyTitle: { color: "#344054", fontSize: 13, fontWeight: "800", textAlign: "center" },
   emptyText: { color: "#8793A2", fontSize: 11, textAlign: "center", lineHeight: 17, marginTop: 6 },
+  loadErrorMark: { width: 30, height: 30, borderRadius: 15, backgroundColor: "#FFF1E7", alignItems: "center", justifyContent: "center", marginBottom: 10 },
+  loadErrorMarkText: { color: BRAND_COLORS.orange, fontSize: 17, fontWeight: "900" },
+  retryButton: { minHeight: 38, borderRadius: 10, backgroundColor: BRAND_COLORS.navy, paddingHorizontal: 17, alignItems: "center", justifyContent: "center", marginTop: 13 },
+  retryButtonText: { color: "#FFFFFF", fontSize: 11, fontWeight: "800" },
+  skeletonStack: { marginBottom: 12 },
+  skeletonCard: { backgroundColor: "#FFFFFF", borderRadius: 15, borderWidth: 1, borderColor: "#E5EAF0", padding: 14, marginBottom: 10, gap: 11 },
+  skeletonCardCompact: { paddingVertical: 12, gap: 9 },
+  skeletonHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 2 },
+  skeletonLine: { height: 11, borderRadius: 7, backgroundColor: "#E5EAF0" },
+  skeletonCircle: { width: 25, height: 25, borderRadius: 13 },
+  skeletonFooter: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 2 },
+  skeletonAction: { width: 92, height: 31, borderRadius: 9 },
   notice: { borderRadius: 10, padding: 11, marginTop: 12 },
   errorNotice: { backgroundColor: "#FEF3F2", borderWidth: 1, borderColor: "#FEE4E2" },
   successNotice: { backgroundColor: "#ECFDF3", borderWidth: 1, borderColor: "#ABEFC6" },
@@ -3710,6 +4679,10 @@ function appThemeColor(color: string, property: string, appearance: UiAppearance
       "#FBFCFE": "#102031",
       "#F0F3F7": "#1A2B3D",
       "#F7FAFC": "#1A2B3D",
+      "#E5EAF0": "#304456",
+      "#FFF6E2": "#3D3422",
+      "#FFF1E7": "#3D2B22",
+      "#EEF4FC": "#20364F",
       "#F0F7FC": "#183349",
       "#EAF3F9": "#20394F",
       "#FFF4E5": "#47331E",
@@ -3731,6 +4704,8 @@ function appThemeColor(color: string, property: string, appearance: UiAppearance
       "#E1E8EF": "#3A5065",
       "#D5DFE8": "#3A5065",
       "#D3E6F3": "#31516B",
+      "#F0DFB5": "#6A5937",
+      "#F1D4B9": "#6B4932",
       "#F2C7C4": "#6B4141"
     };
     return borders[color.toUpperCase()] ?? color;
@@ -3746,8 +4721,10 @@ function appThemeColor(color: string, property: string, appearance: UiAppearance
       "#8793A2": "#9AACC0",
       "#98A2B3": "#9AACC0",
       "#526779": "#C1D1DF",
-      "#174A72": "#77BCE8",
-      "#236B9A": "#7FC5ED",
+      "#082B78": "#9DBDF7",
+      "#2F5D9E": "#A4C6F5",
+      "#E27622": "#FFB36F",
+      "#F2C45B": "#F6D78E",
       "#B42318": "#FCA5A5",
       "#067647": "#6EE7B7",
       "#93370D": "#FDBA8C"

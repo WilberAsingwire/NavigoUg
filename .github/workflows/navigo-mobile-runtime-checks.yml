@@ -1,0 +1,43 @@
+name: NAVIGO mobile runtime checks
+
+on:
+  push:
+    branches:
+      - feature/customer-map-responsive-flow
+      - feature/navigo-interaction-polish
+      - feature/navigo-loading-empty-states
+      - feature/navigo-booking-form-polish
+      - feature/navigo-dashboard-responsive
+      - feature/navigo-customer-tracking-polish
+    paths:
+      - "apps/mobile/**"
+      - "packages/shared/**"
+      - "package.json"
+      - ".github/workflows/navigo-mobile-runtime-checks.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  android-bundle:
+    name: Check the Android JavaScript bundle and Expo config
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Install workspace dependencies
+        run: npm install
+      - name: Build shared workspace package
+        run: npm run build:shared
+      - name: Check Expo SDK dependencies
+        working-directory: apps/mobile
+        run: npx expo-doctor
+      - name: Type-check the mobile app
+        working-directory: apps/mobile
+        run: npx tsc --noEmit
+      - name: Bundle the Android app
+        working-directory: apps/mobile
+        run: npx expo export --platform android --output-dir ../../.expo-export-check
