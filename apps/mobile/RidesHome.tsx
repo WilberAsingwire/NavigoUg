@@ -512,6 +512,7 @@ type RouteCoordinate = {
 };
 
 type Quote = {
+  quoteToken: string;
   fareAmountUgx: number;
   distanceKm: number;
   fareBasis: "LANDMARK_FARE" | "DISTANCE_RULE";
@@ -1611,7 +1612,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
     try {
       await apiRequest<{ data: Ride }>("/api/v1/rides", activeSession.accessToken, {
         method: "POST",
-        body: JSON.stringify({ ...locations, paymentMethod })
+        body: JSON.stringify({ ...locations, paymentMethod, quoteToken: quote.quoteToken })
       }, refreshAccessToken);
       setMessage("Your request is in. NAVIGO is finding a nearby rider. Follow the progress under My rides.");
       setQuote(null);
@@ -1622,7 +1623,15 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
       setCustomerActivityTab("rides");
       await loadDashboard();
     } catch (requestError) {
-      setError(requestError instanceof Error ? requestError.message : "Unable to create the ride request.");
+      const errorMessage = requestError instanceof Error
+        ? requestError.message
+        : "Unable to create the ride request.";
+      if (/fare quote has expired|pickup or destination has changed/i.test(errorMessage)) {
+        setQuote(null);
+        setLocations(null);
+        setMapSheetExpanded(true);
+      }
+      setError(errorMessage);
     } finally {
       setWorking(false);
     }
