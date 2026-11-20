@@ -5,7 +5,7 @@ NAVIGO uses Expo Update for internal Android previews so normal JavaScript and i
 ## How it works
 
 - The installed Android preview APK uses the EAS `preview` channel.
-- Expo Update targets runtime version `1.0.0`, derived from the app version.
+- Expo Update targets a runtime version derived from the app version (currently `1.0.0`). Increment the app version whenever a native runtime change requires a new APK.
 - GitHub Actions publishes an update to the shared `preview` channel after pushes to branches other than `main`.
 - The repository secret `EXPO_TOKEN` authenticates both cloud updates and cloud builds. If it is missing, the workflows skip their Expo steps and display a notice.
 - The Android preview APK workflow runs when mobile native configuration files change. It does not rebuild for ordinary JavaScript or UI edits.
@@ -19,7 +19,7 @@ NAVIGO uses Expo Update for internal Android previews so normal JavaScript and i
 
 ## Reviewing changes
 
-After code is pushed to the repository, GitHub Actions publishes the JavaScript bundle and assets to the EAS `preview` channel. Open NAVIGO with an internet connection to download the update. The downloaded update is applied on a subsequent app launch; close and reopen the app if the first launch only downloads it.
+After code is pushed to the repository, GitHub Actions publishes the JavaScript bundle and assets using the EAS `preview` environment and channel. Open NAVIGO with an internet connection to download the update. The downloaded update is applied on a subsequent app launch; close and reopen the app if the first launch only downloads it.
 
 The preview channel is shared: the latest successful update published from any non-`main` branch becomes the preview currently offered to the test APK. Avoid publishing unrelated branches at the same time.
 
