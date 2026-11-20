@@ -1,7 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Animated,
+  Easing,
   KeyboardAvoidingView,
   Image,
   Platform,
@@ -389,7 +391,7 @@ export default function App() {
   }
 
   if (restoring || !introComplete) {
-    return <BrandSplash />;
+    return <BrandSplash onComplete={() => setIntroComplete(true)} />;
   }
 
   if (session) {
@@ -577,17 +579,63 @@ export default function App() {
   );
 }
 
-function BrandSplash() {
+function BrandSplash({ onComplete }: { onComplete: () => void }) {
+  const logoScale = useRef(new Animated.Value(0.72)).current;
+  const logoOpacity = useRef(new Animated.Value(0)).current;
+  const titleOpacity = useRef(new Animated.Value(0)).current;
+  const titleY = useRef(new Animated.Value(22)).current;
+  const taglineOpacity = useRef(new Animated.Value(0)).current;
+  const roadWidth = useRef(new Animated.Value(0)).current;
+  const screenOpacity = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    Animated.sequence([
+      Animated.parallel([
+        Animated.timing(logoOpacity, { toValue: 1, duration: 550, useNativeDriver: true }),
+        Animated.spring(logoScale, { toValue: 1, friction: 6, tension: 55, useNativeDriver: true })
+      ]),
+      Animated.parallel([
+        Animated.timing(titleOpacity, { toValue: 1, duration: 450, useNativeDriver: true }),
+        Animated.timing(titleY, { toValue: 0, duration: 500, easing: Easing.out(Easing.cubic), useNativeDriver: true })
+      ]),
+      Animated.parallel([
+        Animated.timing(taglineOpacity, { toValue: 1, duration: 400, useNativeDriver: true }),
+        Animated.timing(roadWidth, { toValue: 1, duration: 850, easing: Easing.out(Easing.cubic), useNativeDriver: false })
+      ]),
+      Animated.delay(650),
+      Animated.timing(screenOpacity, { toValue: 0, duration: 500, easing: Easing.out(Easing.quad), useNativeDriver: true })
+    ]).start(({ finished }) => {
+      if (finished) onComplete();
+    });
+  }, [logoOpacity, logoScale, titleOpacity, titleY, taglineOpacity, roadWidth, screenOpacity, onComplete]);
+
   return (
-    <View style={styles.splashScreen}>
+    <Animated.View style={[styles.splashScreen, { opacity: screenOpacity }]}>
       <StatusBar hidden />
-      <Image
-        source={require("./assets/navigo-splash.jpg")}
-        style={StyleSheet.absoluteFill}
-        resizeMode="contain"
-        accessibilityLabel="NAVIGO branded opening screen"
-      />
-    </View>
+      <View pointerEvents="none" style={styles.splashGlowTop} />
+      <View style={styles.splashGlowBottom} />
+      <View style={styles.splashContent}>
+        <Animated.View style={[styles.splashLogoShell, { opacity: logoOpacity, transform: [{ scale: logoScale }] }]}>
+          <Image source={require("./assets/icon.png")} style={styles.splashLogo} resizeMode="contain" />
+        </Animated.View>
+        <Animated.Text style={[styles.splashWordmark, { opacity: titleOpacity, transform: [{ translateY: titleY }] }]}>
+          NAVIGO
+        </Animated.Text>
+        <Animated.Text style={[styles.splashTagline, { opacity: taglineOpacity }]}>
+          Ride  •  Deliver  •  Move
+        </Animated.Text>
+        <View style={styles.splashRoadTrack}>
+          <Animated.View style={[styles.splashRoadLine, { transform: [{ scaleX: roadWidth }] }]} />
+        </View>
+        <Animated.Text style={[styles.splashLocation, { opacity: taglineOpacity }]}>
+          YOUR JOURNEY STARTS HERE
+        </Animated.Text>
+      </View>
+      <View style={styles.splashFooter}>
+        <View style={styles.splashFooterDot} />
+        <Text style={styles.splashFooterText}>ARUA  •  UGANDA</Text>
+      </View>
+    </Animated.View>
   );
 }
 
@@ -656,7 +704,20 @@ function Detail({ label, value }: { label: string; value: string }) {
 }
 
 const styles = StyleSheet.create({
-  splashScreen: { flex: 1, backgroundColor: "#DCEEFF", overflow: "hidden" },
+  splashScreen: { flex: 1, backgroundColor: "#F4F9FF", alignItems: "center", justifyContent: "center", overflow: "hidden" },
+  splashGlowTop: { position: "absolute", width: 340, height: 340, borderRadius: 170, backgroundColor: "#E2F0FF", top: -170, right: -120 },
+  splashGlowBottom: { position: "absolute", width: 300, height: 300, borderRadius: 150, backgroundColor: "#EAF3FF", bottom: -190, left: -100 },
+  splashContent: { width: "100%", alignItems: "center", justifyContent: "center", paddingHorizontal: 28, marginTop: -20 },
+  splashLogoShell: { width: 154, height: 154, borderRadius: 42, backgroundColor: "#FFFFFF", alignItems: "center", justifyContent: "center", shadowColor: "#0B2E6B", shadowOffset: { width: 0, height: 12 }, shadowOpacity: 0.15, shadowRadius: 22, elevation: 9, marginBottom: 25 },
+  splashLogo: { width: 132, height: 132, borderRadius: 34 },
+  splashWordmark: { color: "#0B2E6B", fontSize: 46, fontWeight: "900", fontStyle: "italic", letterSpacing: 2.2 },
+  splashTagline: { color: "#24558C", fontSize: 16, fontWeight: "700", marginTop: 9, letterSpacing: 0.25 },
+  splashRoadTrack: { width: 190, height: 5, borderRadius: 3, backgroundColor: "#D9E9FC", overflow: "hidden", marginTop: 31 },
+  splashRoadLine: { width: "100%", height: 5, borderRadius: 3, backgroundColor: "#F2A900", transformOrigin: "left" },
+  splashLocation: { color: "#6A83A5", fontSize: 10, fontWeight: "800", letterSpacing: 2.2, marginTop: 17 },
+  splashFooter: { position: "absolute", bottom: 42, flexDirection: "row", alignItems: "center", gap: 8 },
+  splashFooterDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: "#F2A900" },
+  splashFooterText: { color: "#6680A2", fontSize: 10, fontWeight: "800", letterSpacing: 2.1 },
   splashBrand: { position: "absolute", top: "16%", left: 0, right: 0, alignItems: "center" },
   splashLogoImage: { width: 140, height: 140, borderRadius: 70, marginBottom: 0 },
   splashWordmark: { color: "#0B2E6B", fontSize: 35, fontWeight: "900", fontStyle: "italic", letterSpacing: 1.2, marginTop: 85 },
