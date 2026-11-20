@@ -587,6 +587,8 @@ function BrandSplash({ onComplete }: { onComplete: () => void }) {
   const taglineOpacity = useRef(new Animated.Value(0)).current;
   const roadWidth = useRef(new Animated.Value(0)).current;
   const screenOpacity = useRef(new Animated.Value(1)).current;
+  const onCompleteRef = useRef(onComplete);
+  onCompleteRef.current = onComplete;
 
   useEffect(() => {
     Animated.sequence([
@@ -605,9 +607,9 @@ function BrandSplash({ onComplete }: { onComplete: () => void }) {
       Animated.delay(650),
       Animated.timing(screenOpacity, { toValue: 0, duration: 500, easing: Easing.out(Easing.quad), useNativeDriver: true })
     ]).start(({ finished }) => {
-      if (finished) onComplete();
+      if (finished) onCompleteRef.current();
     });
-  }, [logoOpacity, logoScale, titleOpacity, titleY, taglineOpacity, roadWidth, screenOpacity, onComplete]);
+  }, [logoOpacity, logoScale, titleOpacity, titleY, taglineOpacity, roadWidth, screenOpacity]);
 
   return (
     <Animated.View style={[styles.splashScreen, { opacity: screenOpacity }]}>
