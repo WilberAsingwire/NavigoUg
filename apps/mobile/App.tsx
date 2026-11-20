@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Animated,
   Image,
   KeyboardAvoidingView,
   Platform,
@@ -10,7 +11,6 @@ import {
   StyleSheet,
   Text,
   TextInput,
-  TouchableOpacity,
   View
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
@@ -18,6 +18,7 @@ import * as SecureStore from "expo-secure-store";
 import RidesHome from "./RidesHome";
 import { SplashScreen, WelcomeScreen } from "./LaunchScreens";
 import { BRAND_COLORS } from "./brand";
+import { InteractiveTouchable as TouchableOpacity } from "./InteractiveTouchable";
 
 const API_BASE_URL = "https://navigou-api-2978.onrender.com";
 const SESSION_KEY = "navigo.session";
@@ -82,6 +83,31 @@ export default function App() {
   const [showWelcome, setShowWelcome] = useState(true);
   const [error, setError] = useState("");
   const [session, setSession] = useState<Session | null>(null);
+  const authFade = useRef(new Animated.Value(1)).current;
+  const authOffset = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    if (session || showWelcome || restoring || !splashComplete) return;
+
+    authFade.setValue(0);
+    authOffset.setValue(10);
+    const entrance = Animated.parallel([
+      Animated.timing(authFade, {
+        toValue: 1,
+        duration: 220,
+        useNativeDriver: true
+      }),
+      Animated.spring(authOffset, {
+        toValue: 0,
+        speed: 25,
+        bounciness: 2,
+        useNativeDriver: true
+      })
+    ]);
+    entrance.start();
+    return () => entrance.stop();
+  }, [session, showWelcome, restoring, splashComplete, mode, role, authFade, authOffset]);
+
 
   useEffect(() => {
     const timer = setTimeout(() => setSplashComplete(true), 1_500);
@@ -260,6 +286,7 @@ export default function App() {
         style={styles.flex}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
       >
+        <Animated.View style={{ flex: 1, opacity: authFade, transform: [{ translateY: authOffset }] }}>
         <ScrollView
           contentContainerStyle={styles.authPage}
           keyboardShouldPersistTaps="handled"
@@ -425,6 +452,7 @@ export default function App() {
           </Text>
           <Text style={styles.footer}>Arua, Uganda</Text>
         </ScrollView>
+        </Animated.View>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
