@@ -21,6 +21,7 @@ import {
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import NativeMapView, { Marker, Polyline } from "react-native-maps";
+import { BRAND_COLORS } from "./brand";
 
 type UiAppearance = "LIGHT" | "DARK";
 type UiTextSize = "COMPACT" | "STANDARD" | "LARGE";
@@ -353,7 +354,7 @@ function OpenStreetMapRasterView({
               width: length,
               height: 5,
               borderRadius: 3,
-              backgroundColor: "#1F76A8",
+              backgroundColor: BRAND_COLORS.orange,
               transform: [{ rotate: Math.atan2(dy, dx) + "rad" }]
             }}
           />
@@ -378,7 +379,7 @@ function OpenStreetMapRasterView({
                 width: 18,
                 height: 18,
                 borderRadius: 9,
-                backgroundColor: marker.pinColor ?? "#236B9A",
+                backgroundColor: marker.pinColor ?? BRAND_COLORS.blue,
                 borderColor: "#FFFFFF",
                 borderWidth: 2,
                 elevation: 4
@@ -410,11 +411,11 @@ function OpenStreetMapRasterView({
       {zoomEnabled !== false ? (
         <View style={{ position: "absolute", left: 12, top: 118, backgroundColor: "#FFFFFF", borderRadius: 13, elevation: 7, overflow: "hidden", zIndex: 10, borderWidth: 1, borderColor: "#DCE3EB" }}>
           <TouchableOpacity accessibilityRole="button" accessibilityLabel="Zoom in" onPress={() => changeZoom(1)} style={{ width: 48, height: 46, alignItems: "center", justifyContent: "center" }}>
-            <Text style={{ color: "#174A72", fontSize: 28, fontWeight: "800", lineHeight: 32 }}>+</Text>
+            <Text style={{ color: BRAND_COLORS.navy, fontSize: 28, fontWeight: "800", lineHeight: 32 }}>+</Text>
           </TouchableOpacity>
           <View style={{ height: 1, backgroundColor: "#E5EAF0" }} />
           <TouchableOpacity accessibilityRole="button" accessibilityLabel="Zoom out" onPress={() => changeZoom(-1)} style={{ width: 48, height: 46, alignItems: "center", justifyContent: "center" }}>
-            <Text style={{ color: "#174A72", fontSize: 28, fontWeight: "800", lineHeight: 32 }}>−</Text>
+            <Text style={{ color: BRAND_COLORS.navy, fontSize: 28, fontWeight: "800", lineHeight: 32 }}>−</Text>
           </TouchableOpacity>
         </View>
       ) : null}
@@ -2157,13 +2158,16 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
         {!(isCustomer && mainTab === "home") ? (
         <View style={styles.topBar}>
           <View>
-            <Text style={styles.brandSmall}>NAVIGO</Text>
+            <View style={styles.brandHeader}>
+              <Image source={require("./assets/icon.png")} style={styles.brandSmallLogo} resizeMode="contain" accessibilityLabel="NAVIGO logo" />
+              <Text style={styles.brandSmall}>NAVIGO</Text>
+            </View>
             <Text style={styles.greeting}>Hello, {session.user.fullName.split(" ")[0]}</Text>
             <Text style={styles.muted}>{isCustomer ? "Your ride starts here" : "Your rider workspace"}</Text>
           </View>
 {activeSession.user.role === "ADMIN" ? (
             <TouchableOpacity style={styles.signOut} onPress={onSignOut} disabled={signingOut}>
-              {signingOut ? <ActivityIndicator color="#174A72" /> : <Text style={styles.signOutText}>Sign out</Text>}
+              {signingOut ? <ActivityIndicator color={BRAND_COLORS.navy} /> : <Text style={styles.signOutText}>Sign out</Text>}
             </TouchableOpacity>
           ) : null}
         </View>
@@ -2191,9 +2195,9 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                 toolbarEnabled={false}
               >
                 {quote && locations ? (
-                  <Polyline coordinates={quote.routeCoordinates} strokeColor="#1F76A8" strokeWidth={5} />
+                  <Polyline coordinates={quote.routeCoordinates} strokeColor={BRAND_COLORS.orange} strokeWidth={5} />
                 ) : parcelQuote && parcelLocations ? (
-                  <Polyline coordinates={parcelQuote.routeCoordinates} strokeColor="#1F76A8" strokeWidth={5} />
+                  <Polyline coordinates={parcelQuote.routeCoordinates} strokeColor={BRAND_COLORS.orange} strokeWidth={5} />
                 ) : null}
                 {(locations?.pickup ?? parcelLocations?.pickup ?? selectedPickupLocation ?? deviceLocation) ? (
                   <Marker
@@ -2213,6 +2217,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                 ) : null}
               </SafeMapView>
               <View style={styles.mapBrandPill}>
+                <Image source={require("./assets/icon.png")} style={styles.mapBrandLogo} resizeMode="contain" accessibilityLabel="NAVIGO logo" />
                 <Text style={styles.mapBrandText}>NAVIGO  •  ARUA</Text>
               </View>
               <TouchableOpacity style={styles.customerMapRecenterButton} onPress={() => void detectPickupLocation(false)}>
@@ -2313,7 +2318,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                       <>
                         <View style={styles.routeMapFrame}>
                           <SafeMapView style={styles.routeMap} initialRegion={routeMapRegion(parcelQuote.routeCoordinates)} routeCoordinates={parcelQuote.routeCoordinates} markers={[{ coordinate: parcelLocations.pickup, title: "Pickup", pinColor: "#21865B" }, { coordinate: parcelLocations.destination, title: "Delivery", pinColor: "#C54848" }]} scrollEnabled={false} zoomEnabled={false} rotateEnabled={false} pitchEnabled={false} toolbarEnabled={false} showsCompass={false} showsScale={false}>
-                            <Polyline coordinates={parcelQuote.routeCoordinates} strokeColor="#1F76A8" strokeWidth={5} />
+                            <Polyline coordinates={parcelQuote.routeCoordinates} strokeColor={BRAND_COLORS.orange} strokeWidth={5} />
                             <Marker coordinate={parcelLocations.pickup} title="Pickup" pinColor="#21865B" />
                             <Marker coordinate={parcelLocations.destination} title="Delivery" pinColor="#C54848" />
                           </SafeMapView>
@@ -2540,7 +2545,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                     region={mapRegion}
                     onRegionChangeComplete={setMapRegion}
                     routeCoordinates={riderMapRouteCoordinates}
-                    markers={[{ coordinate: riderDeviceLocation, title: "You", pinColor: "#236B9A" }, { coordinate: riderMapPickup, title: "Pickup", pinColor: "#21865B" }, { coordinate: riderMapDestination, title: "Destination", pinColor: "#C54848" }]}
+                    markers={[{ coordinate: riderDeviceLocation, title: "You", pinColor: BRAND_COLORS.blue }, { coordinate: riderMapPickup, title: "Pickup", pinColor: "#21865B" }, { coordinate: riderMapDestination, title: "Destination", pinColor: "#C54848" }]}
                     onInteractionStart={() => setMapGestureActive(true)}
                     onInteractionEnd={() => setMapGestureActive(false)}
                     onMapReady={() => {
@@ -2566,9 +2571,9 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                     toolbarEnabled={false}
                   >
                     {riderMapRouteCoordinates && riderMapRouteCoordinates.length >= 2
-                      ? <Polyline coordinates={riderMapRouteCoordinates} strokeColor="#1F76A8" strokeWidth={5} />
+                      ? <Polyline coordinates={riderMapRouteCoordinates} strokeColor={BRAND_COLORS.orange} strokeWidth={5} />
                       : null}
-                    {!riderOnline && riderDeviceLocation ? <Marker coordinate={riderDeviceLocation} title="Your current location" pinColor="#236B9A" /> : null}
+                    {!riderOnline && riderDeviceLocation ? <Marker coordinate={riderDeviceLocation} title="Your current location" pinColor={BRAND_COLORS.blue} /> : null}
                     {riderMapPickup ? <Marker coordinate={riderMapPickup} title="Accepted job pickup" description="Shown after this job is assigned to you" pinColor="#21865B" /> : null}
                     {riderMapDestination ? <Marker coordinate={riderMapDestination} title="Accepted job destination" description="Shown after this job is assigned to you" pinColor="#C54848" /> : null}
                   </SafeMapView>
@@ -2587,7 +2592,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                     disabled={riderMapCenteringUi}
                   >
                     {riderMapCenteringUi
-                      ? <ActivityIndicator color="#174A72" size="small" />
+                      ? <ActivityIndicator color={BRAND_COLORS.navy} size="small" />
                       : <Text style={styles.mapRecenterText}>◎</Text>}
                   </TouchableOpacity>
                   {riderMapNavigationTarget ? (
@@ -2906,7 +2911,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
           <>
             {loading && (
               <View style={styles.loadingRow}>
-                <ActivityIndicator color="#174A72" />
+                <ActivityIndicator color={BRAND_COLORS.navy} />
                 <Text style={styles.muted}>Loading your NAVIGO workspace...</Text>
               </View>
             )}
@@ -3370,7 +3375,7 @@ function ProfilePanel({
                 ) : null}
               </View>
               {notificationsLoading ? (
-                <ActivityIndicator color="#174A72" style={{ marginVertical: 22 }} />
+                <ActivityIndicator color={BRAND_COLORS.navy} style={{ marginVertical: 22 }} />
               ) : notifications.length ? notifications.map((item) => (
                 <TouchableOpacity
                   key={item.id}
@@ -3477,7 +3482,7 @@ function BottomNavigation({ role, activeTab, onChange }: {
       {items.map((item) => {
         const selected = activeTab === item.key;
         return (
-          <TouchableOpacity key={item.key} accessibilityRole="button" accessibilityLabel={item.label} accessibilityState={{ selected }} style={styles.bottomNavItem} onPress={() => onChange(item.key)}>
+          <TouchableOpacity key={item.key} accessibilityRole="button" accessibilityLabel={item.label} accessibilityState={{ selected }} style={[styles.bottomNavItem, selected && styles.bottomNavItemSelected]} onPress={() => onChange(item.key)}>
             <Text style={[styles.bottomNavIcon, selected && styles.bottomNavIconSelected]}>{item.icon}</Text>
             <Text style={[styles.bottomNavLabel, selected && styles.bottomNavLabelSelected]}>{item.label}</Text>
           </TouchableOpacity>
@@ -3761,7 +3766,7 @@ function CustomerParcelCard({
               style={styles.routeMap}
               initialRegion={parcelTrackingRegion(tracking)}
               routeCoordinates={[tracking.pickup, tracking.destination]}
-              markers={[{ coordinate: tracking.pickup, title: "Pickup", pinColor: "#21865B" }, { coordinate: tracking.destination, title: "Delivery", pinColor: "#C54848" }, { coordinate: tracking.rider, title: "Rider", pinColor: "#236B9A" }]}
+              markers={[{ coordinate: tracking.pickup, title: "Pickup", pinColor: "#21865B" }, { coordinate: tracking.destination, title: "Delivery", pinColor: "#C54848" }, { coordinate: tracking.rider, title: "Rider", pinColor: BRAND_COLORS.blue }]}
               customMapStyle={LIGHT_MAP_STYLE}
               scrollEnabled
               zoomEnabled
@@ -3774,7 +3779,7 @@ function CustomerParcelCard({
               <Marker coordinate={tracking.pickup} title="Pickup point" pinColor="#21865B" />
               <Marker coordinate={tracking.destination} title="Delivery point" pinColor="#C54848" />
               {tracking.rider ? (
-                <Marker coordinate={tracking.rider} title="Rider's latest location" description="Last reported GPS position" pinColor="#236B9A" />
+                <Marker coordinate={tracking.rider} title="Rider's latest location" description="Last reported GPS position" pinColor={BRAND_COLORS.blue} />
               ) : null}
             </SafeMapView>
           </View>
@@ -3970,21 +3975,24 @@ const baseStyles = StyleSheet.create({
   mainScroll: { flex: 1 },
   page: { flexGrow: 1, paddingHorizontal: 19, paddingTop: 20, paddingBottom: 30 },
   topBar: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 20 },
-  brandSmall: { color: "#174A72", fontSize: 12, fontWeight: "900", letterSpacing: 2 },
+  brandHeader: { flexDirection: "row", alignItems: "center", gap: 7, marginBottom: 1 },
+  brandSmallLogo: { width: 29, height: 29, borderRadius: 8, backgroundColor: "#EDF4FF" },
+  brandSmall: { color: BRAND_COLORS.navy, fontSize: 12, fontWeight: "900", letterSpacing: 2 },
   greeting: { color: "#142B3D", fontSize: 24, fontWeight: "800", marginTop: 4 },
   muted: { color: "#8793A2", fontSize: 12, marginTop: 4 },
   signOut: { borderWidth: 1, borderColor: "#D5DFE8", paddingHorizontal: 13, paddingVertical: 9, borderRadius: 10, backgroundColor: "#FFFFFF" },
-  signOutText: { color: "#174A72", fontWeight: "700", fontSize: 12 },
+  signOutText: { color: BRAND_COLORS.navy, fontWeight: "700", fontSize: 12 },
   bottomNav: { flexDirection: "row", alignItems: "center", justifyContent: "space-around", backgroundColor: "#FFFFFF", borderTopWidth: 1, borderTopColor: "#E5EAF0", paddingTop: 7, paddingBottom: 8, paddingHorizontal: 8 },
   bottomNavItem: { flex: 1, minHeight: 49, alignItems: "center", justifyContent: "center", gap: 3 },
+  bottomNavItemSelected: { backgroundColor: BRAND_COLORS.goldTint, borderRadius: 11, marginHorizontal: 3 },
   bottomNavIcon: { color: "#98A2B3", fontSize: 20, lineHeight: 22, fontWeight: "700" },
-  bottomNavIconSelected: { color: "#174A72" },
+  bottomNavIconSelected: { color: BRAND_COLORS.navy },
   bottomNavLabel: { color: "#8793A2", fontSize: 10, fontWeight: "600" },
-  bottomNavLabelSelected: { color: "#174A72", fontWeight: "900" },
+  bottomNavLabelSelected: { color: BRAND_COLORS.navy, fontWeight: "900" },
   profilePage: { gap: 13 },
   profileHero: { alignItems: "center", backgroundColor: "#FFFFFF", borderRadius: 18, padding: 22, borderWidth: 1, borderColor: "#E5EAF0" },
   profileAvatar: { width: 66, height: 66, borderRadius: 33, backgroundColor: "#EAF3F9", alignItems: "center", justifyContent: "center", marginBottom: 11 },
-  profileAvatarText: { color: "#174A72", fontSize: 29, fontWeight: "900" },
+  profileAvatarText: { color: BRAND_COLORS.navy, fontSize: 29, fontWeight: "900" },
   profileName: { color: "#142B3D", fontSize: 19, fontWeight: "900" },
   profileRole: { color: "#667085", fontSize: 12, marginTop: 5 },
   profileSectionHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 10 },
@@ -3993,36 +4001,36 @@ const baseStyles = StyleSheet.create({
   profileMenuCopy: { flex: 1 },
   profileMenuTitle: { color: "#243B4D", fontSize: 12, fontWeight: "800" },
   profileMenuDescription: { color: "#8793A2", fontSize: 10, lineHeight: 15, marginTop: 3 },
-  profileMenuBadge: { color: "#FFFFFF", backgroundColor: "#236B9A", overflow: "hidden", borderRadius: 9, paddingHorizontal: 7, paddingVertical: 3, fontSize: 9, fontWeight: "900" },
+  profileMenuBadge: { color: "#FFFFFF", backgroundColor: BRAND_COLORS.blue, overflow: "hidden", borderRadius: 9, paddingHorizontal: 7, paddingVertical: 3, fontSize: 9, fontWeight: "900" },
   profileMenuArrow: { color: "#98A2B3", fontSize: 23, fontWeight: "400" },
   profileBack: { alignSelf: "flex-start", paddingVertical: 5, paddingRight: 12 },
-  profileBackText: { color: "#236B9A", fontSize: 12, fontWeight: "800" },
+  profileBackText: { color: BRAND_COLORS.blue, fontSize: 12, fontWeight: "800" },
   profileSubTitle: { color: "#142B3D", fontSize: 20, fontWeight: "900", marginBottom: 2 },
   profileChoiceRow: { flexDirection: "row", gap: 7, marginTop: 11, marginBottom: 9 },
   profileChoiceButton: { flex: 1, minHeight: 40, borderRadius: 10, borderWidth: 1, borderColor: "#DCE3EB", backgroundColor: "#FBFCFE", alignItems: "center", justifyContent: "center", paddingHorizontal: 5 },
-  profileChoiceButtonSelected: { borderColor: "#236B9A", backgroundColor: "#EAF3F9" },
+  profileChoiceButtonSelected: { borderColor: BRAND_COLORS.gold, backgroundColor: BRAND_COLORS.goldTint },
   profileChoiceText: { color: "#667085", fontSize: 11, fontWeight: "700" },
-  profileChoiceTextSelected: { color: "#174A72", fontWeight: "900" },
+  profileChoiceTextSelected: { color: BRAND_COLORS.navy, fontWeight: "900" },
   notificationItem: { paddingVertical: 13, borderTopWidth: 1, borderTopColor: "#F0F2F5" },
   notificationItemUnread: { backgroundColor: "#F7FAFC", marginHorizontal: -4, paddingHorizontal: 4, borderRadius: 8 },
   notificationHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 8 },
   notificationTitle: { color: "#243B4D", fontSize: 12, fontWeight: "800", flex: 1 },
-  notificationUnreadDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: "#236B9A" },
+  notificationUnreadDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: BRAND_COLORS.blue },
   notificationMeta: { color: "#98A2B3", fontSize: 9, marginTop: 7 },
-  profileActionText: { color: "#236B9A", fontSize: 12, fontWeight: "800" },
+  profileActionText: { color: BRAND_COLORS.blue, fontSize: 12, fontWeight: "800" },
   profileHint: { color: "#8793A2", fontSize: 10, lineHeight: 15, marginTop: 7 },
 
   profileDetailRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", gap: 14, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: "#F0F2F5" },
   profileDetailLabel: { color: "#8793A2", fontSize: 11, flex: 1 },
   profileDetailValue: { color: "#344054", fontSize: 11, fontWeight: "700", flex: 1, textAlign: "right" },
   profileInfoCard: { backgroundColor: "#F0F7FC", borderRadius: 14, borderWidth: 1, borderColor: "#D3E6F3", padding: 14 },
-  profileInfoTitle: { color: "#174A72", fontSize: 13, fontWeight: "900" },
+  profileInfoTitle: { color: BRAND_COLORS.navy, fontSize: 13, fontWeight: "900" },
   profileInfoText: { color: "#526779", fontSize: 11, lineHeight: 17, marginTop: 6 },
   profileSignOut: { minHeight: 48, borderRadius: 12, borderWidth: 1, borderColor: "#F2C7C4", backgroundColor: "#FFFFFF", alignItems: "center", justifyContent: "center", marginBottom: 12 },
   profileSignOutText: { color: "#B42318", fontSize: 12, fontWeight: "800" },
   quickAccessRow: { flexDirection: "row", gap: 10, marginTop: 2, marginBottom: 14 },
   quickAccessCard: { flex: 1, minHeight: 92, backgroundColor: "#FFFFFF", borderRadius: 14, borderWidth: 1, borderColor: "#E5EAF0", padding: 13, justifyContent: "center" },
-  quickAccessTitle: { color: "#174A72", fontSize: 13, fontWeight: "900" },
+  quickAccessTitle: { color: BRAND_COLORS.navy, fontSize: 13, fontWeight: "900" },
   quickAccessText: { color: "#667085", fontSize: 10, lineHeight: 15, marginTop: 5 },
   mapHomePage: { flexGrow: 1, paddingHorizontal: 0, paddingTop: 0, paddingBottom: 0 },
   customerMapFrame: { height: Dimensions.get("window").height - 88, borderRadius: 0, overflow: "hidden", marginBottom: 0, marginHorizontal: 0, marginTop: 0, borderWidth: 0, backgroundColor: "#E9F0F5", position: "relative" },
@@ -4031,10 +4039,10 @@ const baseStyles = StyleSheet.create({
   customerMapSearchSheet: { marginTop: 0, marginHorizontal: 0, marginBottom: 0, borderRadius: 0, elevation: 2, zIndex: 2, shadowOpacity: 0 },
   locationSearchHeader: { minHeight: 58, flexDirection: "row", alignItems: "center", justifyContent: "center", paddingHorizontal: 16, borderBottomWidth: 1, borderBottomColor: "#E5EAF0", backgroundColor: "#FFFFFF" },
   locationSearchBackButton: { position: "absolute", left: 14, top: 4, width: 42, height: 50, justifyContent: "center" },
-  locationSearchBackText: { color: "#174A72", fontSize: 34, lineHeight: 38, fontWeight: "400" },
+  locationSearchBackText: { color: BRAND_COLORS.navy, fontSize: 34, lineHeight: 38, fontWeight: "400" },
   locationSearchTitle: { color: "#182230", fontSize: 16, fontWeight: "800" },
   locationSearchLocationAction: { minHeight: 42, justifyContent: "center", paddingHorizontal: 4, marginTop: 4, marginBottom: 4 },
-  locationSearchLocationActionText: { color: "#174A72", fontSize: 12, fontWeight: "800" },
+  locationSearchLocationActionText: { color: BRAND_COLORS.navy, fontSize: 12, fontWeight: "800" },
   mapSheetDragArea: { paddingTop: 10, paddingHorizontal: 16, paddingBottom: 10 },
   mapSheetGrip: { alignSelf: "center", width: 42, height: 5, borderRadius: 3, backgroundColor: "#C8D0D8", marginBottom: 11 },
   mapSheetWhereTo: { minHeight: 54, borderRadius: 14, backgroundColor: "#F4F6F8", paddingHorizontal: 15, paddingVertical: 9, justifyContent: "center" },
@@ -4047,7 +4055,7 @@ const baseStyles = StyleSheet.create({
   routeReviewStopCopy: { flex: 1 },
   routeReviewAddress: { color: "#344054", fontSize: 12, fontWeight: "700", lineHeight: 17, marginTop: 2 },
   quoteEditButton: { minHeight: 42, borderRadius: 10, borderWidth: 1, borderColor: "#D5E2EB", alignItems: "center", justifyContent: "center", marginTop: 8, marginBottom: 10, backgroundColor: "#FFFFFF" },
-  quoteEditButtonText: { color: "#174A72", fontSize: 11, fontWeight: "800" },
+  quoteEditButtonText: { color: BRAND_COLORS.navy, fontSize: 11, fontWeight: "800" },
   customerMapRecenterButton: { position: "absolute", top: 112, right: 13, width: 42, height: 42, borderRadius: 21, backgroundColor: "#FFFFFF", alignItems: "center", justifyContent: "center", elevation: 4, shadowColor: "#102A43", shadowOpacity: 0.16, shadowRadius: 7 },
   mapLocationRetryPill: { left: 13, right: undefined, top: 61 },
   riderMapFrame: { height: Dimensions.get("window").height * 0.48, borderRadius: 18, overflow: "hidden", marginTop: 12, marginBottom: 12, backgroundColor: "#E9F0F5", position: "relative" },
@@ -4057,12 +4065,12 @@ const baseStyles = StyleSheet.create({
   riderMapStatusText: { color: "#344054", fontSize: 10, fontWeight: "800" },
   mapSelectionControls: { position: "absolute", top: 13, right: 12, gap: 7, alignItems: "flex-end" },
   mapRecenterButton: { position: "absolute", right: 13, bottom: 80, width: 42, height: 42, borderRadius: 21, backgroundColor: "#FFFFFF", alignItems: "center", justifyContent: "center", elevation: 4, shadowColor: "#102A43", shadowOpacity: 0.16, shadowRadius: 7 },
-  mapRecenterText: { color: "#174A72", fontSize: 23, fontWeight: "800", lineHeight: 26 },
+  mapRecenterText: { color: BRAND_COLORS.navy, fontSize: 23, fontWeight: "800", lineHeight: 26 },
   riderMapRecenterButton: { bottom: 120 },
-  riderDirectionsButton: { position: "absolute", right: 12, bottom: 60, backgroundColor: "#174A72", borderRadius: 20, paddingHorizontal: 13, paddingVertical: 10, elevation: 4 },
+  riderDirectionsButton: { position: "absolute", right: 12, bottom: 60, backgroundColor: BRAND_COLORS.navy, borderRadius: 20, paddingHorizontal: 13, paddingVertical: 10, elevation: 4 },
   riderDirectionsText: { color: "#FFFFFF", fontSize: 10, fontWeight: "800" },
   mapSelectionButton: { backgroundColor: "#FFFFFF", borderRadius: 18, paddingHorizontal: 12, paddingVertical: 9, elevation: 3 },
-  mapSelectionButtonActive: { backgroundColor: "#174A72" },
+  mapSelectionButtonActive: { backgroundColor: BRAND_COLORS.navy },
   mapSelectionButtonText: { color: "#344054", fontSize: 10, fontWeight: "800" },
   mapSelectionButtonTextActive: { color: "#FFFFFF" },
   mapSelectionHint: { position: "absolute", bottom: 78, left: 12, right: 12, backgroundColor: "rgba(23,74,114,0.96)", borderRadius: 12, paddingHorizontal: 12, paddingVertical: 10, flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
@@ -4074,14 +4082,15 @@ const baseStyles = StyleSheet.create({
   pickupLocationLabel: { color: "#8793A2", fontSize: 8, fontWeight: "900", letterSpacing: 1 },
   pickupLocationValue: { color: "#142B3D", fontSize: 12, fontWeight: "700", marginTop: 4 },
   locationChangeButton: { backgroundColor: "#EDF5FA", borderRadius: 10, paddingHorizontal: 12, paddingVertical: 9 },
-  locationChangeText: { color: "#174A72", fontSize: 11, fontWeight: "800" },
+  locationChangeText: { color: BRAND_COLORS.navy, fontSize: 11, fontWeight: "800" },
   locationRetryPill: { position: "absolute", top: 57, right: 12, backgroundColor: "#FFFFFF", borderRadius: 18, paddingHorizontal: 12, paddingVertical: 9, elevation: 3 },
-  locationRetryText: { color: "#174A72", fontSize: 10, fontWeight: "800" },
+  locationRetryText: { color: BRAND_COLORS.navy, fontSize: 10, fontWeight: "800" },
   customerMap: { width: "100%", height: "100%", backgroundColor: "#E9F0F5" },
   customerMapLoadingOverlay: { ...StyleSheet.absoluteFill, zIndex: 10, elevation: 10, backgroundColor: "#E9F0F5", alignItems: "center", justifyContent: "center", gap: 8 },
   customerMapLoadingText: { color: "#526779", fontSize: 11, fontWeight: "700" },
-  mapBrandPill: { position: "absolute", top: 13, left: 13, backgroundColor: "#FFFFFF", borderRadius: 20, paddingHorizontal: 12, paddingVertical: 8, shadowColor: "#102A43", shadowOpacity: 0.12, shadowRadius: 8, elevation: 3 },
-  mapBrandText: { color: "#174A72", fontSize: 10, fontWeight: "900", letterSpacing: 1.2 },
+  mapBrandPill: { position: "absolute", top: 13, left: 13, backgroundColor: "#FFFFFF", borderRadius: 20, paddingHorizontal: 9, paddingVertical: 6, flexDirection: "row", alignItems: "center", gap: 7, shadowColor: "#102A43", shadowOpacity: 0.12, shadowRadius: 8, elevation: 3 },
+  mapBrandLogo: { width: 25, height: 25, borderRadius: 7, backgroundColor: "#EDF4FF" },
+  mapBrandText: { color: BRAND_COLORS.navy, fontSize: 10, fontWeight: "900", letterSpacing: 1.2 },
   mapHintPill: { position: "absolute", bottom: 13, left: 13, right: 13, backgroundColor: "rgba(255,255,255,0.94)", borderRadius: 12, paddingHorizontal: 13, paddingVertical: 10 },
   mapHintText: { color: "#344054", fontSize: 11, fontWeight: "600", textAlign: "center" },
   serviceHeading: { marginBottom: 10 },
@@ -4089,26 +4098,26 @@ const baseStyles = StyleSheet.create({
   serviceHeadingSubtitle: { color: "#8793A2", fontSize: 11, marginTop: 4 },
   serviceChoices: { flexDirection: "row", gap: 9, marginBottom: 13 },
   serviceTile: { flex: 1, minHeight: 108, borderRadius: 15, padding: 12, borderWidth: 1, position: "relative" },
-  serviceTileActive: { backgroundColor: "#F0F7FC", borderColor: "#8DBBD8" },
-  serviceTileUpcoming: { backgroundColor: "#FFFFFF", borderColor: "#E5EAF0" },
+  serviceTileActive: { backgroundColor: BRAND_COLORS.blueTint, borderColor: BRAND_COLORS.navy },
+  serviceTileUpcoming: { backgroundColor: BRAND_COLORS.orangeTint, borderColor: "#F1D4B9" },
   serviceEmoji: { fontSize: 21, marginBottom: 6 },
   serviceTitle: { color: "#182230", fontSize: 13, fontWeight: "900" },
   serviceDescription: { color: "#667085", fontSize: 10, marginTop: 4 },
-  comingSoon: { color: "#236B9A", fontSize: 8, fontWeight: "900", letterSpacing: 0.8, marginTop: 8 },
-  heroCard: { backgroundColor: "#174A72", borderRadius: 20, padding: 20, marginBottom: 18 },
-  heroEyebrow: { color: "#BDD7EA", fontSize: 10, fontWeight: "800", letterSpacing: 1.4 },
+  comingSoon: { color: BRAND_COLORS.orange, fontSize: 8, fontWeight: "900", letterSpacing: 0.8, marginTop: 8 },
+  heroCard: { backgroundColor: BRAND_COLORS.navy, borderRadius: 20, padding: 20, marginBottom: 18 },
+  heroEyebrow: { color: BRAND_COLORS.gold, fontSize: 10, fontWeight: "800", letterSpacing: 1.4 },
   heroTitle: { color: "#FFFFFF", fontSize: 23, fontWeight: "800", marginTop: 8 },
   heroText: { color: "#DCEAF4", fontSize: 12, lineHeight: 19, marginTop: 7 },
   activityIntro: { color: "#667085", fontSize: 11, lineHeight: 17, marginTop: -3, marginBottom: 12 },
   activitySummaryRow: { flexDirection: "row", gap: 10, marginBottom: 14 },
   activitySummaryCard: { flex: 1, backgroundColor: "#F0F7FC", borderRadius: 12, borderWidth: 1, borderColor: "#DCEAF4", padding: 12 },
-  activitySummaryValue: { color: "#174A72", fontSize: 21, fontWeight: "900" },
+  activitySummaryValue: { color: BRAND_COLORS.navy, fontSize: 21, fontWeight: "900" },
   activitySummaryLabel: { color: "#667085", fontSize: 10, fontWeight: "700", marginTop: 3 },
   tabRow: { flexDirection: "row", backgroundColor: "#E8EEF4", borderRadius: 13, padding: 4, marginBottom: 15 },
   tabButton: { flex: 1, alignItems: "center", paddingVertical: 11, borderRadius: 10 },
   tabButtonSelected: { backgroundColor: "#FFFFFF" },
   tabText: { color: "#667085", fontSize: 12, fontWeight: "700" },
-  tabTextSelected: { color: "#174A72" },
+  tabTextSelected: { color: BRAND_COLORS.navy },
   card: { backgroundColor: "#FFFFFF", borderRadius: 16, padding: 15, borderWidth: 1, borderColor: "#E5EAF0", marginBottom: 15 },
   cardTitle: { color: "#182230", fontSize: 17, fontWeight: "800", marginBottom: 5 },
   label: { color: "#344054", fontSize: 12, fontWeight: "700", marginBottom: 7, marginTop: 10 },
@@ -4116,7 +4125,7 @@ const baseStyles = StyleSheet.create({
   suggestionList: { backgroundColor: "#FFFFFF", borderWidth: 1, borderColor: "#E5EAF0", borderRadius: 11, marginTop: 5, marginBottom: 5, paddingHorizontal: 11, paddingVertical: 8 },
   suggestionTitleRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   suggestionHeading: { color: "#98A2B3", fontSize: 9, fontWeight: "800", letterSpacing: 1, paddingVertical: 5 },
-  suggestionLoading: { color: "#236B9A", fontSize: 9, fontWeight: "700" },
+  suggestionLoading: { color: BRAND_COLORS.blue, fontSize: 9, fontWeight: "700" },
   suggestionItem: { paddingVertical: 10, borderTopWidth: 1, borderTopColor: "#F0F2F5" },
   suggestionCopy: { flex: 1, gap: 3 },
   suggestionText: { color: "#344054", fontSize: 12, fontWeight: "600" },
@@ -4127,14 +4136,14 @@ const baseStyles = StyleSheet.create({
   choiceButton: { flex: 1, alignItems: "center", borderWidth: 1, borderColor: "#DCE3EB", borderRadius: 10, paddingVertical: 11, backgroundColor: "#FFFFFF" },
   choiceButtonSelected: { borderColor: "#2B719F", backgroundColor: "#F0F7FC" },
   choiceText: { color: "#667085", fontSize: 12, fontWeight: "700" },
-  choiceTextSelected: { color: "#174A72" },
+  choiceTextSelected: { color: BRAND_COLORS.navy },
   routeMapFrame: { height: 190, borderRadius: 13, overflow: "hidden", marginTop: 10, borderWidth: 1, borderColor: "#DCE3EB" },
   adminFilterRow: { flexDirection: "row", flexWrap: "wrap", gap: 7, marginTop: 10, marginBottom: 12 },
   adminFilterChip: { borderWidth: 1, borderColor: "#DCE3EB", borderRadius: 20, paddingHorizontal: 10, paddingVertical: 8, backgroundColor: "#FFFFFF" },
-  adminFilterChipSelected: { backgroundColor: "#174A72", borderColor: "#174A72" },
+  adminFilterChipSelected: { backgroundColor: BRAND_COLORS.navy, borderColor: BRAND_COLORS.navy },
   adminFilterText: { color: "#667085", fontSize: 9, fontWeight: "800" },
   adminFilterTextSelected: { color: "#FFFFFF" },
-  adminStatusText: { color: "#236B9A", fontSize: 9, fontWeight: "900", letterSpacing: 0.5 },
+  adminStatusText: { color: BRAND_COLORS.blue, fontSize: 9, fontWeight: "900", letterSpacing: 0.5 },
   adminInfoPanel: { backgroundColor: "#F7F9FB", borderRadius: 10, padding: 10, marginTop: 10 },
   adminActionRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 12 },
   adminApproveButton: { flex: 1, minWidth: 90, minHeight: 40, borderRadius: 10, backgroundColor: "#EAF7F0", borderWidth: 1, borderColor: "#B9E4CB", alignItems: "center", justifyContent: "center", paddingHorizontal: 10 },
@@ -4144,7 +4153,7 @@ const baseStyles = StyleSheet.create({
   trackingMapFrame: { height: 220, borderRadius: 13, overflow: "hidden", marginTop: 8, borderWidth: 1, borderColor: "#DCE3EB" },
   trackingPanel: { backgroundColor: "#F7FAFC", borderRadius: 13, padding: 12, marginTop: 12, borderWidth: 1, borderColor: "#E0E8EF" },
   trackingControlPanel: { backgroundColor: "#F7FAFC", borderRadius: 12, padding: 11, marginTop: 12, borderWidth: 1, borderColor: "#E0E8EF" },
-  trackingStatusText: { color: "#174A72", fontSize: 11, fontWeight: "700", marginTop: 8 },
+  trackingStatusText: { color: BRAND_COLORS.navy, fontSize: 11, fontWeight: "700", marginTop: 8 },
   trackingPrivacyText: { color: "#667085", fontSize: 10, lineHeight: 15, marginTop: 5 },
   routeMap: { width: "100%", height: "100%" },
   progressPanel: { backgroundColor: "#F7F9FB", borderRadius: 12, padding: 12, marginTop: 12, marginBottom: 10 },
@@ -4152,36 +4161,36 @@ const baseStyles = StyleSheet.create({
   progressDot: { width: 9, height: 9, borderRadius: 5, backgroundColor: "#D0D7DE" },
   progressDotDone: { backgroundColor: "#21865B" },
   progressText: { color: "#8793A2", fontSize: 11 },
-  progressTextDone: { color: "#174A72", fontWeight: "800" },
+  progressTextDone: { color: BRAND_COLORS.navy, fontWeight: "800" },
   historyNotes: { backgroundColor: "#F7F9FB", borderRadius: 10, padding: 10, marginTop: 9 },
   codeEntryPanel: { backgroundColor: "#F0F7FC", borderRadius: 12, padding: 12, marginTop: 12, borderWidth: 1, borderColor: "#D3E6F3" },
   codePanel: { backgroundColor: "#F0F7FC", borderRadius: 13, padding: 14, marginTop: 14, marginBottom: 10, borderWidth: 1, borderColor: "#D3E6F3" },
-  codeHeading: { color: "#174A72", fontSize: 14, fontWeight: "900", marginTop: 7, marginBottom: 5 },
+  codeHeading: { color: BRAND_COLORS.navy, fontSize: 14, fontWeight: "900", marginTop: 7, marginBottom: 5 },
   codeValue: { color: "#142B3D", fontSize: 25, fontWeight: "900", letterSpacing: 5, backgroundColor: "#FFFFFF", padding: 12, borderRadius: 10, marginTop: 5, overflow: "hidden" },
-  quoteCard: { backgroundColor: "#F0F7FC", borderWidth: 1, borderColor: "#D3E6F3", borderRadius: 13, padding: 14, marginTop: 6, marginBottom: 13 },
-  quoteDivider: { height: 1, backgroundColor: "#D3E6F3", marginVertical: 10 },
+  quoteCard: { backgroundColor: BRAND_COLORS.goldTint, borderWidth: 1, borderColor: "#F0DFB5", borderRadius: 13, padding: 14, marginTop: 6, marginBottom: 13 },
+  quoteDivider: { height: 1, backgroundColor: "#F0DFB5", marginVertical: 10 },
   quoteMetricRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: 7, gap: 12 },
   quoteMetricLabel: { color: "#667085", fontSize: 11, flex: 1 },
   quoteMetricValue: { color: "#344054", fontSize: 11, fontWeight: "800", textAlign: "right" },
-  quoteLabel: { color: "#497A9B", fontSize: 9, fontWeight: "800", letterSpacing: 1.1 },
-  quoteAmount: { color: "#174A72", fontSize: 25, fontWeight: "900", marginTop: 4 },
+  quoteLabel: { color: BRAND_COLORS.orange, fontSize: 9, fontWeight: "800", letterSpacing: 1.1 },
+  quoteAmount: { color: BRAND_COLORS.navy, fontSize: 25, fontWeight: "900", marginTop: 4 },
   quoteNote: { color: "#667085", fontSize: 10, marginTop: 4 },
-  primaryButton: { minHeight: 49, backgroundColor: "#174A72", borderRadius: 12, alignItems: "center", justifyContent: "center", marginTop: 12, paddingHorizontal: 12 },
+  primaryButton: { minHeight: 49, backgroundColor: BRAND_COLORS.navy, borderRadius: 12, alignItems: "center", justifyContent: "center", marginTop: 12, paddingHorizontal: 12 },
   primaryButtonText: { color: "#FFFFFF", fontWeight: "800", fontSize: 13 },
   disabledButton: { opacity: 0.6 },
   section: { marginTop: 4 },
   sectionHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: 10, marginBottom: 10 },
   sectionTitle: { color: "#182230", fontWeight: "800", fontSize: 16 },
-  refreshText: { color: "#236B9A", fontWeight: "700", fontSize: 12 },
+  refreshText: { color: BRAND_COLORS.blue, fontWeight: "700", fontSize: 12 },
   rideCard: { backgroundColor: "#FFFFFF", borderRadius: 16, padding: 15, borderWidth: 1, borderColor: "#E5EAF0", marginBottom: 12 },
   rideTopRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 13 },
-  rideStatus: { color: "#174A72", fontWeight: "800", fontSize: 12, flex: 1 },
+  rideStatus: { color: BRAND_COLORS.navy, fontWeight: "800", fontSize: 12, flex: 1 },
   rideFare: { color: "#142B3D", fontWeight: "900", fontSize: 14 },
   routeRow: { flexDirection: "row", alignItems: "stretch" },
   routeMarkers: { width: 22, alignItems: "center", paddingTop: 3 },
   pickupDot: { width: 9, height: 9, borderRadius: 5, borderWidth: 2, borderColor: "#25825B", backgroundColor: "#FFFFFF" },
   routeLine: { width: 1, flex: 1, minHeight: 20, backgroundColor: "#C5D0DA", marginVertical: 3 },
-  destinationDot: { width: 9, height: 9, borderRadius: 5, backgroundColor: "#174A72" },
+  destinationDot: { width: 9, height: 9, borderRadius: 5, backgroundColor: BRAND_COLORS.navy },
   routeTexts: { flex: 1, paddingBottom: 2 },
   routeLabel: { color: "#98A2B3", fontSize: 8, fontWeight: "800", letterSpacing: 1 },
   routeAddress: { color: "#344054", fontSize: 12, fontWeight: "600", marginTop: 3, marginBottom: 8 },
@@ -4221,6 +4230,9 @@ function appThemeColor(color: string, property: string, appearance: UiAppearance
       "#FBFCFE": "#102031",
       "#F0F3F7": "#1A2B3D",
       "#F7FAFC": "#1A2B3D",
+      "#FFF6E2": "#3D3422",
+      "#FFF1E7": "#3D2B22",
+      "#EEF4FC": "#20364F",
       "#F0F7FC": "#183349",
       "#EAF3F9": "#20394F",
       "#FFF4E5": "#47331E",
@@ -4242,6 +4254,8 @@ function appThemeColor(color: string, property: string, appearance: UiAppearance
       "#E1E8EF": "#3A5065",
       "#D5DFE8": "#3A5065",
       "#D3E6F3": "#31516B",
+      "#F0DFB5": "#6A5937",
+      "#F1D4B9": "#6B4932",
       "#F2C7C4": "#6B4141"
     };
     return borders[color.toUpperCase()] ?? color;
@@ -4257,8 +4271,8 @@ function appThemeColor(color: string, property: string, appearance: UiAppearance
       "#8793A2": "#9AACC0",
       "#98A2B3": "#9AACC0",
       "#526779": "#C1D1DF",
-      "#174A72": "#77BCE8",
-      "#236B9A": "#7FC5ED",
+      BRAND_COLORS.navy: "#77BCE8",
+      BRAND_COLORS.blue: "#7FC5ED",
       "#B42318": "#FCA5A5",
       "#067647": "#6EE7B7",
       "#93370D": "#FDBA8C"
