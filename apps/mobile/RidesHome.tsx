@@ -91,7 +91,7 @@ function OpenStreetMapRasterView({
   initialRegion?: OsmRegion;
   routeCoordinates?: RouteCoordinate[] | null;
   markers?: OsmMarker[];
-  onRegionChangeComplete?: (nextRegion: OsmRegion) => void;
+  onRegionChangeComplete?: NativeRegionChangeHandler;
   onMapReady?: () => void;
   scrollEnabled?: boolean;
   zoomEnabled?: boolean;
