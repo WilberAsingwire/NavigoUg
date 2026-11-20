@@ -30,10 +30,10 @@ const ARUA_BOUNDS = {
 
 const PHOTON_BASE_URL = (
   process.env.PHOTON_BASE_URL || "https://photon.komoot.io/api"
-).replace(/\\/+$/, "");
+).replace(/\/+$/, "");
 const NOMINATIM_BASE_URL = (
   process.env.NOMINATIM_BASE_URL || "https://nominatim.openstreetmap.org/search"
-).replace(/\\/+$/, "");
+).replace(/\/+$/, "");
 // Photon is a public demo endpoint too, so keep its usage modest. Nominatim's
 // public service has a strict one-request-per-second application-wide ceiling.
 const PUBLIC_GEOCODER_MIN_INTERVAL_MS = process.env.NODE_ENV === "test" ? 0 : 1_100;
