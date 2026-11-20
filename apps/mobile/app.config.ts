@@ -1,5 +1,6 @@
 import type { ExpoConfig } from "expo/config";
 
+// Cloud preview build: includes the Expo Updates native module for over-the-air UI updates.
 const config: ExpoConfig = {
   name: "NAVIGO",
   slug: "navigo",
