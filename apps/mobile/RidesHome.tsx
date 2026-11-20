@@ -2014,11 +2014,22 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                       <Text style={styles.attributionText}>Road route data © OpenStreetMap contributors</Text>
                     ) : null}
                     <View style={styles.quoteCard}>
-                      <Text style={styles.quoteLabel}>ESTIMATED FARE</Text>
+                      <Text style={styles.quoteLabel}>YOUR RIDE ESTIMATE</Text>
                       <Text style={styles.quoteAmount}>{money(quote.fareAmountUgx)}</Text>
-                      <Text style={styles.quoteNote}>{quote.distanceKm.toFixed(2)} km by motorcycle road route</Text>
-                      <Text style={styles.quoteNote}>About {Math.max(1, Math.ceil(quote.durationSeconds / 60))} minutes estimated travel time</Text>
-                      <Text style={styles.quoteNote}>Route and time are estimates. Road conditions and diversions may change the actual journey.</Text>
+                      <View style={styles.quoteDivider} />
+                      <View style={styles.quoteMetricRow}>
+                        <Text style={styles.quoteMetricLabel}>Distance</Text>
+                        <Text style={styles.quoteMetricValue}>{quote.distanceKm.toFixed(2)} km</Text>
+                      </View>
+                      <View style={styles.quoteMetricRow}>
+                        <Text style={styles.quoteMetricLabel}>Estimated travel time</Text>
+                        <Text style={styles.quoteMetricValue}>About {Math.max(1, Math.ceil(quote.durationSeconds / 60))} min</Text>
+                      </View>
+                      <View style={styles.quoteMetricRow}>
+                        <Text style={styles.quoteMetricLabel}>Payment preference</Text>
+                        <Text style={styles.quoteMetricValue}>{paymentMethod === "CASH" ? "Cash" : "Mobile Money"}</Text>
+                      </View>
+                      <Text style={styles.quoteNote}>This is an estimate. Actual travel time may change due to road conditions or diversions.</Text>
                     </View>
                   </>
                 )}
@@ -3730,6 +3741,10 @@ const baseStyles = StyleSheet.create({
   codeHeading: { color: "#174A72", fontSize: 14, fontWeight: "900", marginTop: 7, marginBottom: 5 },
   codeValue: { color: "#142B3D", fontSize: 25, fontWeight: "900", letterSpacing: 5, backgroundColor: "#FFFFFF", padding: 12, borderRadius: 10, marginTop: 5, overflow: "hidden" },
   quoteCard: { backgroundColor: "#F0F7FC", borderWidth: 1, borderColor: "#D3E6F3", borderRadius: 13, padding: 14, marginTop: 6, marginBottom: 13 },
+  quoteDivider: { height: 1, backgroundColor: "#D3E6F3", marginVertical: 10 },
+  quoteMetricRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: 7, gap: 12 },
+  quoteMetricLabel: { color: "#667085", fontSize: 11, flex: 1 },
+  quoteMetricValue: { color: "#344054", fontSize: 11, fontWeight: "800", textAlign: "right" },
   quoteLabel: { color: "#497A9B", fontSize: 9, fontWeight: "800", letterSpacing: 1.1 },
   quoteAmount: { color: "#174A72", fontSize: 25, fontWeight: "900", marginTop: 4 },
   quoteNote: { color: "#667085", fontSize: 10, marginTop: 4 },
