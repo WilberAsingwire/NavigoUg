@@ -1,5 +1,5 @@
-import { forwardRef, useCallback, useEffect, useRef, useState, type ComponentProps, type ComponentRef } from "react";
-import * as SecureStore from "expo-secure-store";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState, type ComponentProps, type ComponentRef, type Ref } from "react";
+import * as AppStorage from "./AppStorage";
 import * as Location from "expo-location";
 import {
   AppState,
@@ -19,7 +19,7 @@ import {
   View
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
-import NativeMapView, { Marker, Polyline } from "react-native-maps";
+import NativeMapView, { Marker, Polyline } from "./MapPrimitives";
 import { BRAND_COLORS } from "./brand";
 import { InteractiveTouchable as TouchableOpacity } from "./InteractiveTouchable";
 
@@ -78,19 +78,11 @@ function osmZoomForRegion(region: OsmRegion, width: number) {
   return Math.max(3, Math.min(19, Math.round(Math.log2((360 * safeWidth) / (OSM_TILE_SIZE * Math.max(region.longitudeDelta, 0.00001))))));
 }
 
-function OpenStreetMapRasterView({
-  style,
-  region,
-  initialRegion,
-  routeCoordinates,
-  markers,
-  onRegionChangeComplete,
-  onMapReady,
-  onInteractionStart,
-  onInteractionEnd,
-  scrollEnabled,
-  zoomEnabled
-}: {
+type RasterMapHandle = {
+  animateToRegion: (region: OsmRegion, duration?: number) => void;
+};
+
+const OpenStreetMapRasterView = forwardRef<RasterMapHandle, {
   style?: ComponentProps<typeof NativeMapView>["style"];
   region?: OsmRegion;
   initialRegion?: OsmRegion;
@@ -102,7 +94,19 @@ function OpenStreetMapRasterView({
   onInteractionEnd?: () => void;
   scrollEnabled?: boolean;
   zoomEnabled?: boolean;
-}) {
+}>(function OpenStreetMapRasterView({
+  style,
+  region,
+  initialRegion,
+  routeCoordinates,
+  markers,
+  onRegionChangeComplete,
+  onMapReady,
+  onInteractionStart,
+  onInteractionEnd,
+  scrollEnabled,
+  zoomEnabled
+}, ref) {
   const [layout, setLayout] = useState({ width: 0, height: 0 });
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
   const [localRegion, setLocalRegion] = useState<OsmRegion>(initialRegion ?? DEFAULT_OSM_REGION);
@@ -115,10 +119,14 @@ function OpenStreetMapRasterView({
   layoutRef.current = layout;
   const onRegionChangeRef = useRef<NativeRegionChangeHandler | undefined>(onRegionChangeComplete);
   onRegionChangeRef.current = onRegionChangeComplete;
-  const applyRegionChange = (nextRegion: OsmRegion) => {
+  const applyRegionChange = (nextRegion: OsmRegion, isGesture = true) => {
     if (!controlledRegionRef.current) setLocalRegion(nextRegion);
-    onRegionChangeRef.current?.(nextRegion, { isGesture: true });
+    onRegionChangeRef.current?.(nextRegion, { isGesture });
   };
+
+  useImperativeHandle(ref, () => ({
+    animateToRegion: (nextRegion) => applyRegionChange(nextRegion, false)
+  }), []);
   const zoom = osmZoomForRegion(currentRegion, layout.width || 360);
   const zoomRef = useRef(zoom);
   zoomRef.current = zoom;
@@ -324,7 +332,7 @@ function OpenStreetMapRasterView({
       {tiles.map((tile) => (
         <Image
           key={tile.key}
-          source={{ uri: tile.uri, headers: OSM_TILE_HEADERS }}
+          source={Platform.OS === "web" ? { uri: tile.uri } : { uri: tile.uri, headers: OSM_TILE_HEADERS }}
           resizeMode="stretch"
           fadeDuration={0}
           style={{
@@ -421,13 +429,14 @@ function OpenStreetMapRasterView({
       ) : null}
     </View>
   );
-}
+});
 
 const SafeMapView = forwardRef<ComponentRef<typeof NativeMapView>, SafeMapViewProps>(
   function SafeMapView({ routeCoordinates, markers, onInteractionStart, onInteractionEnd, children, style, region, initialRegion, ...nativeProps }, ref) {
-    if (Platform.OS === "android") {
+    if (Platform.OS === "android" || Platform.OS === "web") {
       return (
         <OpenStreetMapRasterView
+          ref={ref as Ref<RasterMapHandle>}
           style={style}
           region={region}
           initialRegion={initialRegion}
@@ -997,7 +1006,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
 
   useEffect(() => {
     let mounted = true;
-    SecureStore.getItemAsync(UI_PREFERENCES_KEY).then((stored) => {
+    AppStorage.getItemAsync(UI_PREFERENCES_KEY).then((stored) => {
       if (!stored) return;
       const parsed = JSON.parse(stored) as Partial<UiPreferences>;
       const nextAppearance: UiAppearance = parsed.appearance === "DARK" ? "DARK" : "LIGHT";
@@ -1020,7 +1029,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
     styles = createAppStyles(next.appearance, next.textSize);
     setAppearance(next.appearance);
     setTextSize(next.textSize);
-    await SecureStore.setItemAsync(UI_PREFERENCES_KEY, JSON.stringify(next)).catch(() => undefined);
+    await AppStorage.setItemAsync(UI_PREFERENCES_KEY, JSON.stringify(next)).catch(() => undefined);
   }, [appearance, textSize]);
   const isApprovedRider = activeSession.user.role === "RIDER" && activeSession.user.riderApprovalStatus === "APPROVED";
   const refreshTokenRef = useRef(session.refreshToken);
@@ -1048,7 +1057,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
       }
 
       const renewedSession = payload.data;
-      await SecureStore.setItemAsync("navigo.session", JSON.stringify(renewedSession));
+      await AppStorage.setItemAsync("navigo.session", JSON.stringify(renewedSession));
       setActiveSession(renewedSession);
       onSessionChange(renewedSession);
       return renewedSession.accessToken;
@@ -1073,7 +1082,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
       refreshAccessToken
     );
     const updatedSession = { ...activeSession, user: result.data };
-    await SecureStore.setItemAsync("navigo.session", JSON.stringify(updatedSession));
+    await AppStorage.setItemAsync("navigo.session", JSON.stringify(updatedSession));
     setActiveSession(updatedSession);
     onSessionChange(updatedSession);
   }, [activeSession, refreshAccessToken, onSessionChange]);
@@ -1088,7 +1097,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
       },
       refreshAccessToken
     );
-    await SecureStore.setItemAsync("navigo.session", JSON.stringify(result.data));
+    await AppStorage.setItemAsync("navigo.session", JSON.stringify(result.data));
     setActiveSession(result.data);
     onSessionChange(result.data);
   }, [activeSession.accessToken, refreshAccessToken, onSessionChange]);
@@ -1100,7 +1109,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
       { method: "POST", body: JSON.stringify({ role }) },
       refreshAccessToken
     );
-    await SecureStore.setItemAsync("navigo.session", JSON.stringify(result.data));
+    await AppStorage.setItemAsync("navigo.session", JSON.stringify(result.data));
     setActiveSession(result.data);
     onSessionChange(result.data);
     setMainTab("home");
@@ -1116,7 +1125,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
       refreshAccessToken
     );
     const updatedSession = { ...activeSession, user: result.data };
-    await SecureStore.setItemAsync("navigo.session", JSON.stringify(updatedSession));
+    await AppStorage.setItemAsync("navigo.session", JSON.stringify(updatedSession));
     setActiveSession(updatedSession);
     onSessionChange(updatedSession);
   }, [activeSession, refreshAccessToken, onSessionChange]);
@@ -1611,7 +1620,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
         mayShowUserSettingsDialog: true
       });
       const { latitude, longitude } = position.coords;
-      const reverse = await Location.reverseGeocodeAsync({ latitude, longitude });
+      const reverse = Platform.OS === "web" ? [] : await Location.reverseGeocodeAsync({ latitude, longitude });
       const place = reverse[0];
       const description = [
         place?.name,
@@ -4409,7 +4418,7 @@ const LIGHT_MAP_STYLE = [
 const baseStyles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: "#F3F6FA" },
   mainScroll: { flex: 1 },
-  page: { flexGrow: 1, paddingHorizontal: 19, paddingTop: 20, paddingBottom: 30 },
+  page: { flexGrow: 1, width: Platform.OS === "web" ? "100%" : undefined, maxWidth: Platform.OS === "web" ? 1440 : undefined, alignSelf: Platform.OS === "web" ? "center" : undefined, paddingHorizontal: 19, paddingTop: 20, paddingBottom: 30 },
   topBar: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 20 },
   brandHeader: { flexDirection: "row", alignItems: "center", gap: 7, marginBottom: 1 },
   brandSmallLogo: { width: 29, height: 29, borderRadius: 8, backgroundColor: "#EDF4FF" },
