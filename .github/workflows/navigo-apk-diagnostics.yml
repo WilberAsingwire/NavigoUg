@@ -62,7 +62,7 @@ jobs:
       - name: Verify APK file, archive and Android signature
         working-directory: apps/mobile
         run: |
-          APK="$(find . -type f -name '*.apk' -print -quit)"
+          APK="$(find /tmp -type f -name '*_9dc36bdc-74ae-4f60-87d9-fb1410fc9a48.apk' -print -quit)"
           if [ -z "$APK" ]; then
             echo "::error::EAS did not download an APK file."
             exit 1
@@ -88,6 +88,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: navigo-preview-apk-inspected
-          path: apps/mobile/${{ env.APK_PATH }}
+          path: ${{ env.APK_PATH }}
           if-no-files-found: error
           retention-days: 7
