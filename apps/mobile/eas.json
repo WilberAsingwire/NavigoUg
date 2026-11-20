@@ -10,7 +10,8 @@
       "distribution": "internal",
       "android": {
         "buildType": "apk"
-      }
+      },
+      "environment": "development"
     },
     "preview": {
       "node": "24.22.3",
@@ -19,11 +20,13 @@
       "android": {
         "image": "latest",
         "buildType": "apk"
-      }
+      },
+      "environment": "preview"
     },
     "production": {
       "node": "24.22.3",
-      "autoIncrement": true
+      "autoIncrement": true,
+      "environment": "production"
     }
   },
   "submit": {
