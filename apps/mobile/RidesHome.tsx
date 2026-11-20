@@ -121,26 +121,91 @@ function OpenStreetMapRasterView({
   const zoom = osmZoomForRegion(currentRegion, layout.width || 360);
   const zoomRef = useRef(zoom);
   zoomRef.current = zoom;
+  const pinchStartRef = useRef<{ distance: number; zoom: number; region: OsmRegion } | null>(null);
+  const pinchLastZoomRef = useRef<number | null>(null);
+  const pinchWasUsedRef = useRef(false);
   const readyRef = useRef(false);
   const centerPixel = osmCoordinateToPixel(currentRegion, zoom);
   const worldTileCount = 2 ** zoom;
 
+  const startPinch = (touches: ReadonlyArray<{ pageX: number; pageY: number }>) => {
+    const first = touches[0];
+    const second = touches[1];
+    if (!first || !second) return;
+    const distance = Math.hypot(second.pageX - first.pageX, second.pageY - first.pageY);
+    if (!Number.isFinite(distance) || distance < 8) return;
+    pinchStartRef.current = {
+      distance,
+      zoom: zoomRef.current,
+      region: regionRef.current
+    };
+    pinchLastZoomRef.current = zoomRef.current;
+    pinchWasUsedRef.current = true;
+  };
+
   const panResponder = useRef(PanResponder.create({
     onStartShouldSetPanResponder: () => false,
-    onMoveShouldSetPanResponderCapture: (_event, gesture) =>
-      scrollEnabled !== false && (Math.abs(gesture.dx) > 7 || Math.abs(gesture.dy) > 7),
-    onMoveShouldSetPanResponder: (_event, gesture) =>
-      scrollEnabled !== false && (Math.abs(gesture.dx) > 7 || Math.abs(gesture.dy) > 7),
-    onPanResponderGrant: () => setDragOffset({ x: 0, y: 0 }),
-    onPanResponderMove: (_event, gesture) => {
-      // Move the visible tile layer with the finger; don't wait for release.
+    onMoveShouldSetPanResponderCapture: (event, gesture) =>
+      scrollEnabled !== false && (
+        event.nativeEvent.touches.length >= 2 ||
+        Math.abs(gesture.dx) > 7 ||
+        Math.abs(gesture.dy) > 7
+      ),
+    onMoveShouldSetPanResponder: (event, gesture) =>
+      scrollEnabled !== false && (
+        event.nativeEvent.touches.length >= 2 ||
+        Math.abs(gesture.dx) > 7 ||
+        Math.abs(gesture.dy) > 7
+      ),
+    onPanResponderGrant: (event) => {
+      setDragOffset({ x: 0, y: 0 });
+      pinchStartRef.current = null;
+      pinchLastZoomRef.current = null;
+      pinchWasUsedRef.current = false;
+      if (event.nativeEvent.touches.length >= 2) {
+        startPinch(event.nativeEvent.touches);
+      }
+    },
+    onPanResponderMove: (event, gesture) => {
+      const touches = event.nativeEvent.touches;
+      if (touches.length >= 2) {
+        // Two fingers control zoom. The integer tile zoom changes as the
+        // pinch crosses each level, and the map stays centred on the route.
+        setDragOffset({ x: 0, y: 0 });
+        if (!pinchStartRef.current) startPinch(touches);
+        const pinch = pinchStartRef.current;
+        const first = touches[0];
+        const second = touches[1];
+        if (!pinch || !first || !second) return;
+        const distance = Math.hypot(second.pageX - first.pageX, second.pageY - first.pageY);
+        if (!Number.isFinite(distance) || distance < 8) return;
+        const scale = distance / pinch.distance;
+        const targetZoom = Math.max(3, Math.min(19, Math.round(pinch.zoom + Math.log2(scale))));
+        if (targetZoom !== pinchLastZoomRef.current) {
+          const factor = 2 ** (pinch.zoom - targetZoom);
+          applyRegionChange({
+            ...pinch.region,
+            latitudeDelta: Math.max(0.001, pinch.region.latitudeDelta * factor),
+            longitudeDelta: Math.max(0.001, pinch.region.longitudeDelta * factor)
+          });
+          pinchLastZoomRef.current = targetZoom;
+        }
+        return;
+      }
+
+      if (pinchWasUsedRef.current) {
+        setDragOffset({ x: 0, y: 0 });
+        return;
+      }
+
+      // One finger moves the visible tile layer with the finger immediately.
       setDragOffset({ x: gesture.dx, y: gesture.dy });
     },
     onPanResponderTerminationRequest: () => false,
     onPanResponderRelease: (_event, gesture) => {
       const size = layoutRef.current;
       const moved = Math.abs(gesture.dx) >= 3 || Math.abs(gesture.dy) >= 3;
-      if (size.width > 0 && size.height > 0 && moved) {
+      if (!pinchWasUsedRef.current && size.width > 0 && size.height > 0 && moved) {
         const activeZoom = zoomRef.current;
         const oldCenter = osmCoordinateToPixel(regionRef.current, activeZoom);
         const nextCenter = {
@@ -157,9 +222,17 @@ function OpenStreetMapRasterView({
           longitudeDelta: Math.max(0.001, (size.width / (OSM_TILE_SIZE * 2 ** activeZoom)) * 360)
         });
       }
+      pinchStartRef.current = null;
+      pinchLastZoomRef.current = null;
+      pinchWasUsedRef.current = false;
       setDragOffset({ x: 0, y: 0 });
     },
-    onPanResponderTerminate: () => setDragOffset({ x: 0, y: 0 })
+    onPanResponderTerminate: () => {
+      pinchStartRef.current = null;
+      pinchLastZoomRef.current = null;
+      pinchWasUsedRef.current = false;
+      setDragOffset({ x: 0, y: 0 });
+    }
   })).current;
 
   const tiles: Array<{ key: string; uri: string; left: number; top: number }> = [];
@@ -230,7 +303,9 @@ function OpenStreetMapRasterView({
         }
       }}
       onTouchStart={onInteractionStart}
-      onTouchEnd={onInteractionEnd}
+      onTouchEnd={(event) => {
+        if (event.nativeEvent.touches.length === 0) onInteractionEnd?.();
+      }}
       onTouchCancel={onInteractionEnd}
       {...panResponder.panHandlers}
     >
@@ -333,13 +408,13 @@ function OpenStreetMapRasterView({
         <Text style={{ color: "#344054", fontSize: 8, fontWeight: "700" }}>© OpenStreetMap contributors</Text>
       </View>
       {zoomEnabled !== false ? (
-        <View style={{ position: "absolute", left: 12, top: 62, backgroundColor: "#FFFFFF", borderRadius: 12, elevation: 5, overflow: "hidden", zIndex: 5 }}>
-          <TouchableOpacity accessibilityRole="button" accessibilityLabel="Zoom in" onPress={() => changeZoom(1)} style={{ width: 44, height: 42, alignItems: "center", justifyContent: "center" }}>
-            <Text style={{ color: "#174A72", fontSize: 25, fontWeight: "800", lineHeight: 28 }}>+</Text>
+        <View style={{ position: "absolute", left: 12, top: 118, backgroundColor: "#FFFFFF", borderRadius: 13, elevation: 7, overflow: "hidden", zIndex: 10, borderWidth: 1, borderColor: "#DCE3EB" }}>
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel="Zoom in" onPress={() => changeZoom(1)} style={{ width: 48, height: 46, alignItems: "center", justifyContent: "center" }}>
+            <Text style={{ color: "#174A72", fontSize: 28, fontWeight: "800", lineHeight: 32 }}>+</Text>
           </TouchableOpacity>
           <View style={{ height: 1, backgroundColor: "#E5EAF0" }} />
-          <TouchableOpacity accessibilityRole="button" accessibilityLabel="Zoom out" onPress={() => changeZoom(-1)} style={{ width: 44, height: 42, alignItems: "center", justifyContent: "center" }}>
-            <Text style={{ color: "#174A72", fontSize: 25, fontWeight: "800", lineHeight: 28 }}>−</Text>
+          <TouchableOpacity accessibilityRole="button" accessibilityLabel="Zoom out" onPress={() => changeZoom(-1)} style={{ width: 48, height: 46, alignItems: "center", justifyContent: "center" }}>
+            <Text style={{ color: "#174A72", fontSize: 28, fontWeight: "800", lineHeight: 32 }}>−</Text>
           </TouchableOpacity>
         </View>
       ) : null}
@@ -453,20 +528,41 @@ function coordinateFromValues(latitude: number | string | undefined, longitude: 
   return { latitude: parsedLatitude, longitude: parsedLongitude };
 }
 
-function routeMapRegion(coordinates: RouteCoordinate[]) {
-  const latitudes = coordinates.map((point) => point.latitude);
-  const longitudes = coordinates.map((point) => point.longitude);
+function routeMapRegion(coordinates: RouteCoordinate[], bottomSheetInset = 0) {
+  const validCoordinates = coordinates.filter((point) =>
+    Number.isFinite(point.latitude) &&
+    Number.isFinite(point.longitude) &&
+    point.latitude >= -85.05112878 &&
+    point.latitude <= 85.05112878 &&
+    point.longitude >= -180 &&
+    point.longitude <= 180
+  );
+  if (validCoordinates.length < 2) return DEFAULT_OSM_REGION;
+
+  const latitudes = validCoordinates.map((point) => point.latitude);
+  const longitudes = validCoordinates.map((point) => point.longitude);
   const minLatitude = Math.min(...latitudes);
   const maxLatitude = Math.max(...latitudes);
   const minLongitude = Math.min(...longitudes);
   const maxLongitude = Math.max(...longitudes);
-
-  return {
+  const baseRegion: OsmRegion = {
     latitude: (minLatitude + maxLatitude) / 2,
     longitude: (minLongitude + maxLongitude) / 2,
     latitudeDelta: Math.max(0.008, (maxLatitude - minLatitude) * 1.7),
     longitudeDelta: Math.max(0.008, (maxLongitude - minLongitude) * 1.7)
   };
+
+  if (bottomSheetInset <= 0) return baseRegion;
+
+  // Shift the map centre slightly south so the route sits in the visible map
+  // area above the fare review panel instead of underneath the panel.
+  const zoom = osmZoomForRegion(baseRegion, Dimensions.get("window").width);
+  const centerPixel = osmCoordinateToPixel(baseRegion, zoom);
+  const adjustedCenter = osmPixelToCoordinate({
+    x: centerPixel.x,
+    y: centerPixel.y + bottomSheetInset / 2
+  }, zoom);
+  return { ...baseRegion, latitude: adjustedCenter.latitude };
 }
 
 type ParcelSize = "SMALL" | "MEDIUM" | "LARGE";
@@ -1258,7 +1354,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
     const otherPlaceIsReady = field === "pickup" ? Boolean(destination.trim()) : Boolean(pickup.trim());
     if (otherPlaceIsReady) {
       setActiveLocationField(null);
-      setMapSheetExpanded(false);
+      setMapSheetExpanded(true);
       Keyboard.dismiss();
       const overrides = {
         pickup: nextPickupPoint,
@@ -1298,11 +1394,14 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
   const mapSheetCollapsedHeight = 168;
   const mapSheetExpandedHeight = Math.min(Dimensions.get("window").height * 0.60, 520);
   const mapSheetSearchHeight = Math.min(Dimensions.get("window").height * 0.84, 680);
+  const mapSheetRouteReviewHeight = Math.min(Dimensions.get("window").height * 0.46, 390);
   const [mapSheetExpanded, setMapSheetExpanded] = useState(true);
   const mapSheetHeight = useRef(new Animated.Value(mapSheetCollapsedHeight)).current;
   const mapSheetTargetHeight = activeLocationField !== null
     ? mapSheetSearchHeight
-    : mapSheetExpanded ? mapSheetExpandedHeight : mapSheetCollapsedHeight;
+    : (quote && locations) || (parcelQuote && parcelLocations)
+      ? mapSheetRouteReviewHeight
+      : mapSheetExpanded ? mapSheetExpandedHeight : mapSheetCollapsedHeight;
   const mapSheetPanResponder = useRef(PanResponder.create({
     onStartShouldSetPanResponder: () => false,
     onMoveShouldSetPanResponder: (_event, gesture) => Math.abs(gesture.dy) > 8,
@@ -1649,14 +1748,35 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
         method: "POST",
         body: JSON.stringify({ pickup: pickupLocation, destination: destinationLocation })
       }, refreshAccessToken);
+      if (!Array.isArray(result.data?.routeCoordinates) || result.data.routeCoordinates.length < 2) {
+        throw new Error("NAVIGO received the fare but not a complete road route. Please try selecting the suggested pickup and destination again.");
+      }
       setLocations({ pickup: pickupLocation, destination: destinationLocation });
       setQuote(result.data);
-      setMapRegion(routeMapRegion(result.data.routeCoordinates));
+      setMapRegion(routeMapRegion(result.data.routeCoordinates, mapSheetRouteReviewHeight));
+      setActiveLocationField(null);
+      setMapSheetExpanded(false);
     } catch (quoteError) {
+      setActiveLocationField(null);
+      setMapSheetExpanded(true);
       setError(quoteError instanceof Error ? quoteError.message : "Unable to calculate the fare.");
     } finally {
       setWorking(false);
     }
+  }
+
+  function previewRideRoute() {
+    if (!pickup.trim() || !destination.trim()) {
+      setError("Enter both a pickup location and a destination before viewing the route.");
+      setMapSheetExpanded(true);
+      return;
+    }
+    setError("");
+    setMessage("");
+    setActiveLocationField(null);
+    setMapSheetExpanded(true);
+    Keyboard.dismiss();
+    void getFareEstimate();
   }
 
   async function requestRide() {
@@ -2331,124 +2451,125 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
 
             ) : (
               <View style={styles.card}>
-                {activeLocationField === null ? <Text style={styles.cardTitle}>Plan your trip</Text> : null}
-                {activeLocationField === null ? <Text style={styles.bodyText}>Set your pickup and destination to get an estimated fare before requesting a ride.</Text> : null}
-                <Text style={styles.label}>Pickup location</Text>
-                <TextInput
-                  ref={pickupInputRef}
-                  style={styles.addressInput}
-                  value={pickup}
-                  onFocus={() => focusLocationField("pickup")}
-                  onChangeText={(value) => {
-                    setPickup(value);
-                    setSelectedPickupLocation(null);
-                    setSelectedPickupSearchQuery("");
-                    setQuote(null);
-                    setLocations(null);
-                  }}
-                  placeholder="e.g. Muni University or Arua Main Market"
-                  placeholderTextColor="#98A2B3"
-                />
-                {activeLocationField === "pickup" ? <TouchableOpacity style={styles.locationSearchLocationAction} onPress={() => void detectPickupLocation(true)}><Text style={styles.locationSearchLocationActionText}>◎  Use current location</Text></TouchableOpacity> : null}
-                <LocationSuggestions
-                  visible={activeLocationField === "pickup"}
-                  query={pickup}
-                  onSelect={(suggestion) => selectLocationSuggestion("pickup", suggestion)}
-                />
-                <Text style={styles.label}>Destination</Text>
-                <TextInput
-                  ref={destinationInputRef}
-                  style={styles.addressInput}
-                  value={destination}
-                  onFocus={() => focusLocationField("destination")}
-                  onChangeText={(value) => {
-                    setDestination(value);
-                    setSelectedDestinationLocation(null);
-                    setSelectedDestinationSearchQuery("");
-                    setQuote(null);
-                    setLocations(null);
-                  }}
-                  placeholder="e.g. Muni Site or Arua Hill"
-                  placeholderTextColor="#98A2B3"
-                  returnKeyType="done"
-                  onSubmitEditing={() => {
-                    if (!pickup.trim() || !destination.trim()) return;
-                    setActiveLocationField(null);
-                    setMapSheetExpanded(false);
-                    Keyboard.dismiss();
-                    void getFareEstimate();
-                  }}
-                />
-                <LocationSuggestions
-                  visible={activeLocationField === "destination"}
-                  query={destination}
-                  onSelect={(suggestion) => selectLocationSuggestion("destination", suggestion)}
-                />
-
-                <Text style={styles.label}>Payment preference</Text>
-                <View style={styles.paymentRow}>
-                  <ChoiceButton label="Cash" selected={paymentMethod === "CASH"} onPress={() => setPaymentMethod("CASH")} />
-                  <ChoiceButton label="Mobile Money" selected={paymentMethod === "MOBILE_MONEY"} onPress={() => setPaymentMethod("MOBILE_MONEY")} />
-                </View>
-
-                {quote && locations && (
+                {quote && locations ? (
                   <>
-                    <View style={styles.routeMapFrame}>
-                      <SafeMapView
-                        style={styles.routeMap}
-                        initialRegion={routeMapRegion(quote.routeCoordinates)}
-                        routeCoordinates={quote.routeCoordinates}
-                        markers={[{ coordinate: locations.pickup, title: "Pickup", pinColor: "#21865B" }, { coordinate: locations.destination, title: "Destination", pinColor: "#C54848" }]}
-                        scrollEnabled={false}
-                        zoomEnabled={false}
-                        rotateEnabled={false}
-                        pitchEnabled={false}
-                        toolbarEnabled={false}
-                        showsCompass={false}
-                        showsScale={false}
-                        loadingEnabled
-                      >
-                        <Polyline
-                          coordinates={quote.routeCoordinates}
-                          strokeColor="#1F76A8"
-                          strokeWidth={5}
-                        />
-                        <Marker coordinate={locations.pickup} title="Pickup" pinColor="#21865B" />
-                        <Marker coordinate={locations.destination} title="Destination" pinColor="#C54848" />
-                      </SafeMapView>
+                    <Text style={styles.quoteLabel}>ROUTE READY FOR REVIEW</Text>
+                    <Text style={styles.cardTitle}>Your ride details</Text>
+                    <View style={styles.routeReviewLocations}>
+                      <View style={styles.routeReviewStop}>
+                        <View style={styles.pickupDot} />
+                        <View style={styles.routeReviewStopCopy}>
+                          <Text style={styles.quoteMetricLabel}>PICKUP</Text>
+                          <Text style={styles.routeReviewAddress}>{locations.pickup.description || pickup}</Text>
+                        </View>
+                      </View>
+                      <View style={styles.routeReviewStop}>
+                        <View style={styles.destinationDot} />
+                        <View style={styles.routeReviewStopCopy}>
+                          <Text style={styles.quoteMetricLabel}>DESTINATION</Text>
+                          <Text style={styles.routeReviewAddress}>{locations.destination.description || destination}</Text>
+                        </View>
+                      </View>
                     </View>
-                    {quote.routingProvider === "VALHALLA_MOTORCYCLE" ? (
-                      <Text style={styles.attributionText}>Road route data © OpenStreetMap contributors</Text>
-                    ) : null}
                     <View style={styles.quoteCard}>
-                      <Text style={styles.quoteLabel}>YOUR RIDE ESTIMATE</Text>
+                      <Text style={styles.quoteLabel}>ESTIMATED RIDE FARE</Text>
                       <Text style={styles.quoteAmount}>{money(quote.fareAmountUgx)}</Text>
                       <View style={styles.quoteDivider} />
                       <View style={styles.quoteMetricRow}>
-                        <Text style={styles.quoteMetricLabel}>Distance</Text>
+                        <Text style={styles.quoteMetricLabel}>Road distance</Text>
                         <Text style={styles.quoteMetricValue}>{quote.distanceKm.toFixed(2)} km</Text>
                       </View>
                       <View style={styles.quoteMetricRow}>
                         <Text style={styles.quoteMetricLabel}>Estimated travel time</Text>
                         <Text style={styles.quoteMetricValue}>About {Math.max(1, Math.ceil(quote.durationSeconds / 60))} min</Text>
                       </View>
-                      <View style={styles.quoteMetricRow}>
-                        <Text style={styles.quoteMetricLabel}>Payment preference</Text>
-                        <Text style={styles.quoteMetricValue}>{paymentMethod === "CASH" ? "Cash" : "Mobile Money"}</Text>
-                      </View>
-                      <Text style={styles.quoteNote}>This is an estimate. Actual travel time may change due to road conditions or diversions.</Text>
+                      <Text style={styles.quoteNote}>The blue line on the map shows the suggested motorcycle road route. This is an estimate; actual travel time can change with road conditions.</Text>
                     </View>
+                    <Text style={styles.label}>Choose how to pay</Text>
+                    <View style={styles.paymentRow}>
+                      <ChoiceButton label="Cash" selected={paymentMethod === "CASH"} onPress={() => setPaymentMethod("CASH")} />
+                      <ChoiceButton label="Mobile Money" selected={paymentMethod === "MOBILE_MONEY"} onPress={() => setPaymentMethod("MOBILE_MONEY")} />
+                    </View>
+                    <TouchableOpacity
+                      accessibilityRole="button"
+                      style={styles.quoteEditButton}
+                      onPress={() => {
+                        setQuote(null);
+                        setLocations(null);
+                        setMapSheetExpanded(true);
+                        setActiveLocationField("pickup");
+                        requestAnimationFrame(() => pickupInputRef.current?.focus());
+                      }}
+                    >
+                      <Text style={styles.quoteEditButtonText}>Change pickup or destination</Text>
+                    </TouchableOpacity>
+                    <PrimaryButton
+                      label={`Confirm ride · ${money(quote.fareAmountUgx)}`}
+                      loading={working}
+                      onPress={requestRide}
+                      disabled={working}
+                    />
+                  </>
+                ) : (
+                  <>
+                    {activeLocationField === null ? <Text style={styles.cardTitle}>Plan your trip</Text> : null}
+                    {activeLocationField === null ? <Text style={styles.bodyText}>Choose where your ride starts and where you are going. NAVIGO will show the motorcycle road route and estimated fare before you confirm.</Text> : null}
+                    <Text style={styles.label}>Pickup location</Text>
+                    <TextInput
+                      ref={pickupInputRef}
+                      style={styles.addressInput}
+                      value={pickup}
+                      onFocus={() => focusLocationField("pickup")}
+                      onChangeText={(value) => {
+                        setPickup(value);
+                        setSelectedPickupLocation(null);
+                        setSelectedPickupSearchQuery("");
+                        setQuote(null);
+                        setLocations(null);
+                      }}
+                      placeholder="e.g. Muni University or Arua Main Market"
+                      placeholderTextColor="#98A2B3"
+                    />
+                    {activeLocationField === "pickup" ? <TouchableOpacity style={styles.locationSearchLocationAction} onPress={() => void detectPickupLocation(true)}><Text style={styles.locationSearchLocationActionText}>◎  Use current location</Text></TouchableOpacity> : null}
+                    <LocationSuggestions
+                      visible={activeLocationField === "pickup"}
+                      query={pickup}
+                      onSelect={(suggestion) => selectLocationSuggestion("pickup", suggestion)}
+                    />
+                    <Text style={styles.label}>Destination</Text>
+                    <TextInput
+                      ref={destinationInputRef}
+                      style={styles.addressInput}
+                      value={destination}
+                      onFocus={() => focusLocationField("destination")}
+                      onChangeText={(value) => {
+                        setDestination(value);
+                        setSelectedDestinationLocation(null);
+                        setSelectedDestinationSearchQuery("");
+                        setQuote(null);
+                        setLocations(null);
+                      }}
+                      placeholder="e.g. Muni Site or Arua Hill"
+                      placeholderTextColor="#98A2B3"
+                      returnKeyType="done"
+                      onSubmitEditing={previewRideRoute}
+                    />
+                    <LocationSuggestions
+                      visible={activeLocationField === "destination"}
+                      query={destination}
+                      onSelect={(suggestion) => selectLocationSuggestion("destination", suggestion)}
+                    />
+                    <PrimaryButton
+                      label="Show road route & fare"
+                      loading={working}
+                      onPress={previewRideRoute}
+                      disabled={working || !pickup.trim() || !destination.trim()}
+                    />
+                    <Text style={styles.quoteNote}>Step 1: choose both places. Step 2: review the route and price. Step 3: confirm only when you are happy with the fare.</Text>
                   </>
                 )}
-
                 {error ? <Notice tone="error" text={error} /> : null}
                 {message ? <Notice tone="success" text={message} /> : null}
-
-                {!quote ? (
-                  <PrimaryButton label="Calculate fare" loading={working} onPress={getFareEstimate} disabled={working || !pickup.trim() || !destination.trim()} />
-                ) : (
-                  <PrimaryButton label="Confirm ride request" loading={working} onPress={requestRide} disabled={working} />
-                )}
               </View>
 
             )}
@@ -4084,6 +4205,12 @@ const baseStyles = StyleSheet.create({
   mapSheetPickupSummary: { color: "#667085", fontSize: 10, marginTop: 3 },
   mapSheetScroll: { flex: 1 },
   mapSheetContent: { paddingHorizontal: 16, paddingTop: 4, paddingBottom: 24 },
+  routeReviewLocations: { backgroundColor: "#F7F9FB", borderRadius: 13, paddingHorizontal: 12, paddingVertical: 10, marginTop: 9, gap: 10 },
+  routeReviewStop: { flexDirection: "row", alignItems: "center", gap: 10 },
+  routeReviewStopCopy: { flex: 1 },
+  routeReviewAddress: { color: "#344054", fontSize: 12, fontWeight: "700", lineHeight: 17, marginTop: 2 },
+  quoteEditButton: { minHeight: 42, borderRadius: 10, borderWidth: 1, borderColor: "#D5E2EB", alignItems: "center", justifyContent: "center", marginTop: 8, marginBottom: 10, backgroundColor: "#FFFFFF" },
+  quoteEditButtonText: { color: "#174A72", fontSize: 11, fontWeight: "800" },
   customerMapRecenterButton: { position: "absolute", top: 112, right: 13, width: 42, height: 42, borderRadius: 21, backgroundColor: "#FFFFFF", alignItems: "center", justifyContent: "center", elevation: 4, shadowColor: "#102A43", shadowOpacity: 0.16, shadowRadius: 7 },
   mapLocationRetryPill: { left: 13, right: undefined, top: 61 },
   riderMapFrame: { height: Dimensions.get("window").height * 0.48, borderRadius: 18, overflow: "hidden", marginTop: 12, marginBottom: 12, backgroundColor: "#E9F0F5", position: "relative" },
