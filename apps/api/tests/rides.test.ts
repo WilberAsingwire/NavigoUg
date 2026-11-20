@@ -453,4 +453,70 @@ describe("Motorcycle ride API", () => {
     expect(mocks.ridePaymentUpdateMany).not.toHaveBeenCalled();
   });
 
+
+  it("books the exact signed quote without requesting a second motorcycle route", async () => {
+    mocks.fareRuleFindMany.mockResolvedValue([]);
+    const customerToken = await accessToken("CUSTOMER");
+    const quoteResponse = await request(app)
+      .post("/api/v1/rides/fare-quote")
+      .set("Authorization", `Bearer ${customerToken}`)
+      .send(route);
+
+    expect(quoteResponse.status).toBe(200);
+    expect(typeof quoteResponse.body.data.quoteToken).toBe("string");
+    expect(quoteResponse.body.data.fareAmountUgx).toBe(1300);
+
+    mocks.rideCreate.mockResolvedValue({
+      id: "9d530def-28a0-4c1d-8c2e-6ffbaed03ec3",
+      fareAmountUgx: 1300,
+      estimatedDistanceKm: 2.5
+    });
+    mocks.rideHistoryCreate.mockResolvedValue({});
+    mocks.notificationCreate.mockResolvedValue({});
+
+    const bookingResponse = await request(app)
+      .post("/api/v1/rides")
+      .set("Authorization", `Bearer ${customerToken}`)
+      .send({
+        ...route,
+        paymentMethod: "CASH",
+        quoteToken: quoteResponse.body.data.quoteToken
+      });
+
+    expect(bookingResponse.status).toBe(201);
+    expect(mocks.getMotorcycleRoute).toHaveBeenCalledTimes(1);
+    expect(mocks.rideCreate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        fareAmountUgx: 1300,
+        estimatedDistanceKm: 2.5
+      })
+    }));
+  });
+
+  it("keeps the previous server-side fare calculation for older clients without a quote token", async () => {
+    mocks.fareRuleFindMany.mockResolvedValue([]);
+    mocks.rideCreate.mockResolvedValue({
+      id: "9d530def-28a0-4c1d-8c2e-6ffbaed03ec3",
+      fareAmountUgx: 1300,
+      estimatedDistanceKm: 2.5
+    });
+    mocks.rideHistoryCreate.mockResolvedValue({});
+    mocks.notificationCreate.mockResolvedValue({});
+    const customerToken = await accessToken("CUSTOMER");
+
+    const response = await request(app)
+      .post("/api/v1/rides")
+      .set("Authorization", `Bearer ${customerToken}`)
+      .send({ ...route, paymentMethod: "CASH" });
+
+    expect(response.status).toBe(201);
+    expect(mocks.getMotorcycleRoute).toHaveBeenCalledTimes(1);
+    expect(mocks.rideCreate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        fareAmountUgx: 1300,
+        estimatedDistanceKm: 2.5
+      })
+    }));
+  });
+
 });
