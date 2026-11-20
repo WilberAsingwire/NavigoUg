@@ -2376,8 +2376,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                     setActiveLocationField(null);
                     setMapSheetExpanded(false);
                     Keyboard.dismiss();
-                    if (tab === "parcel") void getParcelFareEstimate();
-                    else void getFareEstimate();
+                    void getFareEstimate();
                   }}
                 />
                 <LocationSuggestions
