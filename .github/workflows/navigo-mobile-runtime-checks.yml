@@ -5,6 +5,7 @@ on:
     branches:
       - feature/customer-map-responsive-flow
       - feature/navigo-interaction-polish
+      - feature/navigo-loading-empty-states
     paths:
       - "apps/mobile/**"
       - "packages/shared/**"
