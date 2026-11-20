@@ -15,6 +15,7 @@ import {
 import { StatusBar } from "expo-status-bar";
 import * as SecureStore from "expo-secure-store";
 import RidesHome from "./RidesHome";
+import { SplashScreen, WelcomeScreen } from "./LaunchScreens";
 
 const API_BASE_URL = "https://navigou-api-2978.onrender.com";
 const SESSION_KEY = "navigo.session";
@@ -75,8 +76,15 @@ export default function App() {
   const [motorcycleDescription, setMotorcycleDescription] = useState("");
   const [busy, setBusy] = useState(false);
   const [restoring, setRestoring] = useState(true);
+  const [splashComplete, setSplashComplete] = useState(false);
+  const [showWelcome, setShowWelcome] = useState(true);
   const [error, setError] = useState("");
   const [session, setSession] = useState<Session | null>(null);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setSplashComplete(true), 1_500);
+    return () => clearTimeout(timer);
+  }, []);
 
   useEffect(() => {
     let mounted = true;
@@ -206,20 +214,13 @@ export default function App() {
       setSession(null);
       setMode("login");
       setRole("CUSTOMER");
+      setShowWelcome(true);
       setBusy(false);
     }
   }
 
-  if (restoring) {
-    return (
-      <SafeAreaView style={styles.safeArea}>
-        <StatusBar style="dark" />
-        <View style={styles.loading}>
-          <ActivityIndicator size="large" color="#174A72" />
-          <Text style={styles.muted}>Preparing NAVIGO...</Text>
-        </View>
-      </SafeAreaView>
-    );
+  if (restoring || !splashComplete) {
+    return <SplashScreen />;
   }
 
   if (session) {
@@ -229,6 +230,23 @@ export default function App() {
         onSignOut={signOut}
         onSessionChange={setSession}
         signingOut={busy}
+      />
+    );
+  }
+
+  if (showWelcome) {
+    return (
+      <WelcomeScreen
+        onGetStarted={() => {
+          setMode("login");
+          setError("");
+          setShowWelcome(false);
+        }}
+        onCreateAccount={() => {
+          setMode("register");
+          setError("");
+          setShowWelcome(false);
+        }}
       />
     );
   }
@@ -245,6 +263,13 @@ export default function App() {
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
+          <TouchableOpacity
+            accessibilityRole="button"
+            style={styles.entryBackButton}
+            onPress={() => { setShowWelcome(true); setError(""); }}
+          >
+            <Text style={styles.entryBackText}>←  Back to welcome</Text>
+          </TouchableOpacity>
           <Brand />
           <View style={styles.headingBlock}>
             <Text style={styles.eyebrow}>WELCOME TO NAVIGO</Text>
@@ -472,7 +497,9 @@ function Detail({ label, value }: { label: string; value: string }) {
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: "#F3F6FA" },
   flex: { flex: 1 },
-  authPage: { flexGrow: 1, paddingHorizontal: 20, paddingTop: 25, paddingBottom: 28 },
+  authPage: { flexGrow: 1, paddingHorizontal: 20, paddingTop: 18, paddingBottom: 28 },
+  entryBackButton: { alignSelf: "flex-start", paddingVertical: 8, paddingHorizontal: 3, marginBottom: 5 },
+  entryBackText: { color: "#236B9A", fontSize: 12, fontWeight: "700" },
   dashboard: { flexGrow: 1, paddingHorizontal: 24, paddingTop: 34, paddingBottom: 30 },
   brand: { alignItems: "center", marginBottom: 25 },
   brandMark: {
