@@ -584,7 +584,7 @@ function BrandSplash() {
       <Image
         source={require("./assets/navigo-splash.jpg")}
         style={StyleSheet.absoluteFill}
-        resizeMode="cover"
+        resizeMode="contain"
         accessibilityLabel="NAVIGO branded opening screen"
       />
     </View>
