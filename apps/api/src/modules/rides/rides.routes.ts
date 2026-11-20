@@ -7,6 +7,7 @@ import {
   RecordPaymentInputSchema
 } from "@navigo/shared";
 import { requireAuth, requireRole } from "../auth/auth.middleware.js";
+import { geocodeAruaPlace } from "./geocoding.service.js";
 import {
   acceptRide,
   cancelCustomerRide,
@@ -47,6 +48,37 @@ function validationError(response: import("express").Response, message: string, 
 function validRideId(value: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 }
+
+ridesRouter.post("/geocode", requireRole("CUSTOMER"), async (request, response, next) => {
+  const query = typeof request.body?.query === "string" ? request.body.query.trim() : "";
+  if (query.length < 3 || query.length > 160) {
+    validationError(response, "Enter a location name between 3 and 160 characters.");
+    return;
+  }
+
+  const startedAt = Date.now();
+  try {
+    const location = await geocodeAruaPlace(query);
+    console.info("[NAVIGO geocoding] completed", {
+      durationMs: Date.now() - startedAt
+    });
+    response.status(200).json({ data: location });
+  } catch (error) {
+    if (error instanceof RideError) {
+      console.warn("[NAVIGO geocoding] failed", {
+        code: error.code,
+        statusCode: error.statusCode,
+        durationMs: Date.now() - startedAt
+      });
+    } else {
+      console.error("[NAVIGO geocoding] unexpected failure", {
+        message: error instanceof Error ? error.message : "Unknown error",
+        durationMs: Date.now() - startedAt
+      });
+    }
+    next(error);
+  }
+});
 
 ridesRouter.post("/fare-quote", requireRole("CUSTOMER"), async (request, response, next) => {
   const startedAt = Date.now();
