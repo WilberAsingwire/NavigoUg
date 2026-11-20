@@ -876,9 +876,6 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
   }
   const [deviceLocation, setDeviceLocation] = useState<RideLocation | null>(null);
   const [locationStatus, setLocationStatus] = useState<"locating" | "ready" | "denied" | "unavailable">("locating");
-  const [customerMapReady, setCustomerMapReady] = useState(false);
-  const [customerMapLoaded, setCustomerMapLoaded] = useState(false);
-  const customerMapRef = useRef<MapView | null>(null);
   const riderMapRef = useRef<MapView | null>(null);
   const pendingRiderMapCenter = useRef<RideLocation | null>(null);
   const riderMapCentering = useRef(false);
@@ -915,18 +912,6 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
     animation.start();
     return () => animation.stop();
   }, [mapSheetExpanded, mapSheetExpandedHeight, mapSheetCollapsedHeight, mapSheetHeight]);
-
-  useEffect(() => {
-    if (!customerMapReady) return;
-    customerMapRef.current?.animateToRegion(mapRegion, 650);
-  }, [mapRegion, customerMapReady]);
-
-  useEffect(() => {
-    if (isCustomer && mainTab !== "home") {
-      setCustomerMapReady(false);
-      setCustomerMapLoaded(false);
-    }
-  }, [isCustomer, mainTab]);
 
   useEffect(() => {
     if (activeSession.user.role === "RIDER" && mainTab !== "home") {
@@ -1739,16 +1724,11 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
           <>
             {mainTab === "home" ? (
               <>
-            <View pointerEvents={activeLocationField === null ? "auto" : "none"} style={[styles.customerMapFrame, activeLocationField !== null ? styles.customerMapSearchMapHidden : null, { height: pickup.trim() && destination.trim() ? Math.min(Dimensions.get("window").height * 0.44, 360) : Math.min(Math.max(Dimensions.get("window").height * 0.29, 210), 260) }]}>
+            <View style={styles.customerMapFrame}>
               <MapView
-                ref={customerMapRef}
-                style={[styles.customerMap, { opacity: customerMapLoaded ? 1 : 0 }]}
-                initialRegion={mapRegion}
-                onMapReady={() => setCustomerMapReady(true)}
-                onMapLoaded={() => setCustomerMapLoaded(true)}
-                loadingEnabled
-                loadingBackgroundColor="#E9F0F5"
-                loadingIndicatorColor="#174A72"
+                style={styles.customerMap}
+                region={mapRegion}
+                onRegionChangeComplete={setMapRegion}
                 customMapStyle={LIGHT_MAP_STYLE}
                 showsCompass={false}
                 showsScale={false}
@@ -1778,22 +1758,10 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                   />
                 ) : null}
               </MapView>
-              {!customerMapLoaded ? (
-                <View pointerEvents="none" style={styles.customerMapLoadingOverlay}>
-                  <ActivityIndicator color="#174A72" size="small" />
-                  <Text style={styles.customerMapLoadingText}>Loading NAVIGO map...</Text>
-                </View>
-              ) : null}
               <View style={styles.mapBrandPill}>
                 <Text style={styles.mapBrandText}>NAVIGO  •  ARUA</Text>
               </View>
-              <TouchableOpacity style={styles.customerMapRecenterButton} onPress={() => {
-                if (deviceLocation && customerMapRef.current) {
-                  customerMapRef.current.animateToRegion({ latitude: deviceLocation.latitude, longitude: deviceLocation.longitude, latitudeDelta: 0.035, longitudeDelta: 0.035 }, 700);
-                } else {
-                  void detectPickupLocation(false);
-                }
-              }}>
+              <TouchableOpacity style={styles.customerMapRecenterButton} onPress={() => void detectPickupLocation(false)}>
                 <Text style={styles.mapRecenterText}>◎</Text>
               </TouchableOpacity>
               {locationStatus !== "ready" ? (
@@ -1801,8 +1769,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                   <Text style={styles.locationRetryText}>{locationStatus === "locating" ? "Locating..." : "Use my location"}</Text>
                 </TouchableOpacity>
               ) : null}
-            </View>
-            <Animated.View style={[styles.customerMapSheet, activeLocationField !== null ? styles.customerMapSearchSheet : null, { height: mapSheetHeight }]}>
+            <Animated.View style={[styles.customerMapSheet, { height: mapSheetHeight }]}>
               {activeLocationField === null ? (
               <View style={styles.mapSheetDragArea} {...mapSheetPanResponder.panHandlers}>
                 <View style={styles.mapSheetGrip} />
@@ -2047,6 +2014,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
             )}
               </ScrollView>
             </Animated.View>
+            </View>
               </>
             ) : mainTab === "activity" ? (
               <View style={styles.section}>
@@ -3653,7 +3621,7 @@ const baseStyles = StyleSheet.create({
   quickAccessText: { color: "#667085", fontSize: 10, lineHeight: 15, marginTop: 5 },
   mapHomePage: { flexGrow: 1, paddingHorizontal: 0, paddingTop: 0, paddingBottom: 0 },
   customerMapFrame: { height: Dimensions.get("window").height - 88, borderRadius: 0, overflow: "hidden", marginBottom: 0, marginHorizontal: 0, marginTop: 0, borderWidth: 0, backgroundColor: "#E9F0F5", position: "relative" },
-  customerMapSheet: { position: "relative", backgroundColor: "#FFFFFF", borderRadius: 18, overflow: "hidden", elevation: 3, shadowColor: "#102A43", shadowOpacity: 0.08, shadowRadius: 8, marginTop: 12, marginHorizontal: 12, marginBottom: 16 },
+  customerMapSheet: { position: "absolute", left: 0, right: 0, bottom: 0, backgroundColor: "#FFFFFF", borderTopLeftRadius: 23, borderTopRightRadius: 23, overflow: "hidden", elevation: 18, shadowColor: "#102A43", shadowOpacity: 0.17, shadowRadius: 14 },
   customerMapSearchMapHidden: { position: "absolute", top: 0, left: 0, right: 0, opacity: 0, zIndex: -1 },
   customerMapSearchSheet: { marginTop: 0, marginHorizontal: 0, marginBottom: 0, borderRadius: 0, elevation: 2, zIndex: 2, shadowOpacity: 0 },
   locationSearchHeader: { minHeight: 58, flexDirection: "row", alignItems: "center", justifyContent: "center", paddingHorizontal: 16, borderBottomWidth: 1, borderBottomColor: "#E5EAF0", backgroundColor: "#FFFFFF" },
