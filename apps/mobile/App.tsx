@@ -581,7 +581,7 @@ export default function App() {
 function BrandSplash() {
   return (
     <View style={styles.splashScreen}>
-      <StatusBar style="dark" backgroundColor="#B9D8FA" />
+      <StatusBar hidden />
       <Svg
         width="100%"
         height="100%"
