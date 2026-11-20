@@ -1195,6 +1195,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
   const [working, setWorking] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [dashboardLoadError, setDashboardLoadError] = useState("");
   const [activeLocationField, setActiveLocationField] = useState<"pickup" | "destination" | null>(null);
 
   function focusLocationField(field: "pickup" | "destination") {
@@ -1329,6 +1330,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
   const loadDashboard = useCallback(async () => {
     setLoading(true);
     setError("");
+    setDashboardLoadError("");
     if (activeSession.user.role === "ADMIN") {
       try {
         const riderQuery = adminRiderFilter === "ALL" ? "" : `?status=${adminRiderFilter}`;
@@ -1344,7 +1346,9 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
         setAssignedParcels([]);
         setSentParcels([]);
       } catch (loadError) {
-        setError(loadError instanceof Error ? loadError.message : "Unable to load administrator data.");
+        const message = loadError instanceof Error ? loadError.message : "Unable to load administrator data.";
+        setDashboardLoadError(message);
+        setError(message);
       } finally {
         setLoading(false);
       }
@@ -1379,7 +1383,9 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
         setSentParcels([]);
       }
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "Unable to load your rides.");
+      const message = loadError instanceof Error ? loadError.message : "Unable to load your rides.";
+      setDashboardLoadError(message);
+      setError(message);
     } finally {
       setLoading(false);
     }
@@ -2138,6 +2144,13 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
     }
   }
 
+  const showCollectionError = Boolean(dashboardLoadError) && (
+    (isCustomer && mainTab === "activity" && (customerActivityTab === "parcels" ? sentParcels.length === 0 : rides.length === 0)) ||
+    (isApprovedRider && mainTab === "requests" && (riderRequestTab === "rides" ? availableRides.length === 0 : availableParcels.length === 0)) ||
+    (isApprovedRider && mainTab === "jobs" && (riderJobTab === "rides" ? rides.length === 0 : assignedParcels.length === 0)) ||
+    (activeSession.user.role === "ADMIN" && ((adminTab === "riders" && adminRiders.length === 0) || (adminTab === "fares" && adminFareRules.length === 0)))
+  );
+
   async function performRideAction(rideId: string, action: "accept" | "cancel" | "ARRIVED_AT_PICKUP" | "IN_PROGRESS" | "COMPLETED") {
     setWorking(true);
     setError("");
@@ -2522,7 +2535,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                     busy={working}
                     onCancel={["PENDING", "ACCEPTED", "ARRIVED_AT_PICKUP"].includes(parcel.status) ? () => performParcelAction(parcel.id, "cancel") : undefined}
                   />
-                )) : <EmptyState title="No item deliveries yet" text="Items you send will appear here with their delivery progress." />}
+                )) : <CollectionState loading={loading} error={dashboardLoadError} emptyTitle="No item deliveries yet" emptyText="Items you send will appear here with their delivery progress." onRetry={() => void loadDashboard()} label="Loading your item deliveries" />}
                   </>
                 ) : (
                   <>
@@ -2534,10 +2547,10 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                     busy={working}
                     onCancel={() => performRideAction(ride.id, "cancel")}
                   />
-                )) : <EmptyState title="No rides yet" text="Your ride requests and trip history will appear here." />}
+                )) : <CollectionState loading={loading} error={dashboardLoadError} emptyTitle="No rides yet" emptyText="Your ride requests and trip history will appear here." onRetry={() => void loadDashboard()} label="Loading your rides" />}
                   </>
                 )}
-                {error ? <Notice tone="error" text={error} /> : null}
+                {error && !showCollectionError ? <Notice tone="error" text={error} /> : null}
                 {message ? <Notice tone="success" text={message} /> : null}
               </View>
             ) : (
@@ -2695,16 +2708,20 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                     riderView
                     onAccept={() => performRideAction(ride.id, "accept")}
                   />
-                )) : <EmptyState
-                  title={riderOnline ? "No nearby rides yet" : "You are offline"}
-                  text={riderOnline ? "There are no ride requests within your current matching area. NAVIGO will keep checking for nearby requests." : "Go online to see ride requests near your current location."}
+                )) : <CollectionState
+                  loading={loading}
+                  error={dashboardLoadError}
+                  emptyTitle={riderOnline ? "No nearby rides yet" : "You are offline"}
+                  emptyText={riderOnline ? "There are no ride requests within your current matching area. NAVIGO will keep checking for nearby requests." : "Go online to see ride requests near your current location."}
+                  onRetry={() => void loadDashboard()}
+                  label="Loading nearby ride requests"
                 />}
                   </>
                 ) : (
                   <>
                     {availableParcels.length ? availableParcels.map((parcel) => (
                   <ParcelRiderCard key={parcel.id} parcel={parcel} busy={working} onAccept={() => performParcelAction(parcel.id, "accept")} />
-                )) : <EmptyState title="No available item deliveries" text="New customer item requests will appear here." />}
+                )) : <CollectionState loading={loading} error={dashboardLoadError} emptyTitle="No available item deliveries" emptyText="New customer item requests will appear here." onRetry={() => void loadDashboard()} label="Loading available item deliveries" />}
                   </>
                 )}
               </View>
@@ -2731,7 +2748,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                       onRecordPayment={ride.status === "COMPLETED" && ride.payment?.status === "UNPAID" ? () => recordManualPayment("ride", ride.id) : undefined}
                     />
                   );
-                }) : <EmptyState title="No assigned rides" text="Rides you accept will appear here." />}
+                }) : <CollectionState loading={loading} error={dashboardLoadError} emptyTitle="No assigned rides" emptyText="Rides you accept will appear here." onRetry={() => void loadDashboard()} label="Loading your assigned rides" />}
                   </>
                 ) : (
                   <>
@@ -2760,14 +2777,14 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                         : startParcelLocationSharing(parcel.id)
                       : undefined}
                   />
-                )) : <EmptyState title="No assigned item deliveries" text="Item deliveries you accept will appear here." />}
+                )) : <CollectionState loading={loading} error={dashboardLoadError} emptyTitle="No assigned item deliveries" emptyText="Item deliveries you accept will appear here." onRetry={() => void loadDashboard()} label="Loading your assigned item deliveries" />}
                   </>
                 )}
               </View>
             ) : (
               <ProfilePanel session={activeSession} onSignOut={onSignOut} signingOut={signingOut} onSaveProfile={saveOwnProfile} onChangePassword={changeOwnPassword} onSwitchWorkspace={switchWorkspace} onApplyRider={applyForRider} refreshAccessToken={refreshAccessToken} appearance={appearance} textSize={textSize} onUpdateUiPreferences={updateUiPreferences} />
             )}
-            {error ? <Notice tone="error" text={error} /> : null}
+            {error && !showCollectionError ? <Notice tone="error" text={error} /> : null}
             {message ? <Notice tone="success" text={message} /> : null}
           </>
         ) : activeSession.user.role === "ADMIN" ? (
@@ -2853,7 +2870,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                       ) : null}
                     </View>
                   </View>
-                )) : <EmptyState title="No rider applications here" text={adminRiderFilter === "PENDING" ? "New rider applications will appear here for review." : "There are no riders under this filter."} />}
+                )) : <CollectionState loading={loading} error={dashboardLoadError} emptyTitle="No rider applications here" emptyText={adminRiderFilter === "PENDING" ? "New rider applications will appear here for review." : "There are no riders under this filter."} onRetry={() => void loadDashboard()} label="Loading rider applications" />}
               </View>
             ) : (
               <View style={styles.section}>
@@ -2918,10 +2935,10 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                       </View>
                     </View>
                   );
-                }) : <EmptyState title="No fare rules configured" text="Create a fare rule above. Item delivery quotes will remain unavailable for sizes and distances without an active rule." />}
+                }) : <CollectionState loading={loading} error={dashboardLoadError} emptyTitle="No fare rules configured" emptyText="Create a fare rule above. Item delivery quotes will remain unavailable for sizes and distances without an active rule." onRetry={() => void loadDashboard()} label="Loading fare rules" />}
               </View>
             )}
-            {error ? <Notice tone="error" text={error} /> : null}
+            {error && !showCollectionError ? <Notice tone="error" text={error} /> : null}
             {message ? <Notice tone="success" text={message} /> : null}
           </>
         ) : (
@@ -3007,6 +3024,7 @@ function ProfilePanel({
   const [notifications, setNotifications] = useState<ProfileNotification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [notificationsLoading, setNotificationsLoading] = useState(false);
+  const [notificationsRetry, setNotificationsRetry] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -3020,6 +3038,7 @@ function ProfilePanel({
     if (page !== "notifications" && page !== "home") return;
     let active = true;
     setNotificationsLoading(true);
+    setError("");
     apiRequest<{ data: { items: ProfileNotification[]; unreadCount: number } }>(
       "/api/v1/notifications",
       session.accessToken,
@@ -3036,7 +3055,7 @@ function ProfilePanel({
       if (active) setNotificationsLoading(false);
     });
     return () => { active = false; };
-  }, [page, session.accessToken, refreshAccessToken]);
+  }, [page, session.accessToken, refreshAccessToken, notificationsRetry]);
 
   async function saveProfile() {
     setBusy(true);
@@ -3400,7 +3419,7 @@ function ProfilePanel({
                 ) : null}
               </View>
               {notificationsLoading ? (
-                <ActivityIndicator color={BRAND_COLORS.navy} style={{ marginVertical: 22 }} />
+                <LoadingSkeleton count={2} compact label="Loading notifications" />
               ) : notifications.length ? notifications.map((item) => (
                 <TouchableOpacity
                   key={item.id}
@@ -3418,7 +3437,16 @@ function ProfilePanel({
                     {"  •  "}{new Date(item.createdAt).toLocaleString()}
                   </Text>
                 </TouchableOpacity>
-              )) : (
+              )) : error ? (
+                <CollectionState
+                  loading={false}
+                  error={error}
+                  emptyTitle="You're all caught up"
+                  emptyText="Ride and item-delivery updates will appear here."
+                  onRetry={() => setNotificationsRetry((current) => current + 1)}
+                  label="Loading notifications"
+                />
+              ) : (
                 <EmptyState title="You're all caught up" text="Ride and item-delivery updates will appear here." />
               )}
             </View>
@@ -3468,7 +3496,7 @@ function ProfilePanel({
             </>
           ) : null}
 
-          {error ? <Notice tone="error" text={error} /> : null}
+          {error && page !== "notifications" ? <Notice tone="error" text={error} /> : null}
           {success ? <Notice tone="success" text={success} /> : null}
         </>
       )}
@@ -3973,6 +4001,90 @@ function EmptyState({ title, text }: { title: string; text: string }) {
   );
 }
 
+function CollectionState({
+  loading,
+  error,
+  emptyTitle,
+  emptyText,
+  onRetry,
+  label
+}: {
+  loading: boolean;
+  error: string;
+  emptyTitle: string;
+  emptyText: string;
+  onRetry: () => void;
+  label: string;
+}) {
+  if (loading) return <LoadingSkeleton count={2} label={label} />;
+
+  if (error) {
+    return (
+      <View style={styles.emptyState}>
+        <View style={styles.loadErrorMark}>
+          <Text style={styles.loadErrorMarkText}>!</Text>
+        </View>
+        <Text style={styles.emptyTitle}>We couldn't load this information</Text>
+        <Text style={styles.emptyText}>{error}</Text>
+        <TouchableOpacity accessibilityRole="button" onPress={onRetry} style={styles.retryButton}>
+          <Text style={styles.retryButtonText}>Try again</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
+
+  return <EmptyState title={emptyTitle} text={emptyText} />;
+}
+
+function LoadingSkeleton({
+  count = 2,
+  compact = false,
+  label = "Loading content"
+}: {
+  count?: number;
+  compact?: boolean;
+  label?: string;
+}) {
+  const opacity = useRef(new Animated.Value(0.58)).current;
+
+  useEffect(() => {
+    const pulse = Animated.loop(
+      Animated.sequence([
+        Animated.timing(opacity, { toValue: 0.92, duration: 850, useNativeDriver: true }),
+        Animated.timing(opacity, { toValue: 0.58, duration: 850, useNativeDriver: true })
+      ])
+    );
+    pulse.start();
+    return () => pulse.stop();
+  }, [opacity]);
+
+  return (
+    <View accessibilityRole="progressbar" accessibilityLabel={label} style={styles.skeletonStack}>
+      <Animated.View style={{ opacity }}>
+        {Array.from({ length: count }, (_, index) => (
+          <View key={`skeleton-${index}`} style={[styles.skeletonCard, compact && styles.skeletonCardCompact]}>
+            <View style={styles.skeletonHeader}>
+              <View style={[styles.skeletonLine, { width: compact ? "34%" : "42%", height: 10 }]} />
+              <View style={[styles.skeletonLine, styles.skeletonCircle]} />
+            </View>
+            <View style={[styles.skeletonLine, { width: compact ? "76%" : "68%", height: 13 }]} />
+            <View style={[styles.skeletonLine, { width: "94%", height: 9 }]} />
+            {!compact ? (
+              <>
+                <View style={[styles.skeletonLine, { width: "72%", height: 9 }]} />
+                <View style={styles.skeletonFooter}>
+                  <View style={[styles.skeletonLine, { width: "28%", height: 9 }]} />
+                  <View style={[styles.skeletonLine, styles.skeletonAction]} />
+                </View>
+              </>
+            ) : null}
+          </View>
+        ))}
+      </Animated.View>
+    </View>
+  );
+}
+
 function Notice({ tone, text }: { tone: "error" | "success"; text: string }) {
   return (
     <View style={[styles.notice, tone === "error" ? styles.errorNotice : styles.successNotice]}>
@@ -4227,8 +4339,20 @@ const baseStyles = StyleSheet.create({
   cancelButton: { alignItems: "center", paddingVertical: 11, marginTop: 4 },
   cancelText: { color: "#B42318", fontWeight: "700", fontSize: 12 },
   emptyState: { backgroundColor: "#FFFFFF", borderRadius: 14, borderWidth: 1, borderColor: "#E5EAF0", padding: 19, alignItems: "center", marginBottom: 13 },
-  emptyTitle: { color: "#344054", fontSize: 13, fontWeight: "800" },
+  emptyTitle: { color: "#344054", fontSize: 13, fontWeight: "800", textAlign: "center" },
   emptyText: { color: "#8793A2", fontSize: 11, textAlign: "center", lineHeight: 17, marginTop: 6 },
+  loadErrorMark: { width: 30, height: 30, borderRadius: 15, backgroundColor: "#FFF1E7", alignItems: "center", justifyContent: "center", marginBottom: 10 },
+  loadErrorMarkText: { color: BRAND_COLORS.orange, fontSize: 17, fontWeight: "900" },
+  retryButton: { minHeight: 38, borderRadius: 10, backgroundColor: BRAND_COLORS.navy, paddingHorizontal: 17, alignItems: "center", justifyContent: "center", marginTop: 13 },
+  retryButtonText: { color: "#FFFFFF", fontSize: 11, fontWeight: "800" },
+  skeletonStack: { marginBottom: 12 },
+  skeletonCard: { backgroundColor: "#FFFFFF", borderRadius: 15, borderWidth: 1, borderColor: "#E5EAF0", padding: 14, marginBottom: 10, gap: 11 },
+  skeletonCardCompact: { paddingVertical: 12, gap: 9 },
+  skeletonHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 2 },
+  skeletonLine: { height: 11, borderRadius: 7, backgroundColor: "#E5EAF0" },
+  skeletonCircle: { width: 25, height: 25, borderRadius: 13 },
+  skeletonFooter: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 2 },
+  skeletonAction: { width: 92, height: 31, borderRadius: 9 },
   notice: { borderRadius: 10, padding: 11, marginTop: 12 },
   errorNotice: { backgroundColor: "#FEF3F2", borderWidth: 1, borderColor: "#FEE4E2" },
   successNotice: { backgroundColor: "#ECFDF3", borderWidth: 1, borderColor: "#ABEFC6" },
@@ -4255,6 +4379,7 @@ function appThemeColor(color: string, property: string, appearance: UiAppearance
       "#FBFCFE": "#102031",
       "#F0F3F7": "#1A2B3D",
       "#F7FAFC": "#1A2B3D",
+      "#E5EAF0": "#304456",
       "#FFF6E2": "#3D3422",
       "#FFF1E7": "#3D2B22",
       "#EEF4FC": "#20364F",
