@@ -247,7 +247,7 @@ async function getValhallaMotorcycleRoute(
   destination: RouteCoordinate
 ): Promise<MotorcycleRoute> {
   const baseUrl = (process.env.VALHALLA_BASE_URL || "https://valhalla1.openstreetmap.de")
-    .replace(/\\/+$/, "");
+    .replace(/\/+$/, "");
   const clientId = process.env.VALHALLA_CLIENT_ID || "navigo-arua-pilot";
   const requestBody = {
     locations: [
