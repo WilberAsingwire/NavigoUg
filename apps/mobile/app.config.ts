@@ -7,6 +7,12 @@ const config: ExpoConfig = {
   slug: "navigo",
   scheme: "navigo",
   version: "1.0.0",
+  icon: "./assets/icon.png",
+  splash: {
+    image: "./assets/icon.png",
+    resizeMode: "contain",
+    backgroundColor: "#EDF6FF"
+  },
   runtimeVersion: {
     policy: "appVersion"
   },
@@ -16,6 +22,10 @@ const config: ExpoConfig = {
   orientation: "portrait",
   userInterfaceStyle: "light",
   android: {
+    adaptiveIcon: {
+      foregroundImage: "./assets/icon.png",
+      backgroundColor: "#EDF6FF"
+    },
     package: "ug.ac.muni.navigo",
     versionCode: 1,
     permissions: [
