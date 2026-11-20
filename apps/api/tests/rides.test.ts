@@ -474,6 +474,16 @@ describe("Motorcycle ride API", () => {
 
   it("books the exact signed quote without requesting a second motorcycle route", async () => {
     mocks.fareRuleFindMany.mockResolvedValue([]);
+    mocks.getMotorcycleRoute.mockResolvedValueOnce({
+      distanceKm: 2.5,
+      durationSeconds: 420,
+      coordinates: [
+        { latitude: 3.02, longitude: 30.91 },
+        { latitude: 3.025, longitude: 30.915 },
+        { latitude: 3.03, longitude: 30.92 }
+      ],
+      provider: "VALHALLA_MOTORCYCLE"
+    });
     const customerToken = await accessToken("CUSTOMER");
     const quoteResponse = await request(app)
       .post("/api/v1/rides/fare-quote")
