@@ -17,7 +17,7 @@ import { StatusBar } from "expo-status-bar";
 import * as SecureStore from "expo-secure-store";
 import * as Notifications from "expo-notifications";
 import Constants from "expo-constants";
-import Svg, { Circle, Defs, LinearGradient, Path, Rect, Stop } from "react-native-svg";
+import Svg, { Circle, Defs, G, LinearGradient, Path, Rect, Stop } from "react-native-svg";
 import RidesHome from "./RidesHome";
 
 const API_BASE_URL = "https://navigou-api-2978.onrender.com";
