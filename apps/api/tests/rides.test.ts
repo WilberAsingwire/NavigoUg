@@ -22,7 +22,8 @@ const mocks = vi.hoisted(() => ({
   auditLogCreate: vi.fn(),
   notificationCreate: vi.fn(),
   transaction: vi.fn(),
-  getMotorcycleRoute: vi.fn()
+  getMotorcycleRoute: vi.fn(),
+  geocodeAruaPlace: vi.fn()
 }));
 
 vi.mock("../src/lib/prisma.js", () => ({
@@ -65,6 +66,10 @@ vi.mock("../src/modules/rides/routing.service.js", () => ({
   }
 }));
 
+vi.mock("../src/modules/rides/geocoding.service.js", () => ({
+  geocodeAruaPlace: mocks.geocodeAruaPlace
+}));
+
 import { app } from "../src/app.js";
 
 const secret = new TextEncoder().encode("local-test-secret-that-is-long-enough-123456");
@@ -96,6 +101,11 @@ describe("Motorcycle ride API", () => {
     vi.clearAllMocks();
     mocks.availabilityFindUnique.mockResolvedValue(null);
     mocks.availabilityUpsert.mockResolvedValue({ isOnline: true, lastSeenAt: new Date() });
+    mocks.geocodeAruaPlace.mockImplementation(async (query: string) => ({
+      latitude: route.pickup.latitude,
+      longitude: route.pickup.longitude,
+      description: query
+    }));
     mocks.getMotorcycleRoute.mockResolvedValue({
       distanceKm: 2.5,
       durationSeconds: 420,
@@ -120,6 +130,52 @@ describe("Motorcycle ride API", () => {
         notification: { create: mocks.notificationCreate }
       })
     );
+  });
+
+  it("requires authentication for final Arua place lookup", async () => {
+    const response = await request(app)
+      .post("/api/v1/rides/geocode")
+      .send({ query: "Muni University" });
+    expect(response.status).toBe(401);
+  });
+
+  it("allows a customer to geocode a final Arua place through the API", async () => {
+    const token = await accessToken("CUSTOMER");
+    const response = await request(app)
+      .post("/api/v1/rides/geocode")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ query: "Muni University" });
+
+    expect(response.status).toBe(200);
+    expect(response.body.data).toEqual({
+      latitude: route.pickup.latitude,
+      longitude: route.pickup.longitude,
+      description: "Muni University"
+    });
+    expect(mocks.geocodeAruaPlace).toHaveBeenCalledWith("Muni University");
+  });
+
+  it("does not allow riders to use the customer final-place lookup", async () => {
+    const token = await accessToken("RIDER");
+    const response = await request(app)
+      .post("/api/v1/rides/geocode")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ query: "Muni University" });
+
+    expect(response.status).toBe(403);
+    expect(mocks.geocodeAruaPlace).not.toHaveBeenCalled();
+  });
+
+  it("validates the final-place geocoding query", async () => {
+    const token = await accessToken("CUSTOMER");
+    const response = await request(app)
+      .post("/api/v1/rides/geocode")
+      .set("Authorization", `Bearer ${token}`)
+      .send({ query: "Mu" });
+
+    expect(response.status).toBe(400);
+    expect(response.body.error.code).toBe("VALIDATION_ERROR");
+    expect(mocks.geocodeAruaPlace).not.toHaveBeenCalled();
   });
 
   it("requires authentication to access ride endpoints", async () => {
