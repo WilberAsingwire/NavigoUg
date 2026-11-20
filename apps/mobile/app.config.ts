@@ -6,6 +6,12 @@ const config: ExpoConfig = {
   scheme: "navigo",
   version: "1.0.0",
   icon: "./assets/icon.png",
+  runtimeVersion: {
+    policy: "appVersion"
+  },
+  updates: {
+    url: "https://u.expo.dev/701f22b6-271a-431f-bf23-e98745611ad3"
+  },
   orientation: "portrait",
   userInterfaceStyle: "light",
   android: {

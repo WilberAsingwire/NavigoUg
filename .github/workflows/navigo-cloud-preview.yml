@@ -1,0 +1,67 @@
+name: NAVIGO cloud preview updates
+
+on:
+  push:
+    branches:
+      - feature/customer-map-responsive-flow
+    paths:
+      - "apps/mobile/**/*.ts"
+      - "apps/mobile/**/*.tsx"
+      - "apps/mobile/**/*.js"
+      - "packages/shared/**"
+      - ".github/workflows/navigo-cloud-preview.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: navigou-preview-update
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  publish-preview:
+    name: Publish compatible JavaScript updates to preview
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check whether Expo publishing is configured
+        id: expo-token
+        env:
+          EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+        run: |
+          if [ -n "$EXPO_TOKEN" ]; then
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Explain how to enable cloud previews
+        if: steps.expo-token.outputs.configured != 'true'
+        run: |
+          echo "::notice::Add the EXPO_TOKEN repository secret in GitHub Settings > Secrets and variables > Actions to enable automatic preview updates."
+
+      - name: Check out repository
+        if: steps.expo-token.outputs.configured == 'true'
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        if: steps.expo-token.outputs.configured == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Set up EAS CLI
+        if: steps.expo-token.outputs.configured == 'true'
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Install workspace dependencies
+        if: steps.expo-token.outputs.configured == 'true'
+        run: npm install
+
+      - name: Publish the preview update
+        if: steps.expo-token.outputs.configured == 'true'
+        working-directory: apps/mobile
+        run: eas update --channel preview --environment preview --message "NAVIGO preview ${{ github.sha }}" --non-interactive
