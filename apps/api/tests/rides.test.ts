@@ -488,7 +488,14 @@ describe("Motorcycle ride API", () => {
     expect(mocks.rideCreate).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({
         fareAmountUgx: 1300,
-        estimatedDistanceKm: 2.5
+        estimatedDistanceKm: 2.5,
+        routeCoordinates: [
+          { latitude: 3.02, longitude: 30.91 },
+          { latitude: 3.025, longitude: 30.915 },
+          { latitude: 3.03, longitude: 30.92 }
+        ],
+        estimatedDurationSeconds: 420,
+        routingProvider: "VALHALLA_MOTORCYCLE"
       })
     }));
   });
