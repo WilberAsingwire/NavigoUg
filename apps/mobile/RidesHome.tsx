@@ -3226,7 +3226,7 @@ function ProfilePanel({
             {menuItem("Help and support", "Answers to common questions", "support")}
             {menuItem("Privacy and about NAVIGO", "Permissions, data use and app information", "privacy")}
           </View>
-          {error ? <Notice tone="error" text={error} /> : null}
+          {error && page !== "notifications" ? <Notice tone="error" text={error} /> : null}
           {success ? <Notice tone="success" text={success} /> : null}
           <TouchableOpacity style={styles.profileSignOut} onPress={onSignOut} disabled={signingOut || busy}>
             {signingOut ? <ActivityIndicator color="#B42318" /> : <Text style={styles.profileSignOutText}>Sign out of NAVIGO</Text>}
@@ -3424,19 +3424,17 @@ function ProfilePanel({
                     {"  •  "}{new Date(item.createdAt).toLocaleString()}
                   </Text>
                 </TouchableOpacity>
-              )) : (
-                {error ? (
-                  <CollectionState
-                    loading={false}
-                    error={error}
-                    emptyTitle="You're all caught up"
-                    emptyText="Ride and item-delivery updates will appear here."
-                    onRetry={() => setNotificationsRetry((current) => current + 1)}
-                    label="Loading notifications"
-                  />
-                ) : (
-                  <EmptyState title="You're all caught up" text="Ride and item-delivery updates will appear here." />
-                )}
+              )) : error ? (
+                <CollectionState
+                  loading={false}
+                  error={error}
+                  emptyTitle="You're all caught up"
+                  emptyText="Ride and item-delivery updates will appear here."
+                  onRetry={() => setNotificationsRetry((current) => current + 1)}
+                  label="Loading notifications"
+                />
+              ) : (
+                <EmptyState title="You're all caught up" text="Ride and item-delivery updates will appear here." />
               )}
             </View>
           ) : null}
