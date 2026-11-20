@@ -1913,6 +1913,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
             ) : (
               <View style={styles.card}>
                 {activeLocationField === null ? <Text style={styles.cardTitle}>Plan your trip</Text> : null}
+                {activeLocationField === null ? <Text style={styles.bodyText}>Set your pickup and destination to get an estimated fare before requesting a ride.</Text> : null}
                 <Text style={styles.label}>Pickup location</Text>
                 <TextInput
                   ref={pickupInputRef}
@@ -3659,14 +3660,14 @@ const baseStyles = StyleSheet.create({
   mapBrandText: { color: "#174A72", fontSize: 10, fontWeight: "900", letterSpacing: 1.2 },
   mapHintPill: { position: "absolute", bottom: 13, left: 13, right: 13, backgroundColor: "rgba(255,255,255,0.94)", borderRadius: 12, paddingHorizontal: 13, paddingVertical: 10 },
   mapHintText: { color: "#344054", fontSize: 11, fontWeight: "600", textAlign: "center" },
-  serviceHeading: { marginBottom: 11 },
-  serviceHeadingTitle: { color: "#142B3D", fontSize: 19, fontWeight: "900" },
+  serviceHeading: { marginBottom: 10 },
+  serviceHeadingTitle: { color: "#142B3D", fontSize: 18, fontWeight: "900" },
   serviceHeadingSubtitle: { color: "#8793A2", fontSize: 11, marginTop: 4 },
-  serviceChoices: { flexDirection: "row", gap: 10, marginBottom: 17 },
-  serviceTile: { flex: 1, minHeight: 126, borderRadius: 17, padding: 13, borderWidth: 1, position: "relative" },
+  serviceChoices: { flexDirection: "row", gap: 9, marginBottom: 13 },
+  serviceTile: { flex: 1, minHeight: 108, borderRadius: 15, padding: 12, borderWidth: 1, position: "relative" },
   serviceTileActive: { backgroundColor: "#F0F7FC", borderColor: "#8DBBD8" },
   serviceTileUpcoming: { backgroundColor: "#FFFFFF", borderColor: "#E5EAF0" },
-  serviceEmoji: { fontSize: 23, marginBottom: 8 },
+  serviceEmoji: { fontSize: 21, marginBottom: 6 },
   serviceTitle: { color: "#182230", fontSize: 13, fontWeight: "900" },
   serviceDescription: { color: "#667085", fontSize: 10, marginTop: 4 },
   comingSoon: { color: "#236B9A", fontSize: 8, fontWeight: "900", letterSpacing: 0.8, marginTop: 8 },
@@ -3679,10 +3680,10 @@ const baseStyles = StyleSheet.create({
   tabButtonSelected: { backgroundColor: "#FFFFFF" },
   tabText: { color: "#667085", fontSize: 12, fontWeight: "700" },
   tabTextSelected: { color: "#174A72" },
-  card: { backgroundColor: "#FFFFFF", borderRadius: 18, padding: 17, borderWidth: 1, borderColor: "#E5EAF0", marginBottom: 17 },
-  cardTitle: { color: "#182230", fontSize: 17, fontWeight: "800", marginBottom: 16 },
+  card: { backgroundColor: "#FFFFFF", borderRadius: 16, padding: 15, borderWidth: 1, borderColor: "#E5EAF0", marginBottom: 15 },
+  cardTitle: { color: "#182230", fontSize: 17, fontWeight: "800", marginBottom: 5 },
   label: { color: "#344054", fontSize: 12, fontWeight: "700", marginBottom: 7, marginTop: 10 },
-  addressInput: { minHeight: 48, borderWidth: 1, borderColor: "#DCE3EB", borderRadius: 11, paddingHorizontal: 13, color: "#182230", backgroundColor: "#FBFCFE", fontSize: 13 },
+  addressInput: { minHeight: 50, borderWidth: 1, borderColor: "#DCE3EB", borderRadius: 12, paddingHorizontal: 13, color: "#182230", backgroundColor: "#FBFCFE", fontSize: 14 },
   suggestionList: { backgroundColor: "#FFFFFF", borderWidth: 1, borderColor: "#E5EAF0", borderRadius: 11, marginTop: 5, marginBottom: 5, paddingHorizontal: 11, paddingVertical: 8 },
   suggestionTitleRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   suggestionHeading: { color: "#98A2B3", fontSize: 9, fontWeight: "800", letterSpacing: 1, paddingVertical: 5 },
