@@ -699,7 +699,7 @@ function WelcomeScreen({ onLogin, onRegister }: WelcomeScreenProps) {
 
   return (
     <SafeAreaView style={styles.welcomeScreen}>
-      <StatusBar style="dark" backgroundColor="#F4F8FE" />
+      <StatusBar style="dark" />
       <View pointerEvents="none" style={styles.welcomeGlowTop} />
       <View pointerEvents="none" style={styles.welcomeGlowBottom} />
       <ScrollView
