@@ -30,8 +30,12 @@ const UI_PREFERENCES_KEY = "navigo.uiPreferences";
 // Android uses an OTA-safe raster OpenStreetMap renderer. This avoids
 // mounting the native Google Maps view that is not configured in the installed APK.
 type OsmRegion = { latitude: number; longitude: number; latitudeDelta: number; longitudeDelta: number };
+type NativeRegionChangeHandler = NonNullable<ComponentProps<typeof NativeMapView>["onRegionChangeComplete"]>;
 type OsmMarker = { coordinate?: RouteCoordinate | null; title?: string; pinColor?: string };
-type SafeMapViewProps = ComponentProps<typeof NativeMapView> & {
+type SafeMapViewProps = Omit<ComponentProps<typeof NativeMapView>, "region" | "initialRegion" | "onRegionChangeComplete"> & {
+  region?: OsmRegion;
+  initialRegion?: OsmRegion;
+  onRegionChangeComplete?: NativeRegionChangeHandler;
   routeCoordinates?: RouteCoordinate[] | null;
   markers?: OsmMarker[];
 };
@@ -101,11 +105,11 @@ function OpenStreetMapRasterView({
   regionRef.current = currentRegion;
   const layoutRef = useRef(layout);
   layoutRef.current = layout;
-  const onRegionChangeRef = useRef(onRegionChangeComplete);
+  const onRegionChangeRef = useRef<NativeRegionChangeHandler | undefined>(onRegionChangeComplete);
   onRegionChangeRef.current = onRegionChangeComplete;
   const applyRegionChange = (nextRegion: OsmRegion) => {
     if (!controlledRegionRef.current) setLocalRegion(nextRegion);
-    onRegionChangeRef.current?.(nextRegion);
+    onRegionChangeRef.current?.(nextRegion, { isGesture: true });
   };
   const zoom = osmZoomForRegion(currentRegion, layout.width || 360);
   const zoomRef = useRef(zoom);
@@ -223,6 +227,7 @@ function OpenStreetMapRasterView({
       ))}
       {routePoints.slice(1).map((point, index) => {
         const previous = routePoints[index];
+        if (!previous) return null;
         const dx = point.x - previous.x;
         const dy = point.y - previous.y;
         const length = Math.sqrt(dx * dx + dy * dy);
