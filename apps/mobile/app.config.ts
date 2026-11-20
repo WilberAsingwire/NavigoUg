@@ -8,11 +8,6 @@ const config: ExpoConfig = {
   scheme: "navigo",
   version: "1.0.0",
   icon: "./assets/icon.png",
-  splash: {
-    image: "./assets/icon.png",
-    resizeMode: "contain",
-    backgroundColor: "#EDF6FF"
-  },
   runtimeVersion: {
     policy: "appVersion"
   },
@@ -48,7 +43,16 @@ const config: ExpoConfig = {
       }
     ],
     "expo-notifications",
-    "expo-secure-store"
+    "expo-secure-store",
+    [
+      "expo-splash-screen",
+      {
+        image: "./assets/icon.png",
+        imageWidth: 112,
+        resizeMode: "contain",
+        backgroundColor: "#EDF6FF"
+      }
+    ]
   ],
   extra: {
     eas: {
