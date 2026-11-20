@@ -1851,7 +1851,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                     pinColor="#C54848"
                   />
                 ) : null}
-              </MapView>
+              </SafeMapView>
               <View style={styles.mapBrandPill}>
                 <Text style={styles.mapBrandText}>NAVIGO  •  ARUA</Text>
               </View>
@@ -1950,7 +1950,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                             <Polyline coordinates={parcelQuote.routeCoordinates} strokeColor="#1F76A8" strokeWidth={5} />
                             <Marker coordinate={parcelLocations.pickup} title="Pickup" pinColor="#21865B" />
                             <Marker coordinate={parcelLocations.destination} title="Delivery" pinColor="#C54848" />
-                          </MapView>
+                          </SafeMapView>
                         </View>
                         <View style={styles.quoteCard}>
                           <Text style={styles.quoteLabel}>ITEM DELIVERY FEE</Text>
@@ -2070,7 +2070,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                         />
                         <Marker coordinate={locations.pickup} title="Pickup" pinColor="#21865B" />
                         <Marker coordinate={locations.destination} title="Destination" pinColor="#C54848" />
-                      </MapView>
+                      </SafeMapView>
                     </View>
                     {quote.routingProvider === "VALHALLA_MOTORCYCLE" ? (
                       <Text style={styles.attributionText}>Road route data © OpenStreetMap contributors</Text>
@@ -2210,7 +2210,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                     {!riderOnline && riderDeviceLocation ? <Marker coordinate={riderDeviceLocation} title="Your current location" pinColor="#236B9A" /> : null}
                     {riderMapPickup ? <Marker coordinate={riderMapPickup} title="Accepted job pickup" description="Shown after this job is assigned to you" pinColor="#21865B" /> : null}
                     {riderMapDestination ? <Marker coordinate={riderMapDestination} title="Accepted job destination" description="Shown after this job is assigned to you" pinColor="#C54848" /> : null}
-                  </MapView>
+                  </SafeMapView>
                   <View style={styles.mapBrandPill}><Text style={styles.mapBrandText}>NAVIGO • RIDER MAP</Text></View>
                   <TouchableOpacity
                     accessibilityRole="button"
@@ -3468,7 +3468,7 @@ function CustomerParcelCard({
               {tracking.rider ? (
                 <Marker coordinate={tracking.rider} title="Rider's latest location" description="Last reported GPS position" pinColor="#236B9A" />
               ) : null}
-            </MapView>
+            </SafeMapView>
           </View>
           <Text style={styles.trackingStatusText}>
             {tracking.rider
