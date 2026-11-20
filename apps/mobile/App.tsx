@@ -578,7 +578,7 @@ function BrandSplash() {
         height="100%"
         viewBox="0 0 390 844"
         preserveAspectRatio="xMidYMid slice"
-        style={StyleSheet.absoluteFillObject}
+        style={StyleSheet.absoluteFill}
       >
         <Defs>
           <LinearGradient id="navigoSky" x1="0%" y1="0%" x2="0%" y2="100%">
