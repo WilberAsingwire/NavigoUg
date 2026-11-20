@@ -91,6 +91,7 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [restoring, setRestoring] = useState(true);
   const [introComplete, setIntroComplete] = useState(false);
+  const [welcomeComplete, setWelcomeComplete] = useState(false);
   const [error, setError] = useState("");
   const [session, setSession] = useState<Session | null>(null);
   const [pushNotificationsEnabled, setPushNotificationsEnabled] = useState(false);
@@ -386,6 +387,7 @@ export default function App() {
       setSession(null);
       setMode("login");
       setRole("CUSTOMER");
+      setWelcomeComplete(false);
       setBusy(false);
     }
   }
@@ -409,6 +411,25 @@ export default function App() {
     );
   }
 
+  if (!welcomeComplete) {
+    return (
+      <WelcomeScreen
+        onLogin={() => {
+          setMode("login");
+          setError("");
+          setShowPassword(false);
+          setWelcomeComplete(true);
+        }}
+        onRegister={() => {
+          setMode("register");
+          setError("");
+          setShowPassword(false);
+          setWelcomeComplete(true);
+        }}
+      />
+    );
+  }
+
   return (
     <SafeAreaView style={styles.safeArea}>
       <StatusBar style="dark" />
@@ -422,6 +443,17 @@ export default function App() {
           showsVerticalScrollIndicator={false}
         >
           <Brand />
+          <TouchableOpacity
+            accessibilityRole="button"
+            style={styles.backToWelcome}
+            onPress={() => {
+              setWelcomeComplete(false);
+              setError("");
+              setShowPassword(false);
+            }}
+          >
+            <Text style={styles.backToWelcomeText}>‹  Back to welcome</Text>
+          </TouchableOpacity>
           <View style={styles.headingBlock}>
             <Text style={styles.eyebrow}>WELCOME TO NAVIGO</Text>
             <Text style={styles.heading}>
@@ -641,6 +673,136 @@ function BrandSplash({ onComplete }: { onComplete: () => void }) {
   );
 }
 
+type WelcomeScreenProps = {
+  onLogin: () => void;
+  onRegister: () => void;
+};
+
+function WelcomeScreen({ onLogin, onRegister }: WelcomeScreenProps) {
+  const contentOpacity = useRef(new Animated.Value(0)).current;
+  const contentY = useRef(new Animated.Value(24)).current;
+  const cardsOpacity = useRef(new Animated.Value(0)).current;
+  const onLoginRef = useRef(onLogin);
+  const onRegisterRef = useRef(onRegister);
+  onLoginRef.current = onLogin;
+  onRegisterRef.current = onRegister;
+
+  useEffect(() => {
+    Animated.sequence([
+      Animated.parallel([
+        Animated.timing(contentOpacity, { toValue: 1, duration: 520, useNativeDriver: true }),
+        Animated.timing(contentY, { toValue: 0, duration: 620, easing: Easing.out(Easing.cubic), useNativeDriver: true })
+      ]),
+      Animated.timing(cardsOpacity, { toValue: 1, duration: 420, useNativeDriver: true })
+    ]).start();
+  }, [contentOpacity, contentY, cardsOpacity]);
+
+  return (
+    <SafeAreaView style={styles.welcomeScreen}>
+      <StatusBar style="dark" backgroundColor="#F4F8FE" />
+      <View pointerEvents="none" style={styles.welcomeGlowTop} />
+      <View pointerEvents="none" style={styles.welcomeGlowBottom} />
+      <ScrollView
+        contentContainerStyle={styles.welcomePage}
+        showsVerticalScrollIndicator={false}
+        bounces={false}
+      >
+        <View style={styles.welcomeHeader}>
+          <View style={styles.welcomeBrand}>
+            <Image source={require("./assets/icon.png")} style={styles.welcomeLogo} resizeMode="contain" />
+            <View>
+              <Text style={styles.welcomeBrandName}>NAVIGO</Text>
+              <Text style={styles.welcomeBrandTagline}>Ride • Deliver • Move</Text>
+            </View>
+          </View>
+          <View style={styles.welcomeLocationPill}>
+            <View style={styles.welcomeLocationDot} />
+            <Text style={styles.welcomeLocationText}>ARUA</Text>
+          </View>
+        </View>
+
+        <Animated.View
+          style={[
+            styles.welcomeHero,
+            { opacity: contentOpacity, transform: [{ translateY: contentY }] }
+          ]}
+        >
+          <View pointerEvents="none" style={styles.welcomeHeroOrbLarge} />
+          <View pointerEvents="none" style={styles.welcomeHeroOrbSmall} />
+          <Text style={styles.welcomeEyebrow}>YOUR CITY, CONNECTED</Text>
+          <Text style={styles.welcomeHeadline}>Move around.{"
+"}Send with ease.</Text>
+          <Text style={styles.welcomeDescription}>
+            Book a motorcycle ride or get your ready parcel collected and delivered — all in one place.
+          </Text>
+          <View style={styles.welcomeHeroBottom}>
+            <View style={styles.welcomeHeroBadge}>
+              <Text style={styles.welcomeHeroBadgeIcon}>N</Text>
+            </View>
+            <View style={styles.welcomeHeroBottomText}>
+              <Text style={styles.welcomeHeroBottomTitle}>Everyday journeys, made simpler</Text>
+              <Text style={styles.welcomeHeroBottomSubtitle}>A smarter way to move in Arua</Text>
+            </View>
+            <View style={styles.welcomeHeroArrow}>
+              <Text style={styles.welcomeHeroArrowText}>↗</Text>
+            </View>
+          </View>
+        </Animated.View>
+
+        <Animated.View style={{ opacity: cardsOpacity }}>
+          <Text style={styles.welcomeSectionLabel}>WHAT YOU CAN DO WITH NAVIGO</Text>
+          <View style={styles.welcomeServices}>
+            <View style={styles.welcomeServiceCard}>
+              <View style={styles.welcomeServiceIconRide}>
+                <Text style={styles.welcomeServiceEmoji}>🏍️</Text>
+              </View>
+              <Text style={styles.welcomeServiceTitle}>Book a ride</Text>
+              <Text style={styles.welcomeServiceDescription}>Get where you need to go with a nearby rider.</Text>
+            </View>
+            <View style={styles.welcomeServiceCard}>
+              <View style={styles.welcomeServiceIconParcel}>
+                <Text style={styles.welcomeServiceEmoji}>📦</Text>
+              </View>
+              <Text style={styles.welcomeServiceTitle}>Send a parcel</Text>
+              <Text style={styles.welcomeServiceDescription}>Have a ready package collected and delivered.</Text>
+            </View>
+          </View>
+        </Animated.View>
+
+        <View style={styles.welcomeActions}>
+          <TouchableOpacity
+            accessibilityRole="button"
+            accessibilityLabel="Create a NAVIGO account"
+            style={styles.welcomeCreateButton}
+            onPress={() => onRegisterRef.current()}
+            activeOpacity={0.88}
+          >
+            <Text style={styles.welcomeCreateButtonText}>Create your account</Text>
+            <View style={styles.welcomeButtonArrow}>
+              <Text style={styles.welcomeButtonArrowText}>→</Text>
+            </View>
+          </TouchableOpacity>
+          <TouchableOpacity
+            accessibilityRole="button"
+            accessibilityLabel="Log in to NAVIGO"
+            style={styles.welcomeLoginButton}
+            onPress={() => onLoginRef.current()}
+            activeOpacity={0.86}
+          >
+            <Text style={styles.welcomeLoginButtonText}>I already have an account</Text>
+          </TouchableOpacity>
+        </View>
+
+        <View style={styles.welcomeFooter}>
+          <Text style={styles.welcomeFooterText}>MADE FOR ARUA</Text>
+          <View style={styles.welcomeFooterDivider} />
+          <Text style={styles.welcomeFooterText}>UGANDA</Text>
+        </View>
+      </ScrollView>
+    </SafeAreaView>
+  );
+}
+
 function Brand() {
   return (
     <View style={styles.brand}>
@@ -720,11 +882,53 @@ const styles = StyleSheet.create({
   splashFooter: { position: "absolute", bottom: 42, flexDirection: "row", alignItems: "center", gap: 8 },
   splashFooterDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: "#F2A900" },
   splashFooterText: { color: "#6680A2", fontSize: 10, fontWeight: "800", letterSpacing: 2.1 },
-  splashBrand: { position: "absolute", top: "16%", left: 0, right: 0, alignItems: "center" },
-  splashLogoImage: { width: 140, height: 140, borderRadius: 70, marginBottom: 0 },
-  splashWordmark: { color: "#0B2E6B", fontSize: 35, fontWeight: "900", fontStyle: "italic", letterSpacing: 1.2, marginTop: 85 },
-  splashTagline: { color: "#0B2E6B", fontSize: 14, fontWeight: "700", fontStyle: "italic", marginTop: 1 },
   brandLogo: { width: 58, height: 58, borderRadius: 16, marginBottom: 7 },
+  welcomeScreen: { flex: 1, backgroundColor: "#F4F8FE", overflow: "hidden" },
+  welcomeGlowTop: { position: "absolute", width: 300, height: 300, borderRadius: 150, backgroundColor: "#E6F0FF", top: -185, right: -125 },
+  welcomeGlowBottom: { position: "absolute", width: 270, height: 270, borderRadius: 135, backgroundColor: "#EAF2FC", bottom: -175, left: -140 },
+  welcomePage: { flexGrow: 1, paddingHorizontal: 22, paddingTop: 12, paddingBottom: 24 },
+  welcomeHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 25 },
+  welcomeBrand: { flexDirection: "row", alignItems: "center", gap: 11 },
+  welcomeLogo: { width: 48, height: 48, borderRadius: 15 },
+  welcomeBrandName: { color: "#0B2E6B", fontSize: 19, fontWeight: "900", letterSpacing: 1.3 },
+  welcomeBrandTagline: { color: "#6680A2", fontSize: 10, fontWeight: "600", marginTop: 1 },
+  welcomeLocationPill: { flexDirection: "row", alignItems: "center", gap: 6, backgroundColor: "#E7F0FD", borderRadius: 20, paddingHorizontal: 12, paddingVertical: 8 },
+  welcomeLocationDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: "#E9A400" },
+  welcomeLocationText: { color: "#244D7C", fontSize: 10, fontWeight: "900", letterSpacing: 1.1 },
+  welcomeHero: { backgroundColor: "#0B2E6B", borderRadius: 28, padding: 22, overflow: "hidden", minHeight: 272, justifyContent: "space-between", shadowColor: "#0B2E6B", shadowOffset: { width: 0, height: 12 }, shadowOpacity: 0.16, shadowRadius: 20, elevation: 7 },
+  welcomeHeroOrbLarge: { position: "absolute", width: 230, height: 230, borderRadius: 115, backgroundColor: "#174A92", top: -110, right: -90 },
+  welcomeHeroOrbSmall: { position: "absolute", width: 130, height: 130, borderRadius: 65, borderWidth: 1, borderColor: "#416BA5", bottom: -78, right: 35 },
+  welcomeEyebrow: { color: "#F4BD41", fontSize: 10, fontWeight: "900", letterSpacing: 2 },
+  welcomeHeadline: { color: "#FFFFFF", fontSize: 34, lineHeight: 40, fontWeight: "900", letterSpacing: -0.8, marginTop: 17 },
+  welcomeDescription: { color: "#D5E4F8", fontSize: 13, lineHeight: 20, marginTop: 12, maxWidth: 295 },
+  welcomeHeroBottom: { flexDirection: "row", alignItems: "center", marginTop: 23 },
+  welcomeHeroBadge: { width: 36, height: 36, borderRadius: 12, backgroundColor: "#F2B632", alignItems: "center", justifyContent: "center" },
+  welcomeHeroBadgeIcon: { color: "#0B2E6B", fontSize: 20, fontWeight: "900", fontStyle: "italic" },
+  welcomeHeroBottomText: { flex: 1, marginLeft: 10 },
+  welcomeHeroBottomTitle: { color: "#FFFFFF", fontSize: 11, fontWeight: "800" },
+  welcomeHeroBottomSubtitle: { color: "#AFC8E8", fontSize: 10, marginTop: 3 },
+  welcomeHeroArrow: { width: 30, height: 30, borderRadius: 15, backgroundColor: "#244D83", alignItems: "center", justifyContent: "center" },
+  welcomeHeroArrowText: { color: "#FFFFFF", fontSize: 18, fontWeight: "700", marginTop: -2 },
+  welcomeSectionLabel: { color: "#6B82A0", fontSize: 10, fontWeight: "900", letterSpacing: 1.4, marginTop: 25, marginBottom: 12 },
+  welcomeServices: { flexDirection: "row", gap: 11 },
+  welcomeServiceCard: { flex: 1, minHeight: 145, backgroundColor: "#FFFFFF", borderRadius: 20, padding: 14, borderWidth: 1, borderColor: "#E5EDF7", shadowColor: "#163A69", shadowOffset: { width: 0, height: 5 }, shadowOpacity: 0.04, shadowRadius: 10, elevation: 2 },
+  welcomeServiceIconRide: { width: 42, height: 42, borderRadius: 14, backgroundColor: "#E9F2FF", alignItems: "center", justifyContent: "center", marginBottom: 12 },
+  welcomeServiceIconParcel: { width: 42, height: 42, borderRadius: 14, backgroundColor: "#FFF3D7", alignItems: "center", justifyContent: "center", marginBottom: 12 },
+  welcomeServiceEmoji: { fontSize: 21 },
+  welcomeServiceTitle: { color: "#15345F", fontSize: 13, fontWeight: "900" },
+  welcomeServiceDescription: { color: "#718096", fontSize: 10, lineHeight: 15, marginTop: 5 },
+  welcomeActions: { marginTop: 22, gap: 10 },
+  welcomeCreateButton: { minHeight: 56, borderRadius: 17, backgroundColor: "#F2B632", flexDirection: "row", alignItems: "center", justifyContent: "center", paddingHorizontal: 15, shadowColor: "#A97910", shadowOffset: { width: 0, height: 5 }, shadowOpacity: 0.15, shadowRadius: 9, elevation: 3 },
+  welcomeCreateButtonText: { color: "#0B2E6B", fontSize: 14, fontWeight: "900" },
+  welcomeButtonArrow: { position: "absolute", right: 13, width: 32, height: 32, borderRadius: 11, backgroundColor: "#FFFFFF", alignItems: "center", justifyContent: "center" },
+  welcomeButtonArrowText: { color: "#0B2E6B", fontSize: 20, fontWeight: "700", marginTop: -2 },
+  welcomeLoginButton: { minHeight: 53, borderRadius: 17, borderWidth: 1.5, borderColor: "#C9D8EC", backgroundColor: "#FFFFFF", alignItems: "center", justifyContent: "center" },
+  welcomeLoginButtonText: { color: "#173D70", fontSize: 13, fontWeight: "800" },
+  welcomeFooter: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 11, marginTop: 23 },
+  welcomeFooterText: { color: "#91A4BD", fontSize: 9, fontWeight: "900", letterSpacing: 1.7 },
+  welcomeFooterDivider: { height: 12, width: 1, backgroundColor: "#CBD9EB" },
+  backToWelcome: { alignSelf: "flex-start", marginTop: -11, marginBottom: 15, paddingVertical: 5, paddingHorizontal: 2 },
+  backToWelcomeText: { color: "#2B719F", fontSize: 12, fontWeight: "700" },
   safeArea: { flex: 1, backgroundColor: "#F3F6FA" },
   flex: { flex: 1 },
   authPage: { flexGrow: 1, paddingHorizontal: 20, paddingTop: 25, paddingBottom: 28 },
