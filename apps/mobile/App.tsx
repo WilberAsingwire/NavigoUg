@@ -730,8 +730,7 @@ function WelcomeScreen({ onLogin, onRegister }: WelcomeScreenProps) {
           <View pointerEvents="none" style={styles.welcomeHeroOrbLarge} />
           <View pointerEvents="none" style={styles.welcomeHeroOrbSmall} />
           <Text style={styles.welcomeEyebrow}>YOUR CITY, CONNECTED</Text>
-          <Text style={styles.welcomeHeadline}>Move around.{"
-"}Send with ease.</Text>
+          <Text style={styles.welcomeHeadline}>Move around.{"\n"}Send with ease.</Text>
           <Text style={styles.welcomeDescription}>
             Book a motorcycle ride or get your ready parcel collected and delivered — all in one place.
           </Text>
