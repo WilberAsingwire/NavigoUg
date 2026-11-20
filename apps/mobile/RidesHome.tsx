@@ -1113,6 +1113,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
   const [sentParcels, setSentParcels] = useState<RiderParcel[]>([]);
   const hasActiveCustomerRides = isCustomer && rides.some((ride) => !["COMPLETED", "CANCELLED", "EXPIRED"].includes(ride.status));
   const activeRiderRide = rides.find((ride) => ["ACCEPTED", "ARRIVED_AT_PICKUP", "IN_PROGRESS"].includes(ride.status));
+  const activeRiderRideNextStatus = activeRiderRide ? NEXT_RIDER_STATUS[activeRiderRide.status] : undefined;
   const activeRiderParcel = assignedParcels.find((parcel) => ["ACCEPTED", "ARRIVED_AT_PICKUP", "COLLECTED", "IN_TRANSIT", "ARRIVED_AT_DESTINATION"].includes(parcel.status));
   const riderMapPickup = activeRiderRide
     ? coordinateFromValues(activeRiderRide.pickupLatitude, activeRiderRide.pickupLongitude)
@@ -2613,8 +2614,8 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                       ride={activeRiderRide}
                       busy={working}
                       riderView
-                      onAdvance={NEXT_RIDER_STATUS[activeRiderRide.status]
-                        ? () => performRideAction(activeRiderRide.id, NEXT_RIDER_STATUS[activeRiderRide.status])
+                      onAdvance={activeRiderRideNextStatus
+                        ? () => performRideAction(activeRiderRide.id, activeRiderRideNextStatus)
                         : undefined}
                     />
                   </View>
