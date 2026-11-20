@@ -234,7 +234,7 @@ const welcomeStyles = StyleSheet.create({
   serviceEmoji: { fontSize: 17 },
   serviceTitle: { color: "#263E50", fontSize: 12, fontWeight: "900" },
   serviceDescription: { color: "#71818E", fontSize: 10, lineHeight: 15, marginTop: 5 },
-  actions: { marginTop: "auto" as never },
+  actions: { marginTop: 0 },
   primaryButton: { minHeight: 54, backgroundColor: "#174A72", borderRadius: 14, flexDirection: "row", alignItems: "center", justifyContent: "center", paddingHorizontal: 18, shadowColor: "#174A72", shadowOffset: { width: 0, height: 5 }, shadowOpacity: 0.15, shadowRadius: 9, elevation: 3 },
   primaryButtonText: { color: "#FFFFFF", fontSize: 14, fontWeight: "900", letterSpacing: 0.2 },
   primaryButtonArrow: { position: "absolute", right: 19, color: "#FFFFFF", fontSize: 20, fontWeight: "700" },
