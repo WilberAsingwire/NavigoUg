@@ -489,6 +489,9 @@ type Ride = {
   pickupLongitude?: number | string;
   destinationLatitude?: number | string;
   destinationLongitude?: number | string;
+  routeCoordinates?: RouteCoordinate[] | null;
+  estimatedDurationSeconds?: number | null;
+  routingProvider?: "GOOGLE_TWO_WHEELER" | "VALHALLA_MOTORCYCLE" | null;
   riderArrivalEstimateMinutes?: number | null;
   riderArrivalEstimateUpdatedAt?: string | null;
   customer?: { fullName: string } | null;
@@ -527,6 +530,25 @@ function coordinateFromValues(latitude: number | string | undefined, longitude: 
   const parsedLongitude = Number(longitude);
   if (!Number.isFinite(parsedLatitude) || !Number.isFinite(parsedLongitude) || parsedLatitude < -90 || parsedLatitude > 90 || parsedLongitude < -180 || parsedLongitude > 180) return null;
   return { latitude: parsedLatitude, longitude: parsedLongitude };
+}
+
+function routeCoordinatesFromUnknown(value: unknown): RouteCoordinate[] | null {
+  if (!Array.isArray(value) || value.length < 2 || value.length > 500) return null;
+  const coordinates: RouteCoordinate[] = [];
+  for (const point of value) {
+    if (typeof point !== "object" || point === null || Array.isArray(point)) return null;
+    const candidate = point as { latitude?: unknown; longitude?: unknown };
+    const latitude = Number(candidate.latitude);
+    const longitude = Number(candidate.longitude);
+    if (
+      !Number.isFinite(latitude) ||
+      !Number.isFinite(longitude) ||
+      latitude < -90 || latitude > 90 ||
+      longitude < -180 || longitude > 180
+    ) return null;
+    coordinates.push({ latitude, longitude });
+  }
+  return coordinates;
 }
 
 function routeMapRegion(coordinates: RouteCoordinate[], bottomSheetInset = 0) {
@@ -1101,6 +1123,17 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
     : activeRiderParcel
       ? coordinateFromValues(activeRiderParcel.destinationLatitude, activeRiderParcel.destinationLongitude)
       : null;
+  // New ride requests carry the exact motorcycle route used for the customer's
+  // quote. Older rides have no historical snapshot, so we show their endpoints
+  // without drawing a misleading straight-line "road route".
+  const riderMapStoredRoute = activeRiderRide
+    ? routeCoordinatesFromUnknown(activeRiderRide.routeCoordinates)
+    : null;
+  const riderMapRouteCoordinates = activeRiderRide
+    ? riderMapStoredRoute
+    : riderMapPickup && riderMapDestination
+      ? [riderMapPickup, riderMapDestination]
+      : null;
   const riderMapJobKey = activeRiderRide?.id ?? activeRiderParcel?.id ?? null;
   const riderMapNavigationTarget = activeRiderRide
     ? activeRiderRide.status === "ACCEPTED" ? riderMapPickup : riderMapDestination
@@ -1264,8 +1297,8 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
 
   useEffect(() => {
     if (!isApprovedRider || mainTab !== "home" || !riderMapPickup || !riderMapDestination) return;
-    setMapRegion(routeMapRegion([riderMapPickup, riderMapDestination]));
-  }, [isApprovedRider, mainTab, riderMapJobKey, riderMapPickup?.latitude, riderMapPickup?.longitude, riderMapDestination?.latitude, riderMapDestination?.longitude]);
+    setMapRegion(routeMapRegion(riderMapStoredRoute ?? [riderMapPickup, riderMapDestination]));
+  }, [isApprovedRider, mainTab, riderMapJobKey, riderMapPickup?.latitude, riderMapPickup?.longitude, riderMapDestination?.latitude, riderMapDestination?.longitude, activeRiderRide?.routeCoordinates]);
 
   const loadDashboard = useCallback(async () => {
     setLoading(true);
@@ -2484,7 +2517,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                     style={styles.customerMap}
                     region={mapRegion}
                     onRegionChangeComplete={setMapRegion}
-                    routeCoordinates={riderMapPickup && riderMapDestination ? [riderMapPickup, riderMapDestination] : undefined}
+                    routeCoordinates={riderMapRouteCoordinates}
                     markers={[{ coordinate: riderDeviceLocation, title: "You", pinColor: "#236B9A" }, { coordinate: riderMapPickup, title: "Pickup", pinColor: "#21865B" }, { coordinate: riderMapDestination, title: "Destination", pinColor: "#C54848" }]}
                     onInteractionStart={() => setMapGestureActive(true)}
                     onInteractionEnd={() => setMapGestureActive(false)}
@@ -2510,11 +2543,20 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                     showsMyLocationButton={false}
                     toolbarEnabled={false}
                   >
+                    {riderMapRouteCoordinates && riderMapRouteCoordinates.length >= 2
+                      ? <Polyline coordinates={riderMapRouteCoordinates} strokeColor="#1F76A8" strokeWidth={5} />
+                      : null}
                     {!riderOnline && riderDeviceLocation ? <Marker coordinate={riderDeviceLocation} title="Your current location" pinColor="#236B9A" /> : null}
                     {riderMapPickup ? <Marker coordinate={riderMapPickup} title="Accepted job pickup" description="Shown after this job is assigned to you" pinColor="#21865B" /> : null}
                     {riderMapDestination ? <Marker coordinate={riderMapDestination} title="Accepted job destination" description="Shown after this job is assigned to you" pinColor="#C54848" /> : null}
                   </SafeMapView>
-                  <View style={styles.mapBrandPill}><Text style={styles.mapBrandText}>NAVIGO • RIDER MAP</Text></View>
+                  <View style={styles.mapBrandPill}>
+                    <Text style={styles.mapBrandText}>
+                      {activeRiderRide
+                        ? riderMapStoredRoute ? "NAVIGO • SAVED MOTORCYCLE ROUTE" : "NAVIGO • OLDER RIDE · ROUTE NOT SAVED"
+                        : "NAVIGO • RIDER MAP"}
+                    </Text>
+                  </View>
                   <TouchableOpacity
                     accessibilityRole="button"
                     accessibilityLabel="Center rider map on current location"
