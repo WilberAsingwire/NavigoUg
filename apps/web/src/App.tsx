@@ -1,0 +1,57 @@
+import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from "react";
+
+const API=(import.meta.env.VITE_API_BASE_URL||"https://navigou-api-2978.onrender.com").replace(/\/$/,"");
+type Role="CUSTOMER"|"RIDER"|"ADMIN";
+type User={id:string;fullName:string;phone:string;email?:string|null;role:Role;riderApprovalStatus?:string|null};
+type Session={accessToken:string;refreshToken:string;tokenType:"Bearer";expiresIn:number;user:User};
+type Item={id?:string;status?:string;approvalStatus?:string;fullName?:string;phone?:string;pickupDescription?:string;destinationDescription?:string;recipientName?:string;createdAt?:string;[key:string]:unknown};
+const KEY="navigo.web.session";
+
+async function api<T>(path:string,token?:string,init:RequestInit={}):Promise<T>{
+ const res=await fetch(API+path,{...init,headers:{"Content-Type":"application/json",...(token?{Authorization:"Bearer "+token}:{}),...init.headers}});
+ const data=res.status===204?null:await res.json().catch(()=>null);
+ if(!res.ok) throw new Error((data as {error?:{message?:string}}|null)?.error?.message||"Request failed ("+res.status+")");
+ return data as T;
+}
+function App(){
+ const [session,setSession]=useState<Session|null>(()=>{try{return JSON.parse(localStorage.getItem(KEY)||"null") as Session|null}catch{return null}});
+ const [mode,setMode]=useState<"login"|"register">("login"),[role,setRole]=useState<"CUSTOMER"|"RIDER">("CUSTOMER");
+ const [name,setName]=useState(""),[phone,setPhone]=useState(""),[email,setEmail]=useState(""),[password,setPassword]=useState("");
+ const [licence,setLicence]=useState(""),[plate,setPlate]=useState(""),[bike,setBike]=useState("");
+ const [busy,setBusy]=useState(false),[error,setError]=useState("");
+ const save=(s:Session|null)=>{setSession(s);if(s)localStorage.setItem(KEY,JSON.stringify(s));else localStorage.removeItem(KEY)};
+ const submit=async(e:FormEvent)=>{e.preventDefault();setBusy(true);setError("");try{
+  const path=mode==="login"?"/api/v1/auth/login":role==="RIDER"?"/api/v1/auth/register/rider":"/api/v1/auth/register/customer";
+  const body=mode==="login"?{phone:phone.trim(),password}:{fullName:name.trim(),phone:phone.trim(),...(email.trim()?{email:email.trim()}:{}),password,...(role==="RIDER"?{licenceNumber:licence.trim(),motorcyclePlate:plate.trim(),motorcycleDescription:bike.trim()}:{})};
+  const result=await api<{data:Session}>(path,undefined,{method:"POST",body:JSON.stringify(body)});save(result.data);setPassword("");
+ }catch(err){setError(err instanceof Error?err.message:"Unable to complete sign in.")}finally{setBusy(false)}};
+ const logout=async()=>{if(!session)return;try{await api("/api/v1/auth/logout",session.accessToken,{method:"POST",body:JSON.stringify({refreshToken:session.refreshToken})})}catch{}save(null)};
+ if(!session)return <main className="auth"><section className="brand"><div className="mark">N</div><small>ARUA • MUNI UNIVERSITY PILOT</small><h1>Move what<br/><i>matters.</i></h1><p>Motorcycle rides and ready-parcel delivery, connected in one place.</p><div className="feature"><b>01</b><span><strong>Motorcycle rides</strong><small>Request a ride across Arua.</small></span></div><div className="feature"><b>02</b><span><strong>Ready-parcel delivery</strong><small>Send items with verified handovers.</small></span></div><footer>NAVIGO • Built for movement</footer></section>
+ <section className="auth-panel"><div className="auth-card"><div className="eyebrow">{mode==="login"?"WELCOME BACK":"GET STARTED"}</div><h2>{mode==="login"?"Sign in to NAVIGO":"Create your account"}</h2><p className="muted">{mode==="login"?"Use your registered phone number and password.":"Create an account to access NAVIGO services."}</p>
+ <form onSubmit={submit}>{mode==="register"&&<><label>Full name<input value={name} onChange={e=>setName(e.target.value)} required minLength={2}/></label><label>Account type<select value={role} onChange={e=>setRole(e.target.value as "CUSTOMER"|"RIDER")}><option value="CUSTOMER">Customer</option><option value="RIDER">Rider</option></select></label><label>Email (optional)<input type="email" value={email} onChange={e=>setEmail(e.target.value)}/></label>{role==="RIDER"&&<><label>Licence number<input value={licence} onChange={e=>setLicence(e.target.value)} required/></label><label>Motorcycle plate<input value={plate} onChange={e=>setPlate(e.target.value)} required/></label><label>Motorcycle description<input value={bike} onChange={e=>setBike(e.target.value)} required/></label></>}</>}
+ <label>Phone number<input value={phone} onChange={e=>setPhone(e.target.value)} required minLength={7} autoComplete="tel"/></label><label>Password<input type="password" value={password} onChange={e=>setPassword(e.target.value)} required minLength={8} autoComplete={mode==="login"?"current-password":"new-password"}/></label>
+ {error&&<div className="error" role="alert">{error}</div>}<button className="primary" disabled={busy}>{busy?"Please wait…":mode==="login"?"Sign in":"Create account"} <span>→</span></button></form>
+ <p className="switch">{mode==="login"?"New to NAVIGO?":"Already have an account?"} <button onClick={()=>{setMode(mode==="login"?"register":"login");setError("")}}>{mode==="login"?"Create account":"Sign in"}</button></p><div className="role-note">Customer • Rider • Administrator</div></div></section></main>;
+ return <Portal session={session} logout={logout}/>;
+}
+function Portal({session,logout}:{session:Session;logout:()=>void}){
+ const [rides,setRides]=useState<Item[]>([]),[parcels,setParcels]=useState<Item[]>([]),[riders,setRiders]=useState<Item[]>([]);
+ const [tab,setTab]=useState("overview"),[filter,setFilter]=useState("PENDING"),[loading,setLoading]=useState(true),[error,setError]=useState(""),[busy,setBusy]=useState("");
+ const load=useCallback(async()=>{setLoading(true);setError("");try{
+  if(session.user.role==="ADMIN"){const r=await api<{data:Item[]}>("/api/v1/admin/riders?status="+filter,session.accessToken);setRiders(r.data)}
+  else if(session.user.role==="CUSTOMER"){const [r,p]=await Promise.all([api<{data:Item[]}>("/api/v1/rides/mine",session.accessToken),api<{data:Item[]}>("/api/v1/parcels/mine",session.accessToken)]);setRides(r.data);setParcels(p.data)}
+  else{const [r,p]=await Promise.all([api<{data:Item[]}>("/api/v1/rides/available",session.accessToken),api<{data:Item[]}>("/api/v1/parcels/available",session.accessToken)]);setRides(r.data);setParcels(p.data)}
+ }catch(e){setError(e instanceof Error?e.message:"Unable to load data.")}finally{setLoading(false)}},[session,filter]);
+ useEffect(()=>{void load()},[load]);
+ const act=async(path:string,method:string,body?:unknown)=>{setBusy(path);setError("");try{await api(path,session.accessToken,{method,...(body?{body:JSON.stringify(body)}:{})});await load()}catch(e){setError(e instanceof Error?e.message:"Action failed.")}finally{setBusy("")}};
+ const admin=session.user.role==="ADMIN",rider=session.user.role==="RIDER",label=admin?"Administrator":rider?"Rider":"Customer";
+ const row=(item:Item,kind:"ride"|"parcel"|"rider")=><article className="record" key={String(item.id)}><div className="record-icon">{kind==="parcel"?"▣":kind==="rider"?"♙":"↗"}</div><div className="record-text"><b>{kind==="rider"?(item.fullName||"Rider application"):String(item.pickupDescription||item.recipientName||kind.toUpperCase()+" request")}</b><small>{kind==="rider"?String(item.phone||""):String(item.destinationDescription||item.parcelDescription||item.createdAt||"Request information")}</small></div><div className="actions">{kind==="rider"?<><span className="status">{String(item.approvalStatus||"PENDING")}</span>{item.approvalStatus==="PENDING"&&<><button disabled={!!busy} onClick={()=>void act("/api/v1/admin/riders/"+item.id+"/approval","PATCH",{approvalStatus:"APPROVED"})}>Approve</button><button className="danger" disabled={!!busy} onClick={()=>void act("/api/v1/admin/riders/"+item.id+"/approval","PATCH",{approvalStatus:"REJECTED"})}>Reject</button></>}</>:rider?<button disabled={!!busy||session.user.riderApprovalStatus!=="APPROVED"} onClick={()=>void act("/api/v1/"+(kind==="ride"?"rides":"parcels")+"/"+item.id+"/accept","POST")}>{busy.endsWith(String(item.id))?"Working…":"Accept "+kind}</button>:<span className="status">{String(item.status||"PENDING").replaceAll("_"," ")}</span>}</div></article>;
+ const list=(items:Item[],kind:"ride"|"parcel"|"rider",empty:string)=><section className="panel"><div className="panel-title"><div><h2>{kind==="rider"?"Rider applications":kind==="ride"?(rider?"Available rides":"Ride activity"):(rider?"Available parcels":"Parcel activity")}</h2><p>{empty}</p></div>{kind==="rider"&&<select value={filter} onChange={e=>setFilter(e.target.value)}><option>PENDING</option><option>APPROVED</option><option>REJECTED</option><option>SUSPENDED</option><option>ALL</option></select>}</div>{loading?<div className="empty">Loading records…</div>:!items.length?<div className="empty">Nothing to display yet.</div>:items.map(i=>row(i,kind))}</section>;
+ return <div className="portal"><aside className="sidebar"><div className="side-logo"><div className="mark small">N</div><b>NAVIGO</b></div><small className="nav-caption">WORKSPACE</small>{["overview","rides","parcels",...(admin?["riders"]:[])].map(t=><button className={tab===t?"nav active":"nav"} onClick={()=>setTab(t)} key={t}>{t==="overview"?"⌂":t==="rides"?"↗":t==="parcels"?"▣":"♙"}　{t==="riders"?"Rider approvals":t[0].toUpperCase()+t.slice(1)}</button>)}<div className="side-user"><span>{session.user.fullName.slice(0,1).toUpperCase()}</span><div><b>{session.user.fullName}</b><small>{label}</small></div><button onClick={logout}>↪</button></div></aside>
+ <main className="main"><header><div><small>NAVIGO WORKSPACE</small><h1>{admin?"Operations overview":rider?"Rider workspace":"Your NAVIGO activity"}</h1></div><div className="header-actions"><span>{label}</span><button className="secondary" onClick={()=>void load()}>↻ Refresh</button><button className="signout" onClick={logout}>Sign out</button></div></header><div className="content">{error&&<div className="error">{error}</div>}{rider&&session.user.riderApprovalStatus!=="APPROVED"&&<div className="warning">Your rider account is {session.user.riderApprovalStatus||"PENDING"}. Request acceptance becomes available after administrator approval.</div>}
+ <div className="stats"><Stat title={admin?"Applications":"Ride requests"} value={admin?riders.length:rides.length}/><Stat title={admin?"Pending review":"Parcel requests"} value={admin?riders.filter(x=>x.approvalStatus==="PENDING").length:parcels.length}/><Stat title="Account" value={rider?(session.user.riderApprovalStatus||"PENDING"):"Active"}/></div>
+ {admin?(tab==="riders"||tab==="overview"?list(riders,"rider","Review rider applications and approve eligible accounts."):<section className="panel"><h2>Administration</h2><p>Rider review is available in this workspace. Other administrative controls remain in the Android app for now.</p></section>):<>{(tab==="overview"||tab==="rides")&&list(rides,"ride","Motorcycle ride requests.")}{(tab==="overview"||tab==="parcels")&&list(parcels,"parcel","Ready-parcel collection and delivery requests.")}</>}
+ <footer>NAVIGO • Arua City, Uganda <span>Connected to the shared NAVIGO API</span></footer></div></main></div>;
+}
+function Stat({title,value}:{title:string;value:string|number}){return <div className="stat"><small>{title}</small><strong>{value}</strong></div>}
+export default App;
