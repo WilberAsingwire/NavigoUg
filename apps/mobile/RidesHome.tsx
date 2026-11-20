@@ -959,6 +959,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
     setActiveSession(session);
   }, [session]);
   const [mainTab, setMainTab] = useState<WorkspaceTab>("home");
+  const [workspaceViewport, setWorkspaceViewport] = useState({ width: 0, height: 0 });
   const screenOpacity = useRef(new Animated.Value(0)).current;
   const screenOffset = useRef(new Animated.Value(8)).current;
 
@@ -1279,10 +1280,15 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
     latitudeDelta: 0.035,
     longitudeDelta: 0.035
   });
-  const mapSheetCollapsedHeight = 168;
-  const mapSheetExpandedHeight = Math.min(Dimensions.get("window").height * 0.60, 520);
-  const mapSheetSearchHeight = Math.min(Dimensions.get("window").height * 0.84, 680);
-  const mapSheetRouteReviewHeight = Math.min(Dimensions.get("window").height * 0.46, 390);
+  const dashboardViewportHeight = workspaceViewport.height || Math.max(360, Dimensions.get("window").height - 150);
+  const mapSheetCollapsedHeight = Math.min(176, Math.max(148, dashboardViewportHeight * 0.28));
+  const mapSheetExpandedHeight = Math.min(dashboardViewportHeight * 0.72, 520);
+  const mapSheetSearchHeight = Math.min(dashboardViewportHeight * 0.92, dashboardViewportHeight - 12, 680);
+  const mapSheetRouteReviewHeight = Math.min(dashboardViewportHeight * 0.54, 390);
+  const dashboardHorizontalGutter = workspaceViewport.width > 0 && workspaceViewport.width < 360
+    ? 14
+    : workspaceViewport.width >= 600 ? 26 : 19;
+  const riderMapHeight = Math.max(220, Math.min(dashboardViewportHeight * 0.42, 360));
   const [mapSheetExpanded, setMapSheetExpanded] = useState(true);
   const mapSheetHeight = useRef(new Animated.Value(mapSheetCollapsedHeight)).current;
   const mapSheetTargetHeight = activeLocationField !== null
@@ -2254,11 +2260,25 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
   return (
     <SafeAreaView style={styles.safeArea}>
       <StatusBar style={appearance === "DARK" ? "light" : "dark"} />
-      <Animated.View style={{ flex: 1, opacity: screenOpacity, transform: [{ translateY: screenOffset }] }}>
+      <Animated.View
+        style={{ flex: 1, opacity: screenOpacity, transform: [{ translateY: screenOffset }] }}
+        onLayout={(event) => {
+          const { width, height } = event.nativeEvent.layout;
+          setWorkspaceViewport((current) =>
+            Math.abs(current.width - width) > 1 || Math.abs(current.height - height) > 1
+              ? { width, height }
+              : current
+          );
+        }}
+      >
       <ScrollView
         style={styles.mainScroll}
         scrollEnabled={!((isCustomer && mainTab === "home") || mapGestureActive)}
-        contentContainerStyle={[styles.page, isCustomer && mainTab === "home" ? styles.mapHomePage : null]}
+        contentContainerStyle={[
+          styles.page,
+          { paddingHorizontal: isCustomer && mainTab === "home" ? 0 : dashboardHorizontalGutter },
+          isCustomer && mainTab === "home" ? styles.mapHomePage : null
+        ]}
         keyboardShouldPersistTaps="handled"
         showsVerticalScrollIndicator={false}
       >
@@ -2269,7 +2289,10 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
               <Image source={require("./assets/icon.png")} style={styles.brandSmallLogo} resizeMode="contain" accessibilityLabel="NAVIGO logo" />
               <Text style={styles.brandSmall}>NAVIGO</Text>
             </View>
-            <Text style={styles.greeting}>Hello, {session.user.fullName.split(" ")[0]}</Text>
+            <Text style={[
+              styles.greeting,
+              workspaceViewport.width > 0 && workspaceViewport.width < 360 ? styles.greetingCompact : null
+            ]}>Hello, {session.user.fullName.split(" ")[0]}</Text>
             <Text style={styles.muted}>{isCustomer ? "Your ride starts here" : "Your rider workspace"}</Text>
           </View>
 {activeSession.user.role === "ADMIN" ? (
@@ -2284,7 +2307,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
           <>
             {mainTab === "home" ? (
               <>
-            <View style={styles.customerMapFrame}>
+            <View style={[styles.customerMapFrame, { height: dashboardViewportHeight }]}>
               <SafeMapView
                 style={styles.customerMap}
                 region={mapRegion}
@@ -2714,7 +2737,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
               </View>
             ) : mainTab === "home" ? (
               <>
-                <View style={styles.riderMapFrame}>
+                <View style={[styles.riderMapFrame, { height: riderMapHeight }]}>
                   <SafeMapView
                     ref={riderMapRef}
                     style={styles.customerMap}
@@ -4255,6 +4278,7 @@ const baseStyles = StyleSheet.create({
   brandSmallLogo: { width: 29, height: 29, borderRadius: 8, backgroundColor: "#EDF4FF" },
   brandSmall: { color: BRAND_COLORS.navy, fontSize: 12, fontWeight: "900", letterSpacing: 2 },
   greeting: { color: "#142B3D", fontSize: 24, fontWeight: "800", marginTop: 4 },
+  greetingCompact: { fontSize: 21 },
   muted: { color: "#8793A2", fontSize: 12, marginTop: 4 },
   signOut: { borderWidth: 1, borderColor: "#D5DFE8", paddingHorizontal: 13, paddingVertical: 9, borderRadius: 10, backgroundColor: "#FFFFFF" },
   signOutText: { color: BRAND_COLORS.navy, fontWeight: "700", fontSize: 12 },
@@ -4309,7 +4333,7 @@ const baseStyles = StyleSheet.create({
   quickAccessTitle: { color: BRAND_COLORS.navy, fontSize: 13, fontWeight: "900" },
   quickAccessText: { color: "#667085", fontSize: 10, lineHeight: 15, marginTop: 5 },
   mapHomePage: { flexGrow: 1, paddingHorizontal: 0, paddingTop: 0, paddingBottom: 0 },
-  customerMapFrame: { height: Dimensions.get("window").height - 88, borderRadius: 0, overflow: "hidden", marginBottom: 0, marginHorizontal: 0, marginTop: 0, borderWidth: 0, backgroundColor: "#E9F0F5", position: "relative" },
+  customerMapFrame: { borderRadius: 0, overflow: "hidden", marginBottom: 0, marginHorizontal: 0, marginTop: 0, borderWidth: 0, backgroundColor: "#E9F0F5", position: "relative" },
   customerMapSheet: { position: "absolute", left: 0, right: 0, bottom: 0, backgroundColor: "#FFFFFF", borderTopLeftRadius: 23, borderTopRightRadius: 23, overflow: "hidden", elevation: 18, shadowColor: "#102A43", shadowOpacity: 0.17, shadowRadius: 14 },
   customerMapSearchMapHidden: { position: "absolute", top: 0, left: 0, right: 0, opacity: 0, zIndex: -1 },
   customerMapSearchSheet: { marginTop: 0, marginHorizontal: 0, marginBottom: 0, borderRadius: 0, elevation: 2, zIndex: 2, shadowOpacity: 0 },
@@ -4334,7 +4358,7 @@ const baseStyles = StyleSheet.create({
   quoteEditButtonText: { color: BRAND_COLORS.navy, fontSize: 11, fontWeight: "800" },
   customerMapRecenterButton: { position: "absolute", top: 112, right: 13, width: 42, height: 42, borderRadius: 21, backgroundColor: "#FFFFFF", alignItems: "center", justifyContent: "center", elevation: 4, shadowColor: "#102A43", shadowOpacity: 0.16, shadowRadius: 7 },
   mapLocationRetryPill: { left: 13, right: undefined, top: 61 },
-  riderMapFrame: { height: Dimensions.get("window").height * 0.48, borderRadius: 18, overflow: "hidden", marginTop: 12, marginBottom: 12, backgroundColor: "#E9F0F5", position: "relative" },
+  riderMapFrame: { borderRadius: 18, overflow: "hidden", marginTop: 12, marginBottom: 12, backgroundColor: "#E9F0F5", position: "relative" },
   riderMapStatus: { position: "absolute", left: 13, bottom: 13, backgroundColor: "#FFFFFF", borderRadius: 20, paddingHorizontal: 12, paddingVertical: 9, flexDirection: "row", alignItems: "center", gap: 7, elevation: 3 },
   riderOnlineDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: "#98A2B3" },
   riderOnlineDotActive: { backgroundColor: "#12B76A" },
