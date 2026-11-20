@@ -1195,6 +1195,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
   const [working, setWorking] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [dashboardLoadError, setDashboardLoadError] = useState("");
   const [activeLocationField, setActiveLocationField] = useState<"pickup" | "destination" | null>(null);
 
   function focusLocationField(field: "pickup" | "destination") {
@@ -1329,6 +1330,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
   const loadDashboard = useCallback(async () => {
     setLoading(true);
     setError("");
+    setDashboardLoadError("");
     if (activeSession.user.role === "ADMIN") {
       try {
         const riderQuery = adminRiderFilter === "ALL" ? "" : `?status=${adminRiderFilter}`;
@@ -1344,7 +1346,9 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
         setAssignedParcels([]);
         setSentParcels([]);
       } catch (loadError) {
-        setError(loadError instanceof Error ? loadError.message : "Unable to load administrator data.");
+        const message = loadError instanceof Error ? loadError.message : "Unable to load administrator data.";
+        setDashboardLoadError(message);
+        setError(message);
       } finally {
         setLoading(false);
       }
@@ -1379,7 +1383,9 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
         setSentParcels([]);
       }
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "Unable to load your rides.");
+      const message = loadError instanceof Error ? loadError.message : "Unable to load your rides.";
+      setDashboardLoadError(message);
+      setError(message);
     } finally {
       setLoading(false);
     }
@@ -2138,7 +2144,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
     }
   }
 
-  const showCollectionError = Boolean(error) && (
+  const showCollectionError = Boolean(dashboardLoadError) && (
     (isCustomer && mainTab === "activity" && (customerActivityTab === "parcels" ? sentParcels.length === 0 : rides.length === 0)) ||
     (isApprovedRider && mainTab === "requests" && (riderRequestTab === "rides" ? availableRides.length === 0 : availableParcels.length === 0)) ||
     (isApprovedRider && mainTab === "jobs" && (riderJobTab === "rides" ? rides.length === 0 : assignedParcels.length === 0)) ||
@@ -2529,7 +2535,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                     busy={working}
                     onCancel={["PENDING", "ACCEPTED", "ARRIVED_AT_PICKUP"].includes(parcel.status) ? () => performParcelAction(parcel.id, "cancel") : undefined}
                   />
-                )) : <CollectionState loading={loading} error={error} emptyTitle="No item deliveries yet" emptyText="Items you send will appear here with their delivery progress." onRetry={() => void loadDashboard()} label="Loading your item deliveries" />}
+                )) : <CollectionState loading={loading} error={dashboardLoadError} emptyTitle="No item deliveries yet" emptyText="Items you send will appear here with their delivery progress." onRetry={() => void loadDashboard()} label="Loading your item deliveries" />}
                   </>
                 ) : (
                   <>
@@ -2541,7 +2547,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                     busy={working}
                     onCancel={() => performRideAction(ride.id, "cancel")}
                   />
-                )) : <CollectionState loading={loading} error={error} emptyTitle="No rides yet" emptyText="Your ride requests and trip history will appear here." onRetry={() => void loadDashboard()} label="Loading your rides" />}
+                )) : <CollectionState loading={loading} error={dashboardLoadError} emptyTitle="No rides yet" emptyText="Your ride requests and trip history will appear here." onRetry={() => void loadDashboard()} label="Loading your rides" />}
                   </>
                 )}
                 {error && !showCollectionError ? <Notice tone="error" text={error} /> : null}
@@ -2704,7 +2710,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                   />
                 )) : <CollectionState
                   loading={loading}
-                  error={error}
+                  error={dashboardLoadError}
                   emptyTitle={riderOnline ? "No nearby rides yet" : "You are offline"}
                   emptyText={riderOnline ? "There are no ride requests within your current matching area. NAVIGO will keep checking for nearby requests." : "Go online to see ride requests near your current location."}
                   onRetry={() => void loadDashboard()}
@@ -2715,7 +2721,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                   <>
                     {availableParcels.length ? availableParcels.map((parcel) => (
                   <ParcelRiderCard key={parcel.id} parcel={parcel} busy={working} onAccept={() => performParcelAction(parcel.id, "accept")} />
-                )) : <CollectionState loading={loading} error={error} emptyTitle="No available item deliveries" emptyText="New customer item requests will appear here." onRetry={() => void loadDashboard()} label="Loading available item deliveries" />}
+                )) : <CollectionState loading={loading} error={dashboardLoadError} emptyTitle="No available item deliveries" emptyText="New customer item requests will appear here." onRetry={() => void loadDashboard()} label="Loading available item deliveries" />}
                   </>
                 )}
               </View>
@@ -2742,7 +2748,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                       onRecordPayment={ride.status === "COMPLETED" && ride.payment?.status === "UNPAID" ? () => recordManualPayment("ride", ride.id) : undefined}
                     />
                   );
-                }) : <CollectionState loading={loading} error={error} emptyTitle="No assigned rides" emptyText="Rides you accept will appear here." onRetry={() => void loadDashboard()} label="Loading your assigned rides" />}
+                }) : <CollectionState loading={loading} error={dashboardLoadError} emptyTitle="No assigned rides" emptyText="Rides you accept will appear here." onRetry={() => void loadDashboard()} label="Loading your assigned rides" />}
                   </>
                 ) : (
                   <>
@@ -2771,7 +2777,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                         : startParcelLocationSharing(parcel.id)
                       : undefined}
                   />
-                )) : <CollectionState loading={loading} error={error} emptyTitle="No assigned item deliveries" emptyText="Item deliveries you accept will appear here." onRetry={() => void loadDashboard()} label="Loading your assigned item deliveries" />}
+                )) : <CollectionState loading={loading} error={dashboardLoadError} emptyTitle="No assigned item deliveries" emptyText="Item deliveries you accept will appear here." onRetry={() => void loadDashboard()} label="Loading your assigned item deliveries" />}
                   </>
                 )}
               </View>
@@ -2864,7 +2870,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                       ) : null}
                     </View>
                   </View>
-                )) : <CollectionState loading={loading} error={error} emptyTitle="No rider applications here" emptyText={adminRiderFilter === "PENDING" ? "New rider applications will appear here for review." : "There are no riders under this filter."} onRetry={() => void loadDashboard()} label="Loading rider applications" />}
+                )) : <CollectionState loading={loading} error={dashboardLoadError} emptyTitle="No rider applications here" emptyText={adminRiderFilter === "PENDING" ? "New rider applications will appear here for review." : "There are no riders under this filter."} onRetry={() => void loadDashboard()} label="Loading rider applications" />}
               </View>
             ) : (
               <View style={styles.section}>
@@ -2929,7 +2935,7 @@ export default function RidesHome({ session, onSignOut, onSessionChange, signing
                       </View>
                     </View>
                   );
-                }) : <CollectionState loading={loading} error={error} emptyTitle="No fare rules configured" emptyText="Create a fare rule above. Item delivery quotes will remain unavailable for sizes and distances without an active rule." onRetry={() => void loadDashboard()} label="Loading fare rules" />}
+                }) : <CollectionState loading={loading} error={dashboardLoadError} emptyTitle="No fare rules configured" emptyText="Create a fare rule above. Item delivery quotes will remain unavailable for sizes and distances without an active rule." onRetry={() => void loadDashboard()} label="Loading fare rules" />}
               </View>
             )}
             {error && !showCollectionError ? <Notice tone="error" text={error} /> : null}
