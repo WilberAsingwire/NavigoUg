@@ -2,6 +2,11 @@ import type { CreateRideInput, RideFareQuoteInput } from "@navigo/shared";
 import { prisma } from "../../lib/prisma.js";
 import { RIDE_DISTANCE_TARIFF } from "./fare-rules.js";
 import { getMotorcycleRoute, MotorcycleRoutingError } from "./routing.service.js";
+import {
+  issueRideQuoteToken,
+  RideQuoteTokenError,
+  verifyRideQuoteToken
+} from "./ride-quote-token.service.js";
 
 const EARTH_RADIUS_KM = 6371.0088;
 const ARUA_LOCATION_BOUNDS = { minLatitude: 2.75, maxLatitude: 3.30, minLongitude: 30.55, maxLongitude: 31.25 };
@@ -184,8 +189,19 @@ async function calculateFare(input: RideFareQuoteInput): Promise<FareQuote> {
   };
 }
 
-export async function getRideFareQuote(input: RideFareQuoteInput) {
-  return calculateFare(input);
+export async function getRideFareQuote(customerId: string, input: RideFareQuoteInput) {
+  const fare = await calculateFare(input);
+  try {
+    return {
+      ...fare,
+      quoteToken: issueRideQuoteToken(customerId, input, fare)
+    };
+  } catch (error) {
+    if (error instanceof RideQuoteTokenError) {
+      throw new RideError(error.statusCode, error.code, error.message);
+    }
+    throw error;
+  }
 }
 
 function rideInclude() {
@@ -206,7 +222,22 @@ function rideInclude() {
 }
 
 export async function createRide(customerId: string, input: CreateRideInput) {
-  const fare = await calculateFare(input);
+  let fare: FareQuote;
+  if (input.quoteToken) {
+    try {
+      // New clients book the exact server-signed quote they reviewed. Older
+      // installed clients may omit this optional field during OTA rollout;
+      // those requests retain the previous server-side recalculation path.
+      fare = verifyRideQuoteToken(customerId, input, input.quoteToken);
+    } catch (error) {
+      if (error instanceof RideQuoteTokenError) {
+        throw new RideError(error.statusCode, error.code, error.message);
+      }
+      throw error;
+    }
+  } else {
+    fare = await calculateFare(input);
+  }
   const now = new Date();
 
   return prisma.$transaction(async (tx) => {
