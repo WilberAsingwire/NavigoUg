@@ -31,6 +31,17 @@ const config: ExpoConfig = {
     ]
   },
   plugins: [
+    [
+      "expo-build-properties",
+      {
+        android: {
+          buildArchs:
+            process.env.EAS_BUILD_PROFILE === "preview-arm"
+              ? ["armeabi-v7a", "arm64-v8a"]
+              : ["armeabi-v7a", "arm64-v8a", "x86", "x86_64"]
+        }
+      }
+    ],
     "./plugins/withNavigoApiDnsFallback",
     [
       "expo-location",
