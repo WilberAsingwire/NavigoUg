@@ -23,7 +23,7 @@
         "image": "latest",
         "buildType": "apk"
       },
-      "autoIncrement": "versionCode"
+      "autoIncrement": true
     },
     "production": {
       "node": "24.22.3",
