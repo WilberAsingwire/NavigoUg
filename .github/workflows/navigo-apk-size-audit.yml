@@ -81,6 +81,21 @@ jobs:
           stat -c '%s bytes' "$BASELINE_APK"
           sha256sum "$BASELINE_APK"
 
+      - name: Compare baseline APK signing and Android package metadata
+        env:
+          BASELINE_APK: ${{ runner.temp }}/navigo-baseline.apk
+          CURRENT_APK: ${{ runner.temp }}/navigo-preview.apk
+        run: |
+          BUILD_TOOLS="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
+          echo "=== November 20 baseline package ==="
+          "$BUILD_TOOLS/aapt" dump badging "$BASELINE_APK" | head -n 3
+          "$BUILD_TOOLS/apksigner" verify --verbose --print-certs "$BASELINE_APK"
+          "$BUILD_TOOLS/zipalign" -c -v 4 "$BASELINE_APK"
+          echo "=== November 23 DNS-fallback package ==="
+          "$BUILD_TOOLS/aapt" dump badging "$CURRENT_APK" | head -n 3
+          "$BUILD_TOOLS/apksigner" verify --verbose --print-certs "$CURRENT_APK"
+          "$BUILD_TOOLS/zipalign" -c -v 4 "$CURRENT_APK"
+
       - name: Compare baseline and DNS-fallback APK installation on a clean Android emulator
         uses: reactivecircus/android-emulator-runner@v2
         env:
