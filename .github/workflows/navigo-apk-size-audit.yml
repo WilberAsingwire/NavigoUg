@@ -133,3 +133,63 @@ jobs:
           path: ${{ runner.temp }}/navigo-preview.apk
           if-no-files-found: error
           retention-days: 7
+
+      - name: Download the earlier November 20 baseline APK
+        env:
+          BASELINE_APK: ${{ runner.temp }}/navigo-baseline.apk
+        run: |
+          curl --fail --location --silent --show-error \
+            "https://expo.dev/artifacts/eas/-DDdFYiQn0XsYiX9ZyCSlpCeuxp4JuiA9BmcH-583AU.apk" \
+            --output "$BASELINE_APK"
+          echo "Baseline APK size:"
+          stat -c '%s bytes' "$BASELINE_APK"
+          sha256sum "$BASELINE_APK"
+
+      - name: Compare baseline and DNS-fallback APK installation on a clean Android emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        env:
+          BASELINE_APK: ${{ runner.temp }}/navigo-baseline.apk
+          CURRENT_APK: ${{ runner.temp }}/navigo-preview.apk
+        with:
+          api-level: 35
+          arch: x86_64
+          profile: pixel_2
+          disable-animations: true
+          script: |
+            echo "=== Emulator platform ==="
+            adb shell getprop ro.build.version.release
+            adb shell getprop ro.build.version.sdk
+            adb shell getprop ro.product.cpu.abi
+
+            echo "=== Install earlier baseline APK (November 20) ==="
+            adb install "$BASELINE_APK"
+            baseline_status=$?
+            echo "BASELINE_INSTALL_EXIT_CODE=$baseline_status"
+
+            if [ "$baseline_status" -eq 0 ]; then
+              adb shell pm path ug.ac.muni.navigo
+              adb uninstall ug.ac.muni.navigo
+            fi
+
+            echo "=== Install current DNS-fallback APK (November 23) ==="
+            adb install "$CURRENT_APK"
+            current_status=$?
+            echo "CURRENT_INSTALL_EXIT_CODE=$current_status"
+
+            if [ "$current_status" -eq 0 ]; then
+              adb shell pm path ug.ac.muni.navigo
+            fi
+
+            if [ "$baseline_status" -eq 0 ] && [ "$current_status" -ne 0 ]; then
+              echo "RESULT: baseline installs, current APK fails on Android API 35."
+              exit 1
+            fi
+
+            if [ "$baseline_status" -ne 0 ] && [ "$current_status" -ne 0 ]; then
+              echo "RESULT: both APKs fail; inspect emulator and artifact details."
+              exit 1
+            fi
+
+            if [ "$current_status" -eq 0 ]; then
+              echo "RESULT: current APK installs successfully on Android API 35."
+            fi
