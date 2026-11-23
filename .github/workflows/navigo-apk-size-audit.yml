@@ -1,0 +1,94 @@
+name: NAVIGO APK size audit
+
+on:
+  push:
+    branches:
+      - feature/customer-map-responsive-flow
+    paths:
+      - ".github/workflows/navigo-apk-size-audit.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  measure-existing-apk:
+    name: Download and measure the completed preview APK
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Set up EAS CLI
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: 27.11.0
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Retrieve completed EAS build metadata
+        working-directory: apps/mobile
+        run: |
+          eas build:view c51830a8-1cf3-4756-8a76-16b181c3cc40 --json > "$RUNNER_TEMP/navigo-build.json"
+
+      - name: Download APK and report exact size
+        env:
+          BUILD_JSON: ${{ runner.temp }}/navigo-build.json
+          APK_PATH: ${{ runner.temp }}/navigo-preview.apk
+        run: |
+          node <<'NODE'
+          const fs = require("node:fs");
+          const data = JSON.parse(fs.readFileSync(process.env.BUILD_JSON, "utf8"));
+          const candidates = [];
+
+          function visit(value, key = "") {
+            if (typeof value === "string") {
+              if (/^https:\/\//i.test(value) && (/\.apk(?:[?#].*)?$/i.test(value) || /buildurl|applicationarchiveurl/i.test(key))) {
+                candidates.push({ key, value });
+              }
+              return;
+            }
+            if (Array.isArray(value)) {
+              value.forEach((item, index) => visit(item, String(index)));
+              return;
+            }
+            if (value && typeof value === "object") {
+              for (const [childKey, childValue] of Object.entries(value)) {
+                visit(childValue, childKey);
+              }
+            }
+          }
+
+          visit(data);
+          const selected =
+            candidates.find(item => /buildurl/i.test(item.key)) ||
+            candidates.find(item => /\.apk(?:[?#].*)?$/i.test(item.value)) ||
+            candidates[0];
+
+          if (!selected) {
+            console.error("No APK download URL was found in the EAS build metadata.");
+            console.error(JSON.stringify(data, null, 2));
+            process.exit(1);
+          }
+
+          fs.writeFileSync(process.env.RUNNER_TEMP + "/navigo-apk-url.txt", selected.value);
+          console.log("Found the completed APK artifact URL.");
+          NODE
+
+          curl --fail --location --silent --show-error             "$(cat "$RUNNER_TEMP/navigo-apk-url.txt")"             --output "$APK_PATH"
+
+          SIZE_BYTES="$(stat -c '%s' "$APK_PATH")"
+          SIZE_MB="$(awk -v bytes="$SIZE_BYTES" 'BEGIN { printf "%.2f", bytes / 1000000 }')"
+          echo "NAVIGO APK size: ${SIZE_BYTES} bytes (${SIZE_MB} MB decimal)"
+          sha256sum "$APK_PATH"
+
+      - name: Make the measured APK available for testing
+        uses: actions/upload-artifact@v4
+        with:
+          name: navigo-preview-apk-dns-fallback
+          path: ${{ runner.temp }}/navigo-preview.apk
+          if-no-files-found: error
+          retention-days: 7
