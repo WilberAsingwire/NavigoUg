@@ -31,6 +31,7 @@ const config: ExpoConfig = {
     ]
   },
   plugins: [
+    "./plugins/withNavigoApiDnsFallback",
     [
       "expo-location",
       {
