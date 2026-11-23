@@ -88,6 +88,38 @@ jobs:
           echo "NAVIGO APK size: ${SIZE_BYTES} bytes (${SIZE_MB} MB decimal)"
           sha256sum "$APK_PATH"
 
+      - name: Inspect package identity and APK signing certificate
+        env:
+          APK_PATH: ${{ runner.temp }}/navigo-preview.apk
+          REPORT_PATH: ${{ runner.temp }}/navigo-apk-inspection.txt
+        run: |
+          set -euo pipefail
+          BUILD_TOOLS="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
+          APKSIGNER="$BUILD_TOOLS/apksigner"
+          AAPT="$BUILD_TOOLS/aapt"
+
+          {
+            echo "=== APK size ==="
+            stat -c '%n: %s bytes' "$APK_PATH"
+            echo
+            echo "=== Package identity / SDK ==="
+            "$AAPT" dump badging "$APK_PATH" | head -n 3
+            echo
+            echo "=== Signature verification and signer certificate ==="
+            "$APKSIGNER" verify --verbose --print-certs "$APK_PATH"
+            echo
+            echo "=== Largest APK contents (uncompressed) ==="
+            unzip -l "$APK_PATH" | sort -nr | head -n 25
+          } | tee "$REPORT_PATH"
+
+      - name: Upload APK inspection report
+        uses: actions/upload-artifact@v4
+        with:
+          name: navigo-apk-package-and-signature-report
+          path: ${{ runner.temp }}/navigo-apk-inspection.txt
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Make the measured APK available for testing
         uses: actions/upload-artifact@v4
         with:
