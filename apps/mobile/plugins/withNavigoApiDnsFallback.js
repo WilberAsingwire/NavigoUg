@@ -110,7 +110,7 @@ internal object NavigoApiDns {
     hostname: String
   ): List<InetAddress> {
     try {
-      val url = "https://${resolverHost}/${endpointPath}".toHttpUrl()
+      val url = "https://\${resolverHost}/\${endpointPath}".toHttpUrl()
         .newBuilder()
         .addQueryParameter("name", hostname)
         .addQueryParameter("type", "A")
@@ -124,7 +124,7 @@ internal object NavigoApiDns {
 
       val payload = client.newCall(request).execute().use { response ->
         if (!response.isSuccessful) {
-          throw IOException("DoH resolver returned HTTP ${response.code}")
+          throw IOException("DoH resolver returned HTTP \${response.code}")
         }
         response.body?.string()
           ?: throw IOException("DoH resolver returned an empty response")
@@ -148,13 +148,13 @@ internal object NavigoApiDns {
       }
 
       if (addresses.isEmpty()) {
-        throw UnknownHostException("DoH returned no IPv4 address for ${hostname}")
+        throw UnknownHostException("DoH returned no IPv4 address for \${hostname}")
       }
       return addresses
     } catch (failure: Exception) {
       if (failure is UnknownHostException) throw failure
       val wrapped = UnknownHostException(
-        "DoH lookup failed for ${hostname} using ${resolverHost}"
+        "DoH lookup failed for \${hostname} using \${resolverHost}"
       )
       wrapped.initCause(failure)
       throw wrapped
