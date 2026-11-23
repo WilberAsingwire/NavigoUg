@@ -177,6 +177,80 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+      - name: Download and inspect the latest ARM-compatible NAVIGO build
+        working-directory: apps/mobile
+        env:
+          BUILD_HISTORY_JSON: ${{ runner.temp }}/navigo-build-history-latest.json
+          APK_PATH: ${{ runner.temp }}/navigo-preview-arm.apk
+          REPORT_PATH: ${{ runner.temp }}/navigo-preview-arm-report.txt
+        run: |
+          set -euo pipefail
+          eas build:list --platform android --limit 20 --json > "$BUILD_HISTORY_JSON"
+          node <<'NODE'
+          const fs = require("node:fs");
+          const builds = JSON.parse(fs.readFileSync(process.env.BUILD_HISTORY_JSON, "utf8"));
+          const matching = builds
+            .filter(build => build.buildProfile === "preview-arm" &&
+              build.status === "FINISHED" && build.artifacts?.buildUrl)
+            .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+          if (matching.length === 0) {
+            console.error("No completed preview-arm build was found in recent EAS history.");
+            process.exit(1);
+          }
+          const build = matching[0];
+          fs.writeFileSync(process.env.RUNNER_TEMP + "/navigo-arm-build-url.txt", build.artifacts.buildUrl);
+          console.log("ARM build ID:", build.id);
+          console.log("ARM build versionCode:", build.appBuildVersion);
+          console.log("ARM build completed:", build.completedAt);
+          NODE
+
+          curl --fail --location --silent --show-error \
+            "$(cat "$RUNNER_TEMP/navigo-arm-build-url.txt")" \
+            --output "$APK_PATH"
+
+          BUILD_TOOLS="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
+          {
+            echo "=== ARM APK size and hash ==="
+            stat -c '%s bytes' "$APK_PATH"
+            sha256sum "$APK_PATH"
+            unzip -t "$APK_PATH" | tail -n 1
+            echo
+            echo "=== Package identity ==="
+            "$BUILD_TOOLS/aapt" dump badging "$APK_PATH" | sed -n '1,3p'
+            echo
+            echo "=== Signing certificate ==="
+            "$BUILD_TOOLS/apksigner" verify --verbose --print-certs "$APK_PATH"
+            echo
+            echo "=== ZIP alignment ==="
+            "$BUILD_TOOLS/zipalign" -c -v 4 "$APK_PATH"
+            echo
+            echo "=== Native library architectures ==="
+            python3 - "$APK_PATH" <<'PY'
+          import sys, zipfile, collections, os
+          apk = zipfile.ZipFile(sys.argv[1])
+          totals = collections.Counter()
+          counts = collections.Counter()
+          for item in apk.infolist():
+              if item.filename.startswith("lib/") and item.filename.endswith(".so"):
+                  abi = item.filename.split("/")[1]
+                  totals[abi] += item.file_size
+                  counts[abi] += 1
+          for abi in sorted(totals):
+              print(f"{abi}: {counts[abi]} libraries, {totals[abi]} uncompressed bytes")
+          print("Native library ABI count:", len(totals))
+          PY
+          } | tee "$REPORT_PATH"
+
+      - name: Upload ARM-compatible APK and verification report
+        uses: actions/upload-artifact@v4
+        with:
+          name: navigo-preview-arm-apk
+          path: |
+            ${{ runner.temp }}/navigo-preview-arm.apk
+            ${{ runner.temp }}/navigo-preview-arm-report.txt
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Compare clean installation on Android 7 (API 24)
         uses: reactivecircus/android-emulator-runner@v2
         env:
