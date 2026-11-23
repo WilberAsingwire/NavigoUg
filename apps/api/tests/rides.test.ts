@@ -219,6 +219,41 @@ describe("Motorcycle ride API", () => {
     expect(response.body.data.fareAmountUgx).toBe(2000);
   });
 
+  it("calculates an arbitrary road route from the per-kilometre tariff without a preconfigured route band", async () => {
+    mocks.fareRuleFindMany.mockResolvedValue([]);
+    const token = await accessToken("CUSTOMER");
+    mocks.getMotorcycleRoute.mockResolvedValueOnce({
+      distanceKm: 12.37,
+      durationSeconds: 2100,
+      coordinates: [
+        { latitude: 3.0200, longitude: 30.9100 },
+        { latitude: 3.0800, longitude: 30.9800 }
+      ],
+      provider: "VALHALLA_MOTORCYCLE"
+    });
+
+    const response = await request(app)
+      .post("/api/v1/rides/fare-quote")
+      .set("Authorization", `Bearer ${token}`)
+      .send({
+        pickup: route.pickup,
+        destination: {
+          latitude: 3.0800,
+          longitude: 30.9800,
+          description: "A different Arua destination"
+        }
+      });
+
+    expect(response.status).toBe(200);
+    expect(response.body.data.distanceKm).toBe(12.37);
+    // UGX 500/km = UGX 6,185, rounded up to the next UGX 100.
+    expect(response.body.data.fareAmountUgx).toBe(6200);
+    expect(response.body.data.fareBasis).toBe("DISTANCE_RULE");
+    expect(mocks.fareRuleFindMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { requestType: "RIDE", parcelSize: null, isActive: true }
+    }));
+  });
+
   it("does not quote journeys beyond the pilot tariff coverage", async () => {
     mocks.fareRuleFindMany.mockResolvedValue([]);
     const token = await accessToken("CUSTOMER");

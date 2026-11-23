@@ -1,4 +1,13 @@
-import { registerRootComponent } from 'expo';
-import App from './App';
+import { registerRootComponent } from "expo";
+import App from "./App";
+import AppErrorBoundary from "./AppErrorBoundary";
 
-registerRootComponent(App);
+function Root() {
+  return (
+    <AppErrorBoundary>
+      <App />
+    </AppErrorBoundary>
+  );
+}
+
+registerRootComponent(Root);

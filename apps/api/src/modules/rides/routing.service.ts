@@ -234,7 +234,7 @@ async function getValhallaMotorcycleRoute(
             use_trails: 0.1
           }
         },
-        units: "kilometers",
+        units: "km",
         language: "en"
       }),
       signal: AbortSignal.timeout(ROUTE_TIMEOUT_MS)
@@ -329,9 +329,41 @@ export async function getMotorcycleRoute(
   if (cached) routeCache.delete(key);
 
   const googleApiKey = process.env.GOOGLE_MAPS_API_KEY?.trim();
-  const route = googleApiKey
-    ? await getGoogleTwoWheelerRoute(origin, destination, googleApiKey)
-    : await getValhallaMotorcycleRoute(origin, destination);
+  let route: MotorcycleRoute;
+
+  if (googleApiKey) {
+    try {
+      route = await getGoogleTwoWheelerRoute(origin, destination, googleApiKey);
+    } catch (googleError) {
+      // A configured Google key can expire, hit quota limits, or reject a route.
+      // Retry with the OpenStreetMap-based motorcycle profile before failing the quote.
+      try {
+        route = await getValhallaMotorcycleRoute(origin, destination);
+      } catch (fallbackError) {
+        const bothProvidersFoundNoRoute =
+          googleError instanceof MotorcycleRoutingError &&
+          googleError.statusCode === 422 &&
+          fallbackError instanceof MotorcycleRoutingError &&
+          fallbackError.statusCode === 422;
+
+        if (bothProvidersFoundNoRoute) {
+          throw new MotorcycleRoutingError(
+            422,
+            "NO_MOTORCYCLE_ROUTE",
+            "No suitable motorcycle road route was found between these locations. Try choosing nearby mapped points."
+          );
+        }
+
+        throw new MotorcycleRoutingError(
+          503,
+          "ROUTE_PROVIDER_UNAVAILABLE",
+          "NAVIGO's motorcycle routing services are temporarily unavailable. Please try again."
+        );
+      }
+    }
+  } else {
+    route = await getValhallaMotorcycleRoute(origin, destination);
+  }
 
   if (!Number.isFinite(route.distanceKm) || route.distanceKm <= 0 || route.coordinates.length < 2) {
     throw new MotorcycleRoutingError(

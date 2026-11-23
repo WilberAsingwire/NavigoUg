@@ -1,0 +1,323 @@
+name: NAVIGO APK size audit
+
+on:
+  push:
+    branches:
+      - feature/customer-map-responsive-flow
+    paths:
+      - ".github/workflows/navigo-apk-size-audit.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  measure-existing-apk:
+    name: Download and measure the completed preview APK
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js and EAS CLI
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Set up EAS CLI
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: 27.11.0
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Install workspace dependencies for Expo config
+        run: npm install
+
+      - name: Report recent NAVIGO EAS build status
+        working-directory: apps/mobile
+        run: |
+          eas build:list --platform android --limit 12 --json > "$RUNNER_TEMP/eas-builds.json"
+          node <<'NODE'
+          const fs = require("node:fs");
+          const builds = JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP + "/eas-builds.json", "utf8"));
+          for (const build of builds) {
+            console.log(JSON.stringify({
+              id: build.id,
+              status: build.status,
+              profile: build.buildProfile,
+              versionCode: build.appBuildVersion,
+              createdAt: build.createdAt,
+              completedAt: build.completedAt,
+              buildUrl: build.artifacts?.buildUrl
+            }));
+          }
+          NODE
+
+      - name: Download and verify the current NAVIGO APK
+        env:
+          APK_PATH: ${{ runner.temp }}/navigo-preview.apk
+        run: |
+          curl --fail --location --silent --show-error \
+            "https://expo.dev/artifacts/eas/8ZqME8ARhLePaI2hoyCjyoXKf4HEmYDSctLq07bF70Y.apk" \
+            --output "$APK_PATH"
+          stat -c 'Current APK size: %s bytes' "$APK_PATH"
+          sha256sum "$APK_PATH"
+          unzip -t "$APK_PATH"
+
+
+      - name: Inspect package identity and APK signing certificate
+        env:
+          APK_PATH: ${{ runner.temp }}/navigo-preview.apk
+          REPORT_PATH: ${{ runner.temp }}/navigo-apk-inspection.txt
+        run: |
+          set -euo pipefail
+          BUILD_TOOLS="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
+          APKSIGNER="$BUILD_TOOLS/apksigner"
+          AAPT="$BUILD_TOOLS/aapt"
+
+          {
+            echo "=== APK size ==="
+            stat -c '%n: %s bytes' "$APK_PATH"
+            echo
+            echo "=== Package identity / SDK ==="
+            "$AAPT" dump badging "$APK_PATH" | head -n 3
+            echo
+            echo "=== Signature verification and signer certificate ==="
+            "$APKSIGNER" verify --verbose --print-certs "$APK_PATH"
+            echo
+            echo "=== Largest APK contents (uncompressed) ==="
+            unzip -l "$APK_PATH" | sort -nr | sed -n '1,25p'
+          } | tee "$REPORT_PATH"
+
+      - name: Upload APK inspection report
+        uses: actions/upload-artifact@v4
+        with:
+          name: navigo-apk-package-and-signature-report
+          path: ${{ runner.temp }}/navigo-apk-inspection.txt
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Make the measured APK available for testing
+        uses: actions/upload-artifact@v4
+        with:
+          name: navigo-preview-apk-dns-fallback
+          path: ${{ runner.temp }}/navigo-preview.apk
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Download the earlier November 20 baseline APK
+        env:
+          BASELINE_APK: ${{ runner.temp }}/navigo-baseline.apk
+        run: |
+          curl --fail --location --silent --show-error \
+            "https://expo.dev/artifacts/eas/-DDdFYiQn0XsYiX9ZyCSlpCeuxp4JuiA9BmcH-583AU.apk" \
+            --output "$BASELINE_APK"
+          echo "Baseline APK size:"
+          stat -c '%s bytes' "$BASELINE_APK"
+          sha256sum "$BASELINE_APK"
+
+      - name: Preserve the known-good baseline APK for binary comparison
+        uses: actions/upload-artifact@v4
+        with:
+          name: navigo-nov20-baseline-apk
+          path: ${{ runner.temp }}/navigo-baseline.apk
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Compare Android manifests from baseline and DNS-fallback APKs
+        env:
+          BASELINE_APK: ${{ runner.temp }}/navigo-baseline.apk
+          CURRENT_APK: ${{ runner.temp }}/navigo-preview.apk
+          REPORT_DIR: ${{ runner.temp }}/navigo-manifest-diff
+        run: |
+          set -euo pipefail
+          BUILD_TOOLS="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
+          mkdir -p "$REPORT_DIR"
+          "$BUILD_TOOLS/aapt" dump xmltree "$BASELINE_APK" AndroidManifest.xml > "$REPORT_DIR/baseline-manifest.txt"
+          "$BUILD_TOOLS/aapt" dump xmltree "$CURRENT_APK" AndroidManifest.xml > "$REPORT_DIR/current-manifest.txt"
+          if diff -u "$REPORT_DIR/baseline-manifest.txt" "$REPORT_DIR/current-manifest.txt" > "$REPORT_DIR/manifest.diff"; then
+            echo "Android manifests are identical."
+          else
+            echo "Android manifest differences:"
+            sed -n '1,240p' "$REPORT_DIR/manifest.diff"
+          fi
+
+      - name: Upload Android manifest comparison
+        uses: actions/upload-artifact@v4
+        with:
+          name: navigo-baseline-manifest-diff
+          path: ${{ runner.temp }}/navigo-manifest-diff
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Compare baseline APK signing and Android package metadata
+        env:
+          BASELINE_APK: ${{ runner.temp }}/navigo-baseline.apk
+          CURRENT_APK: ${{ runner.temp }}/navigo-preview.apk
+          REPORT_PATH: ${{ runner.temp }}/navigo-baseline-comparison.txt
+        run: |
+          set -euo pipefail
+          BUILD_TOOLS="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
+          {
+            echo "=== November 20 baseline package ==="
+            "$BUILD_TOOLS/aapt" dump badging "$BASELINE_APK" | sed -n '1,3p'
+            "$BUILD_TOOLS/apksigner" verify --verbose --print-certs "$BASELINE_APK"
+            "$BUILD_TOOLS/zipalign" -c -v 4 "$BASELINE_APK"
+            echo
+            echo "=== November 23 DNS-fallback package ==="
+            "$BUILD_TOOLS/aapt" dump badging "$CURRENT_APK" | sed -n '1,3p'
+            "$BUILD_TOOLS/apksigner" verify --verbose --print-certs "$CURRENT_APK"
+            "$BUILD_TOOLS/zipalign" -c -v 4 "$CURRENT_APK"
+          } | tee "$REPORT_PATH"
+
+      - name: Upload baseline comparison report
+        uses: actions/upload-artifact@v4
+        with:
+          name: navigo-baseline-signature-comparison
+          path: ${{ runner.temp }}/navigo-baseline-comparison.txt
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Download and inspect the latest ARM-compatible NAVIGO build
+        working-directory: apps/mobile
+        env:
+          BUILD_HISTORY_JSON: ${{ runner.temp }}/navigo-build-history-latest.json
+          APK_PATH: ${{ runner.temp }}/navigo-preview-arm.apk
+          REPORT_PATH: ${{ runner.temp }}/navigo-preview-arm-report.txt
+        run: |
+          set -euo pipefail
+          eas build:list --platform android --limit 20 --json > "$BUILD_HISTORY_JSON"
+          node <<'NODE'
+          const fs = require("node:fs");
+          const builds = JSON.parse(fs.readFileSync(process.env.BUILD_HISTORY_JSON, "utf8"));
+          const matching = builds
+            .filter(build => build.buildProfile === "preview-arm" &&
+              build.status === "FINISHED" && build.artifacts?.buildUrl)
+            .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+          if (matching.length === 0) {
+            console.error("No completed preview-arm build was found in recent EAS history.");
+            process.exit(1);
+          }
+          const build = matching[0];
+          fs.writeFileSync(process.env.RUNNER_TEMP + "/navigo-arm-build-url.txt", build.artifacts.buildUrl);
+          console.log("ARM build ID:", build.id);
+          console.log("ARM build versionCode:", build.appBuildVersion);
+          console.log("ARM build completed:", build.completedAt);
+          NODE
+
+          curl --fail --location --silent --show-error \
+            "$(cat "$RUNNER_TEMP/navigo-arm-build-url.txt")" \
+            --output "$APK_PATH"
+
+          BUILD_TOOLS="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
+          {
+            echo "=== ARM APK size and hash ==="
+            stat -c '%s bytes' "$APK_PATH"
+            sha256sum "$APK_PATH"
+            unzip -t "$APK_PATH" | tail -n 1
+            echo
+            echo "=== Package identity ==="
+            "$BUILD_TOOLS/aapt" dump badging "$APK_PATH" | sed -n '1,3p'
+            echo
+            echo "=== Signing certificate ==="
+            "$BUILD_TOOLS/apksigner" verify --verbose --print-certs "$APK_PATH"
+            echo
+            echo "=== ZIP alignment ==="
+            "$BUILD_TOOLS/zipalign" -c -v 4 "$APK_PATH"
+            echo
+            echo "=== Native library architectures ==="
+            python3 - "$APK_PATH" <<'PY'
+          import sys, zipfile, collections, os
+          apk = zipfile.ZipFile(sys.argv[1])
+          totals = collections.Counter()
+          counts = collections.Counter()
+          for item in apk.infolist():
+              if item.filename.startswith("lib/") and item.filename.endswith(".so"):
+                  abi = item.filename.split("/")[1]
+                  totals[abi] += item.file_size
+                  counts[abi] += 1
+          for abi in sorted(totals):
+              print(f"{abi}: {counts[abi]} libraries, {totals[abi]} uncompressed bytes")
+          print("Native library ABI count:", len(totals))
+          PY
+          } | tee "$REPORT_PATH"
+
+      - name: Upload ARM-compatible APK and verification report
+        uses: actions/upload-artifact@v4
+        with:
+          name: navigo-preview-arm-apk
+          path: |
+            ${{ runner.temp }}/navigo-preview-arm.apk
+            ${{ runner.temp }}/navigo-preview-arm-report.txt
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Compare clean installation on Android 7 (API 24)
+        uses: reactivecircus/android-emulator-runner@v2
+        env:
+          ANDROID_I_WANT_MY_TCG: "yes"
+          BASELINE_APK: ${{ runner.temp }}/navigo-baseline.apk
+          CURRENT_APK: ${{ runner.temp }}/navigo-preview.apk
+        with:
+          api-level: 24
+          arch: x86
+          profile: pixel_2
+          ram-size: 1536M
+          cores: 2
+          emulator-boot-timeout: 600
+          disable-linux-hw-accel: true
+          disable-animations: true
+          emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -no-metrics
+          script: |
+            python3 -c 'import os,subprocess,sys; package="ug.ac.muni.navigo"; run=lambda *args:subprocess.run(args,text=True,capture_output=True); print("ANDROID_API",run("adb","shell","getprop","ro.build.version.sdk").stdout,flush=True); baseline=run("adb","install",os.environ["BASELINE_APK"]); print("BASELINE_EXIT",baseline.returncode,baseline.stdout,baseline.stderr,flush=True); (run("adb","uninstall",package) if baseline.returncode==0 else None); current=run("adb","install",os.environ["CURRENT_APK"]); print("CURRENT_EXIT",current.returncode,current.stdout,current.stderr,flush=True); sys.exit(0 if baseline.returncode==0 and current.returncode==0 else 1)'
+
+      - name: Download and inspect the rebuilt universal APK (version code 4)
+        env:
+          APK_PATH: ${{ runner.temp }}/navigo-universal-v4.apk
+          REPORT_PATH: ${{ runner.temp }}/navigo-universal-v4-report.txt
+        run: |
+          set -euo pipefail
+          curl --fail --location --silent --show-error \
+            "https://expo.dev/artifacts/eas/oG5ug-wAT1BxoiNy8F3vKDFpn-Ld4GHQCAz7_1UYb3w.apk" \
+            --output "$APK_PATH"
+          BUILD_TOOLS="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
+          {
+            echo "=== Universal APK size ==="
+            stat -c '%s bytes' "$APK_PATH"
+            sha256sum "$APK_PATH"
+            unzip -t "$APK_PATH" | tail -n 1
+            echo
+            echo "=== Package ==="
+            "$BUILD_TOOLS/aapt" dump badging "$APK_PATH" | sed -n '1,3p'
+            echo
+            echo "=== Signing ==="
+            "$BUILD_TOOLS/apksigner" verify --verbose --print-certs "$APK_PATH"
+            echo
+            echo "=== Zip alignment ==="
+            "$BUILD_TOOLS/zipalign" -c -v 4 "$APK_PATH"
+            echo
+            echo "=== ABI and native library sizes ==="
+            python3 - "$APK_PATH" <<'PY'
+          import sys, zipfile, collections
+          apk = zipfile.ZipFile(sys.argv[1])
+          totals = collections.Counter()
+          counts = collections.Counter()
+          for item in apk.infolist():
+              if item.filename.startswith("lib/") and item.filename.endswith(".so"):
+                  parts = item.filename.split("/")
+                  if len(parts) >= 3:
+                      totals[parts[1]] += item.file_size
+                      counts[parts[1]] += 1
+          for abi in sorted(totals):
+              print(f"{abi}: {counts[abi]} libraries, {totals[abi]} uncompressed bytes")
+          PY
+          } | tee "$REPORT_PATH"
+
+      - name: Upload rebuilt universal APK and report
+        uses: actions/upload-artifact@v4
+        with:
+          name: navigo-universal-v4-apk
+          path: |
+            ${{ runner.temp }}/navigo-universal-v4.apk
+            ${{ runner.temp }}/navigo-universal-v4-report.txt
+          if-no-files-found: error
+          retention-days: 7

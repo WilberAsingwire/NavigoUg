@@ -1,7 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Animated,
+  Image,
   KeyboardAvoidingView,
   Platform,
   SafeAreaView,
@@ -9,12 +11,14 @@ import {
   StyleSheet,
   Text,
   TextInput,
-  TouchableOpacity,
   View
 } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import * as SecureStore from "expo-secure-store";
 import RidesHome from "./RidesHome";
+import { SplashScreen, WelcomeScreen } from "./LaunchScreens";
+import { BRAND_COLORS } from "./brand";
+import { InteractiveTouchable as TouchableOpacity } from "./InteractiveTouchable";
 
 const API_BASE_URL = "https://navigou-api-2978.onrender.com";
 const SESSION_KEY = "navigo.session";
@@ -75,8 +79,40 @@ export default function App() {
   const [motorcycleDescription, setMotorcycleDescription] = useState("");
   const [busy, setBusy] = useState(false);
   const [restoring, setRestoring] = useState(true);
+  const [splashComplete, setSplashComplete] = useState(false);
+  const [showWelcome, setShowWelcome] = useState(true);
   const [error, setError] = useState("");
   const [session, setSession] = useState<Session | null>(null);
+  const authFade = useRef(new Animated.Value(1)).current;
+  const authOffset = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    if (session || showWelcome || restoring || !splashComplete) return;
+
+    authFade.setValue(0);
+    authOffset.setValue(10);
+    const entrance = Animated.parallel([
+      Animated.timing(authFade, {
+        toValue: 1,
+        duration: 220,
+        useNativeDriver: true
+      }),
+      Animated.spring(authOffset, {
+        toValue: 0,
+        speed: 25,
+        bounciness: 2,
+        useNativeDriver: true
+      })
+    ]);
+    entrance.start();
+    return () => entrance.stop();
+  }, [session, showWelcome, restoring, splashComplete, mode, role, authFade, authOffset]);
+
+
+  useEffect(() => {
+    const timer = setTimeout(() => setSplashComplete(true), 1_500);
+    return () => clearTimeout(timer);
+  }, []);
 
   useEffect(() => {
     let mounted = true;
@@ -206,20 +242,13 @@ export default function App() {
       setSession(null);
       setMode("login");
       setRole("CUSTOMER");
+      setShowWelcome(true);
       setBusy(false);
     }
   }
 
-  if (restoring) {
-    return (
-      <SafeAreaView style={styles.safeArea}>
-        <StatusBar style="dark" />
-        <View style={styles.loading}>
-          <ActivityIndicator size="large" color="#174A72" />
-          <Text style={styles.muted}>Preparing NAVIGO...</Text>
-        </View>
-      </SafeAreaView>
-    );
+  if (restoring || !splashComplete) {
+    return <SplashScreen />;
   }
 
   if (session) {
@@ -233,6 +262,23 @@ export default function App() {
     );
   }
 
+  if (showWelcome) {
+    return (
+      <WelcomeScreen
+        onGetStarted={() => {
+          setMode("login");
+          setError("");
+          setShowWelcome(false);
+        }}
+        onCreateAccount={() => {
+          setMode("register");
+          setError("");
+          setShowWelcome(false);
+        }}
+      />
+    );
+  }
+
   return (
     <SafeAreaView style={styles.safeArea}>
       <StatusBar style="dark" />
@@ -240,11 +286,19 @@ export default function App() {
         style={styles.flex}
         behavior={Platform.OS === "ios" ? "padding" : undefined}
       >
+        <Animated.View style={{ flex: 1, opacity: authFade, transform: [{ translateY: authOffset }] }}>
         <ScrollView
           contentContainerStyle={styles.authPage}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
+          <TouchableOpacity
+            accessibilityRole="button"
+            style={styles.entryBackButton}
+            onPress={() => { setShowWelcome(true); setError(""); }}
+          >
+            <Text style={styles.entryBackText}>←  Back to welcome</Text>
+          </TouchableOpacity>
           <Brand />
           <View style={styles.headingBlock}>
             <Text style={styles.eyebrow}>WELCOME TO NAVIGO</Text>
@@ -398,6 +452,7 @@ export default function App() {
           </Text>
           <Text style={styles.footer}>Arua, Uganda</Text>
         </ScrollView>
+        </Animated.View>
       </KeyboardAvoidingView>
     </SafeAreaView>
   );
@@ -406,9 +461,7 @@ export default function App() {
 function Brand() {
   return (
     <View style={styles.brand}>
-      <View style={styles.brandMark}>
-        <Text style={styles.brandLetter}>N</Text>
-      </View>
+      <Image source={require("./assets/icon.png")} style={styles.brandLogo} resizeMode="contain" accessibilityLabel="NAVIGO logo" />
       <Text style={styles.brandName}>NAVIGO</Text>
       <Text style={styles.brandTagline}>Your journey, made easier.</Text>
     </View>
@@ -472,19 +525,16 @@ function Detail({ label, value }: { label: string; value: string }) {
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: "#F3F6FA" },
   flex: { flex: 1 },
-  authPage: { flexGrow: 1, paddingHorizontal: 20, paddingTop: 25, paddingBottom: 28 },
+  authPage: { flexGrow: 1, paddingHorizontal: 20, paddingTop: 18, paddingBottom: 28 },
+  entryBackButton: { alignSelf: "flex-start", paddingVertical: 8, paddingHorizontal: 3, marginBottom: 5 },
+  entryBackText: { color: BRAND_COLORS.blue, fontSize: 12, fontWeight: "700" },
   dashboard: { flexGrow: 1, paddingHorizontal: 24, paddingTop: 34, paddingBottom: 30 },
   brand: { alignItems: "center", marginBottom: 25 },
-  brandMark: {
-    width: 58, height: 58, borderRadius: 19, backgroundColor: "#174A72",
-    alignItems: "center", justifyContent: "center", marginBottom: 9,
-    shadowColor: "#174A72", shadowOffset: { width: 0, height: 5 }, shadowOpacity: 0.18, shadowRadius: 9, elevation: 4
-  },
-  brandLetter: { color: "#FFFFFF", fontSize: 31, fontWeight: "800" },
-  brandName: { color: "#174A72", fontSize: 25, fontWeight: "900", letterSpacing: 2.4 },
+  brandLogo: { width: 68, height: 68, borderRadius: 18, backgroundColor: "#EDF4FF", marginBottom: 9, shadowColor: BRAND_COLORS.navy, shadowOffset: { width: 0, height: 5 }, shadowOpacity: 0.14, shadowRadius: 9, elevation: 4 },
+  brandName: { color: BRAND_COLORS.navy, fontSize: 25, fontWeight: "900", letterSpacing: 2.4 },
   brandTagline: { color: "#667085", fontSize: 12, marginTop: 4, letterSpacing: 0.2 },
   headingBlock: { marginBottom: 19, paddingHorizontal: 3 },
-  eyebrow: { color: "#2B719F", fontSize: 10, fontWeight: "800", letterSpacing: 1.4, marginBottom: 8 },
+  eyebrow: { color: BRAND_COLORS.blue, fontSize: 10, fontWeight: "800", letterSpacing: 1.4, marginBottom: 8 },
   heading: { color: "#142B3D", fontSize: 27, lineHeight: 33, fontWeight: "800" },
   subheading: { color: "#667085", fontSize: 13, lineHeight: 20, marginTop: 7 },
   authCard: {
@@ -497,15 +547,15 @@ const styles = StyleSheet.create({
   modeOption: { flex: 1, alignItems: "center", paddingVertical: 11, borderRadius: 10 },
   modeOptionActive: { backgroundColor: "#FFFFFF", shadowColor: "#142B3D", shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.08, shadowRadius: 3, elevation: 1 },
   modeText: { color: "#667085", fontWeight: "600", fontSize: 13 },
-  modeTextActive: { color: "#174A72", fontWeight: "800" },
+  modeTextActive: { color: BRAND_COLORS.navy, fontWeight: "800" },
   roleSwitch: { flexDirection: "row", gap: 10, marginTop: 7, marginBottom: 16 },
   roleOption: {
     flex: 1, borderWidth: 1, borderColor: "#E0E6ED", borderRadius: 13,
     paddingVertical: 12, paddingHorizontal: 8, alignItems: "center", backgroundColor: "#FFFFFF"
   },
-  roleOptionActive: { borderColor: "#2B719F", backgroundColor: "#F0F7FC" },
+  roleOptionActive: { borderColor: BRAND_COLORS.blue, backgroundColor: "#F0F7FC" },
   roleText: { color: "#667085", fontWeight: "700", fontSize: 13 },
-  roleTextActive: { color: "#174A72" },
+  roleTextActive: { color: BRAND_COLORS.navy },
   roleHint: { color: "#8793A2", fontSize: 10, textAlign: "center", marginTop: 4 },
   field: { marginBottom: 14 },
   fieldLabel: { color: "#344054", fontSize: 12, fontWeight: "700", marginBottom: 7 },
@@ -522,16 +572,16 @@ const styles = StyleSheet.create({
   },
   eyePupil: { width: 5, height: 5, borderRadius: 3, backgroundColor: "#667085" },
   forgotButton: { alignSelf: "flex-end", marginTop: -4, marginBottom: 13, paddingVertical: 4, paddingLeft: 10 },
-  forgotText: { color: "#236B9A", fontSize: 12, fontWeight: "700" },
+  forgotText: { color: BRAND_COLORS.blue, fontSize: 12, fontWeight: "700" },
   riderSection: { backgroundColor: "#F7FAFC", borderRadius: 14, padding: 12, marginBottom: 14, borderWidth: 1, borderColor: "#E8EEF4" },
-  sectionLabel: { color: "#174A72", fontWeight: "800", fontSize: 13, marginBottom: 12 },
+  sectionLabel: { color: BRAND_COLORS.navy, fontWeight: "800", fontSize: 13, marginBottom: 12 },
   helperText: { color: "#667085", fontSize: 11, lineHeight: 17, marginTop: 0 },
   errorBox: { backgroundColor: "#FEF3F2", borderRadius: 10, padding: 12, marginBottom: 14, borderWidth: 1, borderColor: "#FEE4E2" },
   errorText: { color: "#B42318", fontSize: 12, lineHeight: 18 },
   primaryButton: {
-    minHeight: 52, backgroundColor: "#174A72", borderRadius: 13,
+    minHeight: 52, backgroundColor: BRAND_COLORS.navy, borderRadius: 13,
     alignItems: "center", justifyContent: "center", marginTop: 3,
-    shadowColor: "#174A72", shadowOffset: { width: 0, height: 5 },
+    shadowColor: BRAND_COLORS.navy, shadowOffset: { width: 0, height: 5 },
     shadowOpacity: 0.16, shadowRadius: 8, elevation: 3
   },
   primaryButtonText: { color: "#FFFFFF", fontWeight: "800", fontSize: 14, letterSpacing: 0.2 },
@@ -547,10 +597,10 @@ const styles = StyleSheet.create({
   googleButtonText: { color: "#344054", fontSize: 13, fontWeight: "700" },
   legalText: { color: "#98A2B3", fontSize: 10, lineHeight: 15, textAlign: "center", marginTop: 17, paddingHorizontal: 8 },
   secondaryButton: {
-    minHeight: 50, borderWidth: 1, borderColor: "#174A72", borderRadius: 13,
+    minHeight: 50, borderWidth: 1, borderColor: BRAND_COLORS.navy, borderRadius: 13,
     backgroundColor: "#FFFFFF", alignItems: "center", justifyContent: "center", marginTop: 22
   },
-  secondaryButtonText: { color: "#174A72", fontWeight: "700", fontSize: 14 },
+  secondaryButtonText: { color: BRAND_COLORS.navy, fontWeight: "700", fontSize: 14 },
   buttonDisabled: { opacity: 0.65 },
   welcomeCard: { backgroundColor: "#FFFFFF", borderRadius: 18, padding: 21, borderWidth: 1, borderColor: "#E5EAF0", marginBottom: 16 },
   welcomeTitle: { color: "#182230", fontSize: 26, fontWeight: "800", marginTop: 2 },

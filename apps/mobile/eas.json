@@ -8,20 +8,37 @@
       "node": "24.22.3",
       "developmentClient": true,
       "distribution": "internal",
+      "channel": "development",
+      "environment": "development",
       "android": {
         "buildType": "apk"
       }
     },
     "preview": {
       "node": "24.22.3",
+      "channel": "preview",
+      "environment": "preview",
       "distribution": "internal",
       "android": {
         "image": "latest",
         "buildType": "apk"
-      }
+      },
+      "autoIncrement": true
     },
     "production": {
       "node": "24.22.3",
+      "channel": "production",
+      "environment": "production",
+      "autoIncrement": true
+    },
+    "preview-arm": {
+      "extends": "preview",
+      "channel": "preview",
+      "environment": "preview",
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk"
+      },
       "autoIncrement": true
     }
   },
