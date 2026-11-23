@@ -18,6 +18,40 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
+      - name: Set up Node.js and EAS CLI
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Set up EAS CLI
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: 27.11.0
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: Install workspace dependencies for Expo config
+        run: npm install
+
+      - name: Report recent NAVIGO EAS build status
+        working-directory: apps/mobile
+        run: |
+          eas build:list --platform android --limit 12 --json > "$RUNNER_TEMP/eas-builds.json"
+          node <<'NODE'
+          const fs = require("node:fs");
+          const builds = JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP + "/eas-builds.json", "utf8"));
+          for (const build of builds) {
+            console.log(JSON.stringify({
+              id: build.id,
+              status: build.status,
+              profile: build.buildProfile,
+              versionCode: build.appBuildVersion,
+              createdAt: build.createdAt,
+              completedAt: build.completedAt,
+              buildUrl: build.artifacts?.buildUrl
+            }));
+          }
+          NODE
+
       - name: Download and verify the current NAVIGO APK
         env:
           APK_PATH: ${{ runner.temp }}/navigo-preview.apk
