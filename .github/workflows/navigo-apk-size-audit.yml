@@ -152,9 +152,15 @@ jobs:
           CURRENT_APK: ${{ runner.temp }}/navigo-preview.apk
         with:
           api-level: 35
+          target: google_apis
           arch: x86_64
           profile: pixel_2
+          ram-size: 2048M
+          cores: 2
+          emulator-boot-timeout: 600
+          disable-linux-hw-accel: false
           disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -no-metrics
           script: |
             echo "=== Emulator platform ==="
             adb shell getprop ro.build.version.release
