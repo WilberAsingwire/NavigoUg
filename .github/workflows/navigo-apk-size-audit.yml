@@ -32,6 +32,12 @@ jobs:
       - name: Install workspace dependencies for Expo config plugins
         run: npm install
 
+      - name: Retrieve previous NAVIGO Android build history
+        working-directory: apps/mobile
+        run: |
+          eas build:list --platform android --limit 15 --json > "$RUNNER_TEMP/navigo-build-history.json"
+          node -e 'const fs=require("node:fs"); const d=JSON.parse(fs.readFileSync(process.argv[1],"utf8")); console.log(JSON.stringify(d,null,2));' "$RUNNER_TEMP/navigo-build-history.json"
+
       - name: Retrieve completed EAS build metadata
         working-directory: apps/mobile
         run: |
@@ -109,7 +115,7 @@ jobs:
             "$APKSIGNER" verify --verbose --print-certs "$APK_PATH"
             echo
             echo "=== Largest APK contents (uncompressed) ==="
-            unzip -l "$APK_PATH" | sort -nr | head -n 25
+            unzip -l "$APK_PATH" | sort -nr | sed -n '1,25p'
           } | tee "$REPORT_PATH"
 
       - name: Upload APK inspection report
