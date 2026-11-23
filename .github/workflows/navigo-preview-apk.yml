@@ -8,6 +8,7 @@ on:
       - "apps/mobile/package.json"
       - "apps/mobile/app.config.ts"
       - "apps/mobile/eas.json"
+      - "apps/mobile/plugins/withNavigoApiDnsFallback.js"
       - ".github/workflows/navigo-preview-apk.yml"
   workflow_dispatch:
 
@@ -60,7 +61,12 @@ jobs:
         if: steps.expo-token.outputs.configured == 'true'
         run: npm install
 
-      - name: Build Android preview APK
+      - name: Build Android universal diagnostic APK
         if: steps.expo-token.outputs.configured == 'true'
         working-directory: apps/mobile
         run: eas build --platform android --profile preview --non-interactive --wait
+
+      - name: Build Android ARM-compatible smaller APK
+        if: steps.expo-token.outputs.configured == 'true'
+        working-directory: apps/mobile
+        run: eas build --platform android --profile preview-arm --non-interactive --wait
