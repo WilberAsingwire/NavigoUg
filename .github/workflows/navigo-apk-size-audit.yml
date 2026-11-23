@@ -108,3 +108,22 @@ jobs:
           path: ${{ runner.temp }}/navigo-baseline-comparison.txt
           if-no-files-found: error
           retention-days: 7
+
+      - name: Compare clean installation on Android 7 (API 24)
+        uses: reactivecircus/android-emulator-runner@v2
+        env:
+          ANDROID_I_WANT_MY_TCG: "yes"
+          BASELINE_APK: ${{ runner.temp }}/navigo-baseline.apk
+          CURRENT_APK: ${{ runner.temp }}/navigo-preview.apk
+        with:
+          api-level: 24
+          arch: x86
+          profile: pixel_2
+          ram-size: 1536M
+          cores: 2
+          emulator-boot-timeout: 600
+          disable-linux-hw-accel: true
+          disable-animations: true
+          emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -no-metrics
+          script: |
+            python3 -c 'import os,subprocess,sys; package="ug.ac.muni.navigo"; run=lambda *args:subprocess.run(args,text=True,capture_output=True); print("ANDROID_API",run("adb","shell","getprop","ro.build.version.sdk").stdout,flush=True); baseline=run("adb","install",os.environ["BASELINE_APK"]); print("BASELINE_EXIT",baseline.returncode,baseline.stdout,baseline.stderr,flush=True); (run("adb","uninstall",package) if baseline.returncode==0 else None); current=run("adb","install",os.environ["CURRENT_APK"]); print("CURRENT_EXIT",current.returncode,current.stdout,current.stderr,flush=True); sys.exit(0 if baseline.returncode==0 and current.returncode==0 else 1)'
