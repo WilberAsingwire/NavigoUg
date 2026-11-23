@@ -8,6 +8,7 @@ const {
 
 const DEPENDENCY = 'com.squareup.okhttp3:okhttp-dnsoverhttps:4.9.2';
 const INSTALL_MARKER = "NavigoApiDns.install(this)";
+const NEWLINE = String.fromCharCode(10);
 
 const KOTLIN_SOURCE = (packageName) => `package ${packageName}
 
@@ -101,17 +102,20 @@ internal object NavigoApiDns {
 function withApiDnsDependency(config) {
   return withAppBuildGradle(config, (mod) => {
     let contents = mod.modResults.contents;
+    const dependencyBlock = "dependencies {";
 
     if (!contents.includes(DEPENDENCY)) {
-      if (!/dependencies\\s*\\{/.test(contents)) {
+      const dependencyIndex = contents.indexOf(dependencyBlock);
+      if (dependencyIndex === -1) {
         throw new Error(
           "withNavigoApiDnsFallback: could not find the Android app dependencies block."
         );
       }
-      contents = contents.replace(
-        /dependencies\\s*\\{/,
-        (match) => match + `\\n    implementation("${DEPENDENCY}")`
-      );
+      contents =
+        contents.slice(0, dependencyIndex + dependencyBlock.length) +
+        NEWLINE +
+        `    implementation("${DEPENDENCY}")` +
+        contents.slice(dependencyIndex + dependencyBlock.length);
     }
 
     mod.modResults.contents = contents;
@@ -138,7 +142,7 @@ function withApiDnsMainApplication(config) {
       }
       contents = contents.replace(
         onCreateMarker,
-        onCreateMarker + `\\n    ${INSTALL_MARKER}`
+        onCreateMarker + NEWLINE + "    " + INSTALL_MARKER
       );
     }
 
@@ -148,16 +152,16 @@ function withApiDnsMainApplication(config) {
 }
 
 function withApiDnsSource(config) {
+  const packageName = config.android && config.android.package;
+  if (!packageName) {
+    throw new Error(
+      "withNavigoApiDnsFallback: android.package must be configured."
+    );
+  }
+
   return withDangerousMod(config, [
     "android",
     async (mod) => {
-      const packageName = mod.modConfig.android?.package;
-      if (!packageName) {
-        throw new Error(
-          "withNavigoApiDnsFallback: android.package must be configured."
-        );
-      }
-
       const packageDirectory = path.join(
         mod.modRequest.platformProjectRoot,
         "app",
