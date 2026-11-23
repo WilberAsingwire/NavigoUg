@@ -22,7 +22,8 @@
       "android": {
         "image": "latest",
         "buildType": "apk"
-      }
+      },
+      "autoIncrement": "versionCode"
     },
     "production": {
       "node": "24.22.3",
