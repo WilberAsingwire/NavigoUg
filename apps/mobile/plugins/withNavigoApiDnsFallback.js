@@ -1,12 +1,10 @@
 const fs = require("node:fs/promises");
 const path = require("node:path");
 const {
-  withAppBuildGradle,
   withDangerousMod,
   withMainApplication
 } = require("expo/config-plugins");
 
-const DEPENDENCY = 'com.squareup.okhttp3:okhttp-dnsoverhttps:4.9.2';
 const INSTALL_MARKER = "NavigoApiDns.install(this)";
 const NEWLINE = String.fromCharCode(10);
 
@@ -15,43 +13,55 @@ const KOTLIN_SOURCE = (packageName) => `package ${packageName}
 import android.content.Context
 import android.util.Log
 import com.facebook.react.modules.network.OkHttpClientProvider
+import java.io.IOException
 import java.net.InetAddress
 import java.net.UnknownHostException
+import java.util.Locale
 import java.util.concurrent.TimeUnit
 import okhttp3.Dns
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
-import okhttp3.dnsoverhttps.DnsOverHttps
+import okhttp3.Request
+import org.json.JSONObject
 
 /**
- * Resolves NAVIGO's API with Android's normal DNS first.
+ * Resolves NAVIGO's API using Android's normal DNS first.
  *
- * If the system resolver cannot resolve the API host, this retries through
- * Google DNS-over-HTTPS and then Cloudflare DNS-over-HTTPS. The fallback is
- * deliberately scoped to NAVIGO's API hostname; all other hosts continue to
- * use Android's normal DNS resolver.
+ * If Android cannot resolve the API hostname, this uses the Google DNS-over-
+ * HTTPS JSON endpoint and then Cloudflare's DNS-over-HTTPS JSON endpoint.
+ * Resolver bootstrap IPs are hard-coded only for those two resolver hosts;
+ * ordinary application traffic and all other DNS lookups keep using the
+ * Android system resolver.
  */
 internal object NavigoApiDns {
   private const val API_HOST = "navigou-api-2978.onrender.com"
+  private const val GOOGLE_HOST = "dns.google"
+  private const val CLOUDFLARE_HOST = "cloudflare-dns.com"
   private const val TAG = "NAVIGO_API_DNS"
 
   fun install(context: Context) {
-    val bootstrapClient = OkHttpClient.Builder()
+    val googleBootstrap = listOf(ip(8, 8, 8, 8), ip(8, 8, 4, 4))
+    val cloudflareBootstrap = listOf(ip(1, 1, 1, 1), ip(1, 0, 0, 1))
+
+    // Resolve only the two DoH service hostnames through fixed bootstrap IPs.
+    // TLS still verifies the original hostname (dns.google / cloudflare-dns.com).
+    val bootstrapDns = object : Dns {
+      override fun lookup(hostname: String): List<InetAddress> {
+        return when (hostname.lowercase(Locale.US)) {
+          GOOGLE_HOST -> googleBootstrap
+          CLOUDFLARE_HOST -> cloudflareBootstrap
+          else -> Dns.SYSTEM.lookup(hostname)
+        }
+      }
+    }
+
+    // Use OkHttp already supplied by React Native; no additional DNS library
+    // or alternate OkHttp version is added to NAVIGO's dependency graph.
+    val dohClient = OkHttpClient.Builder()
+      .dns(bootstrapDns)
       .connectTimeout(4, TimeUnit.SECONDS)
       .readTimeout(4, TimeUnit.SECONDS)
       .writeTimeout(4, TimeUnit.SECONDS)
-      .build()
-
-    val googleDns = DnsOverHttps.Builder()
-      .client(bootstrapClient)
-      .url("https://dns.google/dns-query".toHttpUrl())
-      .bootstrapDnsHosts(ip(8, 8, 8, 8), ip(8, 8, 4, 4))
-      .build()
-
-    val cloudflareDns = DnsOverHttps.Builder()
-      .client(bootstrapClient)
-      .url("https://cloudflare-dns.com/dns-query".toHttpUrl())
-      .bootstrapDnsHosts(ip(1, 1, 1, 1), ip(1, 0, 0, 1))
       .build()
 
     val navigoDns = object : Dns {
@@ -63,32 +73,91 @@ internal object NavigoApiDns {
             throw systemFailure
           }
 
-          Log.w(TAG, "System DNS could not resolve NAVIGO's API; trying Google DNS-over-HTTPS.")
+          Log.w(TAG, "System DNS could not resolve NAVIGO's API; trying Google DoH.")
+
+          var googleFailure: UnknownHostException? = null
+          try {
+            return queryDoh(dohClient, GOOGLE_HOST, "resolve", hostname)
+          } catch (failure: UnknownHostException) {
+            googleFailure = failure
+            Log.w(TAG, "Google DoH failed; trying Cloudflare DoH.")
+          }
 
           try {
-            return googleDns.lookup(hostname)
-          } catch (googleFailure: UnknownHostException) {
-            Log.w(TAG, "Google DNS-over-HTTPS failed; trying the secondary resolver.")
-
-            try {
-              return cloudflareDns.lookup(hostname)
-            } catch (cloudflareFailure: UnknownHostException) {
-              cloudflareFailure.addSuppressed(googleFailure)
-              cloudflareFailure.addSuppressed(systemFailure)
-              throw cloudflareFailure
-            }
+            return queryDoh(dohClient, CLOUDFLARE_HOST, "dns-query", hostname)
+          } catch (cloudflareFailure: UnknownHostException) {
+            cloudflareFailure.addSuppressed(systemFailure)
+            googleFailure?.let { cloudflareFailure.addSuppressed(it) }
+            throw cloudflareFailure
           }
         }
       }
     }
 
     // Register before React Native starts so fetch() and XMLHttpRequest use
-    // the resolver. The standard React Native client builder preserves its
-    // normal cookie handling and HTTP cache.
+    // the scoped resolver while retaining React Native's normal client setup.
     OkHttpClientProvider.setOkHttpClientFactory {
       OkHttpClientProvider.createClientBuilder(context.applicationContext)
         .dns(navigoDns)
         .build()
+    }
+  }
+
+  private fun queryDoh(
+    client: OkHttpClient,
+    resolverHost: String,
+    endpointPath: String,
+    hostname: String
+  ): List<InetAddress> {
+    try {
+      val url = "https://${resolverHost}/${endpointPath}".toHttpUrl()
+        .newBuilder()
+        .addQueryParameter("name", hostname)
+        .addQueryParameter("type", "A")
+        .build()
+
+      val request = Request.Builder()
+        .url(url)
+        .header("Accept", "application/dns-json")
+        .get()
+        .build()
+
+      val payload = client.newCall(request).execute().use { response ->
+        if (!response.isSuccessful) {
+          throw IOException("DoH resolver returned HTTP ${response.code}")
+        }
+        response.body?.string()
+          ?: throw IOException("DoH resolver returned an empty response")
+      }
+
+      val answers = JSONObject(payload).optJSONArray("Answer")
+      val addresses = mutableListOf<InetAddress>()
+      if (answers != null) {
+        for (index in 0 until answers.length()) {
+          val answer = answers.optJSONObject(index) ?: continue
+          if (answer.optInt("type") != 1) continue
+
+          val value = answer.optString("data").trim()
+          if (value.isEmpty()) continue
+
+          val address = InetAddress.getByName(value)
+          if (addresses.none { it.hostAddress == address.hostAddress }) {
+            addresses.add(address)
+          }
+        }
+      }
+
+      if (addresses.isEmpty()) {
+        throw UnknownHostException("DoH returned no IPv4 address for ${hostname}")
+      }
+      return addresses
+    } catch (failure: Exception) {
+      if (failure is UnknownHostException) throw failure
+      val wrapped = UnknownHostException(
+        "DoH lookup failed for ${hostname} using ${resolverHost}"
+      )
+      wrapped.initCause(failure)
+      throw wrapped
     }
   }
 
@@ -98,30 +167,6 @@ internal object NavigoApiDns {
     )
 }
 `;
-
-function withApiDnsDependency(config) {
-  return withAppBuildGradle(config, (mod) => {
-    let contents = mod.modResults.contents;
-    const dependencyBlock = "dependencies {";
-
-    if (!contents.includes(DEPENDENCY)) {
-      const dependencyIndex = contents.indexOf(dependencyBlock);
-      if (dependencyIndex === -1) {
-        throw new Error(
-          "withNavigoApiDnsFallback: could not find the Android app dependencies block."
-        );
-      }
-      contents =
-        contents.slice(0, dependencyIndex + dependencyBlock.length) +
-        NEWLINE +
-        `    implementation("${DEPENDENCY}")` +
-        contents.slice(dependencyIndex + dependencyBlock.length);
-    }
-
-    mod.modResults.contents = contents;
-    return mod;
-  });
-}
 
 function withApiDnsMainApplication(config) {
   return withMainApplication(config, (mod) => {
@@ -184,7 +229,6 @@ function withApiDnsSource(config) {
 }
 
 module.exports = function withNavigoApiDnsFallback(config) {
-  config = withApiDnsDependency(config);
   config = withApiDnsMainApplication(config);
   config = withApiDnsSource(config);
   return config;
