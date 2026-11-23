@@ -81,6 +81,40 @@ jobs:
           stat -c '%s bytes' "$BASELINE_APK"
           sha256sum "$BASELINE_APK"
 
+      - name: Preserve the known-good baseline APK for binary comparison
+        uses: actions/upload-artifact@v4
+        with:
+          name: navigo-nov20-baseline-apk
+          path: ${{ runner.temp }}/navigo-baseline.apk
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Compare Android manifests from baseline and DNS-fallback APKs
+        env:
+          BASELINE_APK: ${{ runner.temp }}/navigo-baseline.apk
+          CURRENT_APK: ${{ runner.temp }}/navigo-preview.apk
+          REPORT_DIR: ${{ runner.temp }}/navigo-manifest-diff
+        run: |
+          set -euo pipefail
+          BUILD_TOOLS="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
+          mkdir -p "$REPORT_DIR"
+          "$BUILD_TOOLS/aapt" dump xmltree "$BASELINE_APK" AndroidManifest.xml > "$REPORT_DIR/baseline-manifest.txt"
+          "$BUILD_TOOLS/aapt" dump xmltree "$CURRENT_APK" AndroidManifest.xml > "$REPORT_DIR/current-manifest.txt"
+          if diff -u "$REPORT_DIR/baseline-manifest.txt" "$REPORT_DIR/current-manifest.txt" > "$REPORT_DIR/manifest.diff"; then
+            echo "Android manifests are identical."
+          else
+            echo "Android manifest differences:"
+            sed -n '1,240p' "$REPORT_DIR/manifest.diff"
+          fi
+
+      - name: Upload Android manifest comparison
+        uses: actions/upload-artifact@v4
+        with:
+          name: navigo-baseline-manifest-diff
+          path: ${{ runner.temp }}/navigo-manifest-diff
+          if-no-files-found: error
+          retention-days: 7
+
       - name: Compare baseline APK signing and Android package metadata
         env:
           BASELINE_APK: ${{ runner.temp }}/navigo-baseline.apk
