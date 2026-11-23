@@ -30,6 +30,16 @@
       "channel": "production",
       "environment": "production",
       "autoIncrement": true
+    },
+    "preview-arm": {
+      "extends": "preview",
+      "channel": "preview",
+      "environment": "preview",
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk"
+      },
+      "autoIncrement": true
     }
   },
   "submit": {
