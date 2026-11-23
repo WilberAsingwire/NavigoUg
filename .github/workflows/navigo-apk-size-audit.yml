@@ -195,3 +195,55 @@ jobs:
           emulator-options: -no-window -no-snapshot -noaudio -no-boot-anim -no-metrics
           script: |
             python3 -c 'import os,subprocess,sys; package="ug.ac.muni.navigo"; run=lambda *args:subprocess.run(args,text=True,capture_output=True); print("ANDROID_API",run("adb","shell","getprop","ro.build.version.sdk").stdout,flush=True); baseline=run("adb","install",os.environ["BASELINE_APK"]); print("BASELINE_EXIT",baseline.returncode,baseline.stdout,baseline.stderr,flush=True); (run("adb","uninstall",package) if baseline.returncode==0 else None); current=run("adb","install",os.environ["CURRENT_APK"]); print("CURRENT_EXIT",current.returncode,current.stdout,current.stderr,flush=True); sys.exit(0 if baseline.returncode==0 and current.returncode==0 else 1)'
+
+      - name: Download and inspect the rebuilt universal APK (version code 4)
+        env:
+          APK_PATH: ${{ runner.temp }}/navigo-universal-v4.apk
+          REPORT_PATH: ${{ runner.temp }}/navigo-universal-v4-report.txt
+        run: |
+          set -euo pipefail
+          curl --fail --location --silent --show-error \
+            "https://expo.dev/artifacts/eas/oG5ug-wAT1BxoiNy8F3vKDFpn-Ld4GHQCAz7_1UYb3w.apk" \
+            --output "$APK_PATH"
+          BUILD_TOOLS="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)"
+          {
+            echo "=== Universal APK size ==="
+            stat -c '%s bytes' "$APK_PATH"
+            sha256sum "$APK_PATH"
+            unzip -t "$APK_PATH" | tail -n 1
+            echo
+            echo "=== Package ==="
+            "$BUILD_TOOLS/aapt" dump badging "$APK_PATH" | sed -n '1,3p'
+            echo
+            echo "=== Signing ==="
+            "$BUILD_TOOLS/apksigner" verify --verbose --print-certs "$APK_PATH"
+            echo
+            echo "=== Zip alignment ==="
+            "$BUILD_TOOLS/zipalign" -c -v 4 "$APK_PATH"
+            echo
+            echo "=== ABI and native library sizes ==="
+            python3 - "$APK_PATH" <<'PY'
+          import sys, zipfile, collections
+          apk = zipfile.ZipFile(sys.argv[1])
+          totals = collections.Counter()
+          counts = collections.Counter()
+          for item in apk.infolist():
+              if item.filename.startswith("lib/") and item.filename.endswith(".so"):
+                  parts = item.filename.split("/")
+                  if len(parts) >= 3:
+                      totals[parts[1]] += item.file_size
+                      counts[parts[1]] += 1
+          for abi in sorted(totals):
+              print(f"{abi}: {counts[abi]} libraries, {totals[abi]} uncompressed bytes")
+          PY
+          } | tee "$REPORT_PATH"
+
+      - name: Upload rebuilt universal APK and report
+        uses: actions/upload-artifact@v4
+        with:
+          name: navigo-universal-v4-apk
+          path: |
+            ${{ runner.temp }}/navigo-universal-v4.apk
+            ${{ runner.temp }}/navigo-universal-v4-report.txt
+          if-no-files-found: error
+          retention-days: 7
